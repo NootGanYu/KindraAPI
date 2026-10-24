@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   App as AntApp,
   Checkbox,
@@ -17,8 +17,10 @@ import {
   FolderAddOutlined,
   FolderOutlined,
   LayoutOutlined,
+  LeftOutlined,
   MoreOutlined,
   PlusOutlined,
+  RightOutlined,
   SaveOutlined,
   ShareAltOutlined
 } from '@ant-design/icons'
@@ -65,6 +67,34 @@ export default function ApisPage(): JSX.Element {
   const [creating, setCreating] = useState(false)
   const [mode, setMode] = useState<Mode>('调试')
   const [splitDir, setSplitDir] = useState<SplitDir>('vertical')
+  const tabScrollRef = useRef<HTMLDivElement | null>(null)
+  const [tabOverflow, setTabOverflow] = useState(false)
+  const [tabEdges, setTabEdges] = useState({ left: false, right: false })
+
+  const updateTabScroll = (): void => {
+    const el = tabScrollRef.current
+    if (!el) return
+    setTabOverflow(el.scrollWidth > el.clientWidth + 4)
+    setTabEdges({
+      left: el.scrollLeft > 2,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2
+    })
+  }
+
+  useEffect(() => {
+    if (!activeId || !tabScrollRef.current) return
+    const node = Array.from(
+      tabScrollRef.current.querySelectorAll<HTMLElement>('.filetab')
+    ).find((item) => item.dataset.tabId === activeId)
+    node?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    updateTabScroll()
+  }, [activeId, tabs.length])
+
+  useEffect(() => {
+    const onResize = (): void => updateTabScroll()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   const active = activeId ? drafts[activeId] : undefined
   const record = activeId ? records[activeId] ?? null : null
@@ -155,48 +185,87 @@ export default function ApisPage(): JSX.Element {
         <Panel minSize={40}>
           <div className="api-workspace">
             <div className="tabbar">
-              {tabs.map((tab) => {
-                const draft = drafts[tab.id]
-                const isFolder = draft?.target_type === 'folder'
-                return (
-                  <div
-                    key={tab.id}
-                    className={`filetab${tab.id === activeId ? ' active' : ''}`}
-                    onClick={() => setActive(tab.id)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') setActive(tab.id)
-                    }}
-                  >
-                    {tab.dirty ? <span className="red-dot" /> : null}
-                    {isFolder ? (
-                      <FolderOutlined style={{ fontSize: 12, color: '#a58a58' }} />
-                    ) : (
-                      <span className="method-text">{(draft?.method || 'GET').toUpperCase()}</span>
-                    )}
-                    <span className="tab-name">{tab.name}</span>
-                    <span
-                      className="tab-x"
+              <div
+                className="tab-scroll"
+                ref={tabScrollRef}
+                onScroll={updateTabScroll}
+                onWheel={(event) => {
+                  const el = tabScrollRef.current
+                  if (!el) return
+                  if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+                    el.scrollLeft += event.deltaY
+                  }
+                }}
+              >
+                {tabs.map((tab) => {
+                  const draft = drafts[tab.id]
+                  const isFolder = draft?.target_type === 'folder'
+                  return (
+                    <div
+                      key={tab.id}
+                      data-tab-id={tab.id}
+                      className={`filetab${tab.id === activeId ? ' active' : ''}`}
+                      onClick={() => setActive(tab.id)}
                       role="button"
-                      tabIndex={-1}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        handleClose(tab.id, tab.dirty)
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') setActive(tab.id)
                       }}
                     >
-                      <CloseOutlined style={{ fontSize: 10 }} />
-                    </span>
-                  </div>
-                )
-              })}
+                      {tab.dirty ? <span className="red-dot" /> : null}
+                      {isFolder ? (
+                        <FolderOutlined style={{ fontSize: 12, color: '#a58a58' }} />
+                      ) : (
+                        <span className="method-text">
+                          {(draft?.method || 'GET').toUpperCase()}
+                        </span>
+                      )}
+                      <span className="tab-name">{tab.name}</span>
+                      <span
+                        className="tab-x"
+                        role="button"
+                        tabIndex={-1}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          handleClose(tab.id, tab.dirty)
+                        }}
+                      >
+                        <CloseOutlined style={{ fontSize: 10 }} />
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              {tabOverflow ? (
+                <>
+                  <button
+                    className="tab-arrow"
+                    disabled={!tabEdges.left}
+                    title="向左滚动"
+                    onClick={() =>
+                      tabScrollRef.current?.scrollBy({ left: -220, behavior: 'smooth' })
+                    }
+                  >
+                    <LeftOutlined style={{ fontSize: 10 }} />
+                  </button>
+                  <button
+                    className="tab-arrow"
+                    disabled={!tabEdges.right}
+                    title="向右滚动"
+                    onClick={() =>
+                      tabScrollRef.current?.scrollBy({ left: 220, behavior: 'smooth' })
+                    }
+                  >
+                    <RightOutlined style={{ fontSize: 10 }} />
+                  </button>
+                </>
+              ) : null}
               <button className="tab-add" onClick={() => void handleCreate('0', 'api')}>
                 <PlusOutlined style={{ fontSize: 13 }} />
               </button>
               <button className="tab-more">
                 <MoreOutlined style={{ fontSize: 13 }} />
               </button>
-              <span style={{ flex: 1 }} />
               <Dropdown
                 trigger={['click']}
                 menu={{
