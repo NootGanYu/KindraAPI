@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+
+# Generated smoke-test bundle
+scripts/.smoke.cjs
+
+# Local analysis artifacts extracted from the original app
+analysis/
+Apipost Offline
+
+# OS / logs / local settings
+.DS_Store
+*.log
+.claude/settings.local.json

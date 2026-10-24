@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PROTOTYPE · Api Workbench UI 变体</title>
+<!--
+  计划：同一工作区页面的 3 套结构性不同的 UI 变体，通过 ?variant=A|B|C 切换。
+  A 经典三栏（贴近 docs/09） / B 命令优先 / C 文档流。
+  底部浮动栏与 ← → 键切换；仅用于视觉方向确认，不是最终 UI。
+  已选定：A · 经典三栏（2026-10-24）；B/C 保留为备选参考。
+-->
+<style>
+  :root{
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --gold:#8a6b3b;
+    --gold-soft: rgba(156,124,74,.10);
+    --ok:#2f7d4f;
+    --bad:#b14435;
+    --warn:#9a6a12;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font:13px/1.45 var(--sans);color:#2c2214;background:#faf5ea;overflow:hidden}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  h1,h2,h3,h4,p{margin:0}
+  .method{font:700 10.5px/1 var(--mono);padding:3px 6px;border-radius:4px;letter-spacing:.02em;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
+  .method.GET{background:#e7f0ea;color:#2f6f4b}
+  .method.POST{background:#f6ecd6;color:#8a5c12}
+  .method.PUT{background:#e9edf8;color:#3b4f8a}
+  .method.DELETE{background:#f8e8e5;color:#96362a}
+  .code{font:11.5px/1.55 var(--mono);white-space:pre;overflow:auto;margin:0}
+  .empty{padding:22px 10px;text-align:center;color:#9c9080;font-size:12px;border:1px dashed rgba(147,117,63,.28);border-radius:6px;background:rgba(250,245,234,.6)}
+  .pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;border:1px solid transparent}
+  .pill.ok{background:#e6f2ea;color:#2f7d4f;border-color:#c9e2d3}
+  .pill.bad{background:#f8e8e5;color:#b14435;border-color:#eccdc8}
+  .pill.warn{background:#fbf0d8;color:#9a6a12;border-color:#ecd9ad}
+  .pill.neutral{background:#f0ece4;color:#7b7162;border-color:#e2dbcd}
+  .status-ok{color:#2f7d4f}.status-bad{color:#b14435}.status-warn{color:#9a6a12}
+
+  /* ============================== A · 经典三栏 ============================== */
+  .a{
+    height:100vh;display:grid;grid-template-rows:44px 1fr 28px;overflow:hidden;
+    --a-bg:#faf5ea;--a-header:#f4eddf;--a-folder:#f3ead8;--a-line:rgba(147,117,63,.16);
+    --a-line2:rgba(147,117,63,.32);--a-ink:#2c2214;--a-text:#6b5d48;--a-mute:#9c9080;
+    --a-primary:#8a6b3b;--a-hover:rgba(156,124,74,.14);--a-icon:#9c9080;--a-white:#fffdf9;
+    background:var(--a-bg);color:var(--a-ink);
+  }
+  .a-header{display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--a-header);border-bottom:1px solid var(--a-line)}
+  .a-brand{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;white-space:nowrap}
+  .a-logo{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#ceb076,#8a6b3b);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+  .a-head-mid{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+  .a-project{display:flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--a-line);border-radius:5px;background:rgba(255,255,255,.45);font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .a-project i{width:6px;height:6px;border-radius:2px;background:var(--a-primary);display:inline-block}
+  .a-ghost{padding:3px 7px;border-radius:4px;color:var(--a-text);font-size:11.5px}
+  .a-ghost:hover{background:var(--a-hover)}
+  .a-head-right{display:flex;align-items:center;gap:10px}
+  .a-ai{font-size:11.5px;color:var(--a-primary);padding:3px 8px;border-radius:5px}
+  .a-ai:hover{background:rgba(156,124,74,.10)}
+  .a-mcp{display:flex;align-items:center;gap:5px;font-size:11.5px;color:#6f6453}
+  .a-mcp .dot{width:6px;height:6px;border-radius:50%;background:#39a06a}
+  .a-toggle{width:26px;height:14px;border-radius:999px;background:#c9bfa9;position:relative;display:inline-block}
+  .a-toggle::after{content:"";position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;top:2px;right:2px}
+  .a-env{font-size:11.5px;border:1px solid var(--a-line2);border-radius:5px;padding:4px 8px;background:#fffdf9;color:#5b4d38}
+  .a-body{display:grid;grid-template-columns:50px 1fr;min-height:0}
+  .a-rail{background:var(--a-folder);border-right:1px solid var(--a-line);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:3px}
+  .a-rail button{width:42px;height:46px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--a-icon);font-size:10px;line-height:1.1}
+  .a-rail button .ico{font-family:var(--mono);font-size:15px;line-height:1}
+  .a-rail button.active{background:var(--a-hover);color:var(--a-primary);font-weight:600}
+  .a-rail button:hover{color:var(--a-primary)}
+  .a-rail .spacer{flex:1}
+  .a-workspace{display:grid;grid-template-columns:262px minmax(0,1fr);min-height:0}
+  .a-tree{background:var(--a-folder);border-right:1px solid var(--a-line);display:flex;flex-direction:column;min-height:0}
+  .a-tree-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 6px;font-size:12px;font-weight:600;color:#5b4d38}
+  .a-tree-head button{width:24px;height:24px;border-radius:5px;color:var(--a-primary);font-size:16px}
+  .a-tree-head button:hover{background:var(--a-hover)}
+  .a-search{margin:0 10px 8px;height:30px;display:flex;align-items:center;gap:6px;padding:0 8px;background:#faf5ea;border:1px solid var(--a-line);border-radius:5px;color:var(--a-mute);font-size:11.5px}
+  .a-tree-list{flex:1;overflow:auto;padding:0 8px}
+  .a-folder{display:flex;align-items:center;gap:5px;padding:5px 6px;font-size:11.5px;color:#7b6e59}
+  .a-caret{font-size:9px;color:#a99c86}
+  .a-treeitem{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:5px 6px 5px 16px;border-radius:5px;font-size:12px;color:#5a4e3c}
+  .a-treeitem span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .a-treeitem:hover{background:rgba(156,124,74,.09)}
+  .a-treeitem.sel{background:var(--a-hover);color:#4c3d27;font-weight:600}
+  .a-treeitem .method{transform:scale(.88);transform-origin:left center}
+  .a-new{margin:8px 10px 10px;padding:6px;border:1px dashed var(--a-line2);border-radius:5px;color:var(--a-mute);text-align:center;font-size:11.5px}
+  .a-new:hover{color:var(--a-primary);border-color:var(--a-primary)}
+  .a-main{display:grid;grid-template-rows:auto auto auto auto auto minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}
+  .a-tabbar{display:flex;align-items:flex-end;gap:2px;padding:6px 10px 0;background:var(--a-header);border-bottom:1px solid var(--a-line);min-height:36px;overflow:auto}
+  .a-filetab{display:flex;align-items:center;gap:7px;padding:6px 10px;border:1px solid transparent;border-bottom:none;border-radius:4px 4px 0 0;font-size:11.5px;color:#7b6e59;white-space:nowrap}
+  .a-filetab.active{background:var(--a-bg);border-color:var(--a-line);color:#463a29;font-weight:600}
+  .a-filetab .x{color:#a99c86;font-size:12px}
+  .a-filetab .unsaved{width:5px;height:5px;border-radius:50%;background:#d05c48;display:inline-block}
+  .a-fileadd{width:26px;height:24px;border-radius:4px;color:#8e8069;font-size:15px}
+  .a-seg{display:flex;align-items:center;gap:4px;padding:7px 12px;background:var(--a-bg)}
+  .a-seg span{padding:4px 10px;border-radius:999px;font-size:11.5px;color:#7b6e59}
+  .a-seg span.active{background:var(--a-hover);color:var(--a-primary);font-weight:600}
+  .a-title-row{display:flex;align-items:center;gap:10px;padding:2px 14px 8px;background:var(--a-bg)}
+  .a-title-row h2{font-size:14px;font-weight:600}
+  .a-state{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#7b6e59}
+  .a-state i{width:6px;height:6px;border-radius:50%;background:#d2a24c;display:inline-block}
+  .a-title-actions{margin-left:auto;display:flex;gap:4px;color:#8e8069;font-size:12px}
+  .a-title-actions span{padding:3px 7px;border-radius:4px}
+  .a-title-actions span:hover{background:var(--a-hover)}
+  .a-urlrow{display:flex;align-items:center;gap:8px;padding:0 14px 10px;background:var(--a-bg)}
+  .a-urlcapsule{flex:1;display:flex;align-items:center;gap:10px;min-width:0;height:34px;padding:0 10px;background:#fdf9f0;border:1px solid var(--a-line2);border-radius:6px}
+  .a-urlcapsule .m{font-size:11.5px;font-weight:700;color:#8a5c12;font-family:var(--mono);display:flex;align-items:center;gap:4px}
+  .a-urltext{flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:#4d4232;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .a-proto{font-size:10.5px;color:#9c9080;font-family:var(--mono);white-space:nowrap}
+  .a-send{height:34px;padding:0 16px;background:var(--a-primary);color:#fff;border-radius:6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:5px}
+  .a-send:hover{background:#77592c}
+  .a-save{height:34px;padding:0 14px;background:#fffdf9;border:1px solid var(--a-line2);border-radius:6px;color:#5b4d38;font-size:12px}
+  .a-save:hover{border-color:var(--a-primary);color:var(--a-primary)}
+  .a-reqtabs{display:flex;align-items:center;gap:14px;padding:0 14px;border-bottom:1px solid var(--a-line);background:var(--a-bg);overflow:auto}
+  .a-reqtabs button{padding:7px 0;font-size:11.5px;color:#7b6e59;border-bottom:2px solid transparent;white-space:nowrap}
+  .a-reqtabs button.active{color:#4b3b23;border-bottom-color:#7a5c30;font-weight:600}
+  .a-reqtabs .dot{width:5px;height:5px;border-radius:50%;background:#c8923f;display:inline-block;margin-left:4px}
+  .a-splitarea{display:grid;grid-template-rows:minmax(0,1fr) 6px minmax(0,1fr);min-height:0;border-top:1px solid var(--a-line)}
+  .a-splitarea.h{grid-template-columns:minmax(0,1fr) 6px minmax(0,1fr);grid-template-rows:1fr}
+  .a-req{overflow:auto;min-height:0;padding:10px 14px 14px}
+  .a-divider{background:var(--a-bg);display:flex;align-items:center;justify-content:center;border-top:1px solid var(--a-line);border-bottom:1px solid var(--a-line)}
+  .a-splitarea.h .a-divider{border-top:none;border-bottom:none;border-left:1px solid var(--a-line);border-right:1px solid var(--a-line)}
+  .a-divider button{font-size:10px;color:#8e8069;background:#fffdf9;border:1px solid var(--a-line);border-radius:4px;padding:1px 6px}
+  .a-resp{overflow:auto;min-height:0;padding:8px 14px 14px;background:#fffdf9}
+  .a-resptabs{display:flex;align-items:center;gap:14px;padding-bottom:6px;border-bottom:1px solid var(--a-line);overflow:auto}
+  .a-resptabs button{padding:4px 0;font-size:11.5px;color:#7b6e59;border-bottom:2px solid transparent;white-space:nowrap}
+  .a-resptabs button.active{color:#4b3b23;border-bottom-color:#7a5c30;font-weight:600}
+  .a-resptools{display:flex;gap:10px;padding:6px 0;color:#9c9080;font-size:10.5px;flex-wrap:wrap}
+  .a-resptools .on{color:#6b5d48;font-weight:600}
+  .a-respline{display:flex;align-items:center;gap:10px;padding:6px 0 8px;font-size:11px;color:#7b6e59;flex-wrap:wrap}
+  .a-table{width:100%;border-collapse:collapse;font-size:11.5px}
+  .a-table th{text-align:left;font-weight:600;color:#8e8069;padding:5px 7px;background:#f7f1e5;border-bottom:1px solid var(--a-line)}
+  .a-table td{padding:5px 7px;border-bottom:1px solid #f0e9dc;font-family:var(--mono);color:#4d4232}
+  .a-editor{background:#fbf8f1;border:1px solid var(--a-line);border-radius:5px;padding:10px 12px;color:#433a2c}
+  .a-code{background:#fbf8f1;border:1px solid var(--a-line);border-radius:5px;padding:10px 12px;color:#433a2c}
+  .a-bodytypes{display:flex;gap:8px;padding:2px 0 9px;flex-wrap:wrap}
+  .a-radio{display:flex;align-items:center;gap:4px;font-size:11px;color:#7b6e59}
+  .a-radio::before{content:"";width:9px;height:9px;border-radius:50%;border:1px solid #c3b7a1;display:inline-block}
+  .a-radio.on{color:#4b3b23;font-weight:600}
+  .a-radio.on::before{border-color:var(--a-primary);box-shadow:inset 0 0 0 2px #fff, inset 0 0 0 5px var(--a-primary)}
+  .a-auth{display:flex;flex-direction:column;gap:8px;font-size:12px}
+  .a-auth-row{display:grid;grid-template-columns:90px 1fr;gap:8px;padding:6px 8px;background:#fbf8f1;border:1px solid var(--a-line);border-radius:5px}
+  .a-auth-row span{color:#8e8069}
+  .a-hint{font-size:11px;color:#9c9080}
+  .a-statusbar{display:flex;align-items:center;gap:16px;padding:0 12px;background:#fffdf9;border-top:1px solid var(--a-line);font-size:11px;color:#8e8069}
+  .a-statusbar .right{margin-left:auto;display:flex;gap:14px;align-items:center}
+  .a-statusbar b{color:#7a5c30;font-weight:600}
+
+  /* ============================== B · 命令优先 ============================== */
+  .b{height:100vh;display:grid;grid-template-rows:48px 1fr;background:#f4f2ed;color:#211d17;overflow:hidden}
+  .b-header{display:flex;align-items:center;gap:14px;padding:0 16px;background:#201c16;color:#f3ede1}
+  .b-brand{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;letter-spacing:.02em}
+  .b-logo{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,#e0bd76,#ac7c25)}
+  .b-proj{font-size:12px;color:#d9cfbd;display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:5px;background:rgba(255,255,255,.06);white-space:nowrap}
+  .b-cmd{flex:1;max-width:520px;height:30px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:6px;background:rgba(255,255,255,.08);color:#b7ac99;font-size:12px;text-align:left}
+  .b-cmd kbd{margin-left:auto;font:10.5px var(--mono);padding:1px 5px;border-radius:3px;background:rgba(255,255,255,.12);color:#e3d9c7}
+  .b-right{display:flex;align-items:center;gap:12px}
+  .b-env{font-size:11.5px;color:#e6ddcc;border:1px solid rgba(255,255,255,.16);border-radius:5px;padding:3px 8px}
+  .b-mcp{font-size:11px;color:#a8d8bd;display:flex;align-items:center;gap:5px}
+  .b-mcp i{width:6px;height:6px;border-radius:50%;background:#54b77f;display:inline-block}
+  .b-avatar{width:24px;height:24px;border-radius:50%;background:#3a3328;color:#e9dfcc;font-size:11px;display:grid;place-items:center}
+  .b-body{display:grid;grid-template-columns:60px 1fr;min-height:0}
+  .b-rail{background:#fff;border-right:1px solid #e2ddd2;display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:6px}
+  .b-rail button{width:38px;height:38px;border-radius:8px;color:#8f8574;font-family:var(--mono);font-size:15px;display:grid;place-items:center}
+  .b-rail button:hover{background:#f4f0e8;color:#4d4437}
+  .b-rail button.active{background:#f3ead8;color:#8a6b3b}
+  .b-rail .spacer{flex:1}
+  .b-main{display:grid;grid-template-columns:minmax(0,1fr) 400px;min-height:0}
+  .b-compose{overflow:auto;padding:26px 34px 40px;background:#f7f5f0}
+  .b-crumbs{font-size:11.5px;color:#9a8f7e;margin-bottom:14px}
+  .b-crumbs b{color:#4a4133;font-weight:600}
+  .b-methodrow{display:grid;grid-template-columns:108px minmax(0,1fr) 104px;height:52px;border:1px solid #ddd6c8;border-radius:10px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(50,40,20,.04)}
+  .b-method{display:flex;align-items:center;justify-content:space-between;padding:0 14px;font:700 14px var(--mono);color:#8a5c12;background:#fbf6ea;border-right:1px solid #ece4d4}
+  .b-url{display:flex;align-items:center;gap:10px;padding:0 14px;min-width:0}
+  .b-url .lbl{font-size:10px;color:#a99d8a;letter-spacing:.08em}
+  .b-urltext{flex:1;min-width:0;font:14px var(--mono);color:#2b251c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .b-proto{font:10.5px var(--mono);color:#a99d8a}
+  .b-send{background:#b8862f;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px}
+  .b-send:hover{background:#a27424}
+  .b-metarow{display:flex;align-items:center;gap:8px;margin:12px 0 18px;flex-wrap:wrap}
+  .b-chip{font-size:11px;color:#8d8270;background:#efebe2;border:1px solid #e3ddd0;border-radius:999px;padding:3px 9px}
+  .b-chip b{color:#514838;font-weight:600}
+  .b-spacer{flex:1}
+  .b-saved{font-size:10.5px;color:#a99d8a}
+  .b-panelsw{display:flex;gap:2px;padding:3px;background:#eae5db;border-radius:8px;width:max-content;margin-bottom:12px}
+  .b-panelsw button{padding:5px 13px;border-radius:6px;font-size:11.5px;color:#877c6a}
+  .b-panelsw button.active{background:#fff;color:#3c3428;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .b-surface{background:#fff;border:1px solid #e4ded1;border-radius:10px;padding:16px;min-height:280px}
+  .b-table{width:100%;border-collapse:collapse;font-size:11.5px}
+  .b-table th{text-align:left;color:#9a8f7e;font-weight:600;padding:6px 8px;border-bottom:1px solid #eee8dc}
+  .b-table td{padding:7px 8px;border-bottom:1px solid #f4efe6;font-family:var(--mono);color:#4a4133}
+  .b-editor{min-height:220px;background:#faf8f4;border:1px solid #ece6da;border-radius:7px;padding:12px 14px;color:#3d352a}
+  .b-bodytype{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .b-bodytype span{font-size:10.5px;color:#8d8270;border:1px solid #e3ddd0;border-radius:999px;padding:2px 8px}
+  .b-bodytype span.on{background:#f3ead8;border-color:#e2cca4;color:#7a5c30;font-weight:600}
+  .b-asserts{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .b-assert{display:flex;align-items:center;gap:6px;font-size:11px;color:#5c5242;background:#f5f2ea;border:1px solid #e6e0d3;border-radius:6px;padding:5px 9px}
+  .b-assert .tick{color:#2f7d4f;font-weight:700}
+  .b-foot{margin-top:18px;display:flex;gap:14px;font-size:10.5px;color:#a99d8a}
+  .b-inspector{background:#fff;border-left:1px solid #e2ddd2;overflow:auto;padding:18px 18px 28px}
+  .b-inspector-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .b-live{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#3c3428}
+  .b-live i{width:6px;height:6px;border-radius:50%;background:#54b77f;display:inline-block}
+  .b-statusbig{font:700 26px/1 var(--mono);color:#2f7d4f}
+  .b-statusbig.bad{color:#b14435}
+  .b-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+  .b-metric{background:#f7f4ed;border:1px solid #eae4d8;border-radius:7px;padding:8px 10px}
+  .b-metric b{display:block;font:600 16px var(--mono);color:#3c3428}
+  .b-metric span{font-size:10px;color:#9a8f7e}
+  .b-resptabs{display:flex;gap:12px;border-bottom:1px solid #eee8dc;margin-bottom:10px}
+  .b-resptabs button{padding:4px 0 7px;font-size:11.5px;color:#8d8270;border-bottom:2px solid transparent}
+  .b-resptabs button.active{color:#3c3428;border-bottom-color:#b8862f;font-weight:600}
+  .b-respbody{background:#faf8f4;border:1px solid #ece6da;border-radius:7px;padding:12px;color:#3d352a;min-height:150px}
+  .b-sectitle{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;letter-spacing:.08em;color:#9a8f7e;margin:20px 0 8px;text-transform:uppercase}
+  .b-history{display:flex;flex-direction:column;gap:5px}
+  .b-hist{display:grid;grid-template-columns:52px 1fr auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid #eee8dc;border-radius:6px;background:#fcfbf7;font-size:11px}
+  .b-hist .t{font-family:var(--mono);color:#a99d8a}
+  .b-hist .n{color:#4a4133;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .b-drawer{position:fixed;left:60px;top:48px;bottom:0;width:300px;background:#fff;border-right:1px solid #e2ddd2;box-shadow:8px 0 24px rgba(40,32,20,.08);z-index:40;display:flex;flex-direction:column;transform:translateX(-105%);transition:transform .16s ease}
+  .b-drawer.open{transform:none}
+  .b-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px;font-size:12px;font-weight:600}
+  .b-drawer-head button{color:#9a8f7e;font-size:15px}
+  .b-drawer-search{margin:0 14px 10px;height:30px;border:1px solid #e6e0d3;border-radius:6px;display:flex;align-items:center;padding:0 9px;font-size:11px;color:#a99d8a;background:#faf8f4}
+  .b-drawer-list{flex:1;overflow:auto;padding:0 10px 14px}
+  .b-dfolder{font-size:10.5px;color:#a99d8a;padding:8px 8px 4px;letter-spacing:.06em}
+  .b-ditem{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 8px;border-radius:6px;font-size:12px;color:#4a4133}
+  .b-ditem:hover{background:#f7f4ed}
+  .b-ditem.sel{background:#f3ead8;color:#6e5223;font-weight:600}
+
+  /* ============================== C · 文档流 ============================== */
+  .c{height:100vh;display:grid;grid-template-rows:52px 1fr;background:#f8f3e9;color:#2a241b;overflow:hidden}
+  .c-header{display:flex;align-items:center;gap:18px;padding:0 22px;background:#fbf7ef;border-bottom:1px solid #e6dccb}
+  .c-brand{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;white-space:nowrap}
+  .c-logo{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#d7b979,#8a6b3b);display:grid;place-items:center;color:#fff;font:700 10px var(--mono)}
+  .c-breadcrumb{font-size:11.5px;color:#9c9080;display:flex;gap:7px;align-items:center}
+  .c-breadcrumb b{color:#4a3f2e;font-weight:600}
+  .c-right{margin-left:auto;display:flex;align-items:center;gap:14px}
+  .c-env{font-size:11px;color:#6b5d48;background:#f3ead8;border:1px solid #e4d7bf;border-radius:999px;padding:4px 10px;font-family:var(--mono)}
+  .c-mcp{font-size:11px;color:#5f7d64;display:flex;align-items:center;gap:5px}
+  .c-mcp i{width:6px;height:6px;border-radius:50%;background:#54a374;display:inline-block}
+  .c-gear{width:28px;height:28px;border-radius:6px;color:#8e8069;font-size:14px}
+  .c-gear:hover{background:#f3ead8}
+  .c-body{display:grid;grid-template-columns:220px minmax(0,1fr) 320px;min-height:0}
+  .c-nav{border-right:1px solid #e6dccb;padding:18px 12px;overflow:auto;background:#f6f0e4}
+  .c-navtitle{font-size:10px;letter-spacing:.1em;color:#a3957e;text-transform:uppercase;padding:10px 8px 5px}
+  .c-navitem{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 8px;border-radius:5px;font-size:12px;color:#5f5342}
+  .c-navitem:hover{background:rgba(156,124,74,.08)}
+  .c-navitem.sel{background:#efe3cc;color:#5b4421;font-weight:600}
+  .c-navitem .method{transform:scale(.85);transform-origin:left center}
+  .c-navsep{height:1px;background:#e6dccb;margin:12px 6px}
+  .c-hist{display:flex;flex-direction:column;gap:4px}
+  .c-histrow{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:10.5px;color:#8e8069;border-radius:4px}
+  .c-histrow:hover{background:rgba(156,124,74,.07)}
+  .c-histrow .t{font-family:var(--mono)}
+  .c-histrow .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .c-doc{overflow:auto;padding:34px 42px 90px;background:#fffefb}
+  .c-docinner{max-width:800px;margin:0 auto}
+  .c-titleblock{padding-bottom:22px;border-bottom:1px solid #eee6d8}
+  .c-titleline{display:flex;align-items:center;gap:10px}
+  .c-doc h1{font:600 31px/1.2 "Songti SC","Noto Serif SC",Georgia,serif;letter-spacing:.01em;margin:6px 0 8px;color:#241e15}
+  .c-desc{font-size:13px;color:#7a6d5a;max-width:620px}
+  .c-meta{display:flex;gap:16px;margin-top:12px;font-size:10.5px;color:#a3957e;flex-wrap:wrap}
+  .c-section{padding:26px 0;border-bottom:1px solid #eee6d8}
+  .c-section h3{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#a3957e;margin-bottom:12px;display:flex;align-items:center;gap:9px}
+  .c-urlrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:9px;align-items:center;background:#fbf7ee;border:1px solid #e9dfcd;border-radius:8px;padding:9px 11px}
+  .c-urlrow code{font:12.5px var(--mono);color:#4a3f2e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .c-proto{font:10px var(--mono);color:#a3957e}
+  .c-send{padding:6px 14px;border-radius:6px;background:#8a6b3b;color:#fff;font-size:11.5px;font-weight:600}
+  .c-send:hover{background:#77592c}
+  .c-subhead{display:flex;align-items:center;justify-content:space-between;margin:20px 0 8px}
+  .c-subhead h4{font-size:11.5px;color:#5f5342;font-weight:600}
+  .c-subhead span{font-size:10.5px;color:#a3957e;font-family:var(--mono)}
+  .c-table{width:100%;border-collapse:collapse;font-size:11.5px;background:#fff}
+  .c-table th{text-align:left;color:#a3957e;font-weight:600;padding:6px 9px;border-bottom:1px solid #eee6d8;background:#fbf7ee}
+  .c-table td{padding:6px 9px;border-bottom:1px solid #f4eee3;font-family:var(--mono);color:#4a3f2e}
+  .c-editor{background:#fbf8f1;border:1px solid #e9e1d2;border-radius:7px;padding:12px 14px;color:#3d352a;min-height:120px}
+  .c-asserts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .c-assert{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid #e9e1d2;border-radius:7px;background:#fff;font-size:11.5px;color:#5f5342}
+  .c-assert .tick{width:16px;height:16px;border-radius:50%;background:#e6f2ea;color:#2f7d4f;display:grid;place-items:center;font-size:9px;font-weight:700}
+  .c-resphead{display:flex;align-items:center;gap:9px}
+  .c-respstatus{font:700 11px var(--mono);padding:2px 7px;border-radius:4px;background:#e6f2ea;color:#2f7d4f}
+  .c-resptabs{display:flex;gap:14px;margin:14px 0 10px}
+  .c-resptabs button{padding:3px 0 6px;font-size:11px;color:#8e8069;border-bottom:2px solid transparent}
+  .c-resptabs button.active{color:#4a3f2e;border-bottom-color:#8a6b3b;font-weight:600}
+  .c-respbody{background:#fbf8f1;border:1px solid #e9e1d2;border-radius:8px;padding:14px 16px;min-height:120px;color:#3d352a}
+  .c-foot{padding-top:24px;font-size:10.5px;color:#b0a48f;text-align:center}
+  .c-aside{border-left:1px solid #e6dccb;padding:20px 18px;overflow:auto;background:#f9f5ec}
+  .c-card{background:#fffdf8;border:1px solid #e9e1d2;border-radius:9px;padding:14px;margin-bottom:14px}
+  .c-asidetitle{font-size:10px;letter-spacing:.1em;color:#a3957e;text-transform:uppercase;margin-bottom:10px}
+  .c-runline{display:flex;align-items:baseline;gap:8px}
+  .c-runline b{font:700 30px/1 var(--mono);color:#2f7d4f}
+  .c-runline span{font-size:11px;color:#8e8069}
+  .c-runmetrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:12px 0}
+  .c-runmetrics div{background:#f7f1e5;border-radius:6px;padding:7px 8px;font-size:10px;color:#9c9080}
+  .c-runmetrics b{display:block;font:600 13px var(--mono);color:#4a3f2e}
+  .c-history{display:flex;flex-direction:column;gap:5px}
+  .c-hrow{display:flex;align-items:center;gap:7px;font-size:10.5px;color:#8e8069;padding:5px 2px;border-bottom:1px solid #f2ebdd}
+  .c-hrow:last-child{border-bottom:none}
+  .c-hrow .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .c-outline{display:flex;flex-direction:column;gap:4px}
+  .c-outline a{font-size:11px;color:#7a6d5a;padding:4px 6px;border-left:2px solid transparent;cursor:pointer;text-decoration:none}
+  .c-outline a:hover{color:#5b4421;border-left-color:#c8a25e}
+  .c-aside .c-send{width:100%;margin-top:12px;padding:8px}
+
+  /* ============================== switcher ============================== */
+  .switcher{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:6px 9px;background:#211d17;color:#f4eee2;border-radius:999px;box-shadow:0 10px 30px rgba(0,0,0,.28);z-index:9999;font-size:12px;border:1px solid #3b3428}
+  .switcher button{width:28px;height:28px;border-radius:50%;border:1px solid #4a4236;background:#2c271f;color:#f4eee2;font-size:13px;display:grid;place-items:center}
+  .switcher button:hover{background:#3a3227;border-color:#6b5f4a}
+  .switcher.picked{box-shadow:0 10px 30px rgba(0,0,0,.28), 0 0 0 1px #8a6b3b inset}
+  .sw-label{display:flex;flex-direction:column;align-items:center;line-height:1.25;min-width:210px}
+  .sw-label b{font-size:12px;letter-spacing:.02em}
+  .sw-label span{font-size:9.5px;color:#a89c88;letter-spacing:.04em;text-transform:uppercase}
+  .sw-dots{display:flex;gap:4px;margin-left:2px}
+  .sw-dots i{width:5px;height:5px;border-radius:50%;background:#5a5040}
+  .sw-dots i.on{background:#e0bd76}
+
+  @media (max-width:1180px){
+    .a-workspace{grid-template-columns:220px minmax(0,1fr)}
+    .b-main{grid-template-columns:minmax(0,1fr) 340px}
+    .c-body{grid-template-columns:190px minmax(0,1fr) 280px}
+    .c-doc{padding:26px 26px 70px}
+  }
+  @media (max-width:920px){
+    .a-tree{display:none}
+    .a-workspace{grid-template-columns:minmax(0,1fr)}
+    .b-main{grid-template-columns:1fr}
+    .b-inspector{border-left:none;border-top:1px solid #e2ddd2}
+    .c-body{grid-template-columns:minmax(0,1fr)}
+    .c-nav,.c-aside{display:none}
+  }
+</style>
+</head>
+<body>
+<div id="host"></div>
+
+<div class="switcher" id="switcher">
+  <button data-cycle="-1" title="上一个变体（←）">←</button>
+  <div class="sw-label">
+    <b id="swTitle">A · 经典三栏</b>
+    <span id="swSub">Prototype variant · 非设计的一部分</span>
+  </div>
+  <div class="sw-dots" id="swDots"></div>
+  <button data-cycle="1" title="下一个变体（→）">→</button>
+</div>
+
+<script>
+/* =====================================================================
+   共享数据（只读，UI 变体都吃同一份）
+   ===================================================================== */
+const APIS = {
+  'create-user': {
+    method:'POST', name:'创建用户', folder:'用户中心',
+    url:'{{baseUrl}}/users', protocol:'HTTP/1.1',
+    desc:'创建单个用户，返回新建用户的 id 与名称。',
+    headers:[['Content-Type','application/json'],['Authorization','Bearer {{token}}']],
+    query:[['notify','true']],
+    body:'{\n  "name": "Ada",\n  "email": "ada@example.com"\n}',
+    resp:{ status:201, text:'Created', ms:84, size:'36 B',
+      body:'{\n  "id": 7,\n  "name": "Ada",\n  "created": true\n}' },
+    assertions:[{label:'状态码 = 201', ok:true},{label:'id 存在', ok:true}]
+  },
+  'get-user': {
+    method:'GET', name:'查询用户', folder:'用户中心',
+    url:'{{baseUrl}}/users/1', protocol:'HTTP/1.1',
+    desc:'按 id 查询单个用户。',
+    headers:[['Authorization','Bearer {{token}}']],
+    query:[],
+    body:'',
+    resp:{ status:200, text:'OK', ms:53, size:'64 B',
+      body:'{\n  "id": 1,\n  "name": "Ada",\n  "email": "ada@example.com"\n}' },
+    assertions:[{label:'状态码 = 200', ok:true},{label:'name 存在', ok:true}]
+  },
+  login: {
+    method:'POST', name:'登录', folder:'用户中心',
+    url:'{{baseUrl}}/login', protocol:'HTTP/1.1',
+    desc:'用户名密码登录，返回访问 token。',
+    headers:[['Content-Type','application/json']],
+    query:[],
+    body:'{\n  "username": "ada",\n  "password": "secret"\n}',
+    resp:{ status:200, text:'OK', ms:71, size:'42 B',
+      body:'{\n  "token": "tkn_abc123"\n}' },
+    assertions:[{label:'状态码 = 200', ok:true},{label:'token 存在', ok:true}]
+  },
+  'get-orders': {
+    method:'GET', name:'查询订单', folder:'订单',
+    url:'{{baseUrl}}/orders', protocol:'HTTP/1.1',
+    desc:'查询当前用户的订单列表。',
+    headers:[['Authorization','Bearer {{token}}']],
+    query:[['page','1']],
+    body:'',
+    resp:{ status:200, text:'OK', ms:66, size:'92 B',
+      body:'{\n  "orders": [\n    { "id": 1001, "total": 99.5 },\n    { "id": 1002, "total": 12 }\n  ]\n}' },
+    assertions:[{label:'状态码 = 200', ok:true},{label:'orders 非空', ok:true}]
+  }
+};
+
+const TREE = [
+  { type:'folder', name:'用户中心', keys:['get-user','create-user','login'] },
+  { type:'folder', name:'订单', keys:['get-orders'] }
+];
+
+const ui = {
+  selected:'create-user',
+  sending:false,
+  lastSent:null,
+  responseFlash:false,
+  A:{ reqTab:'Body', respTab:'Live', split:'v' },
+  B:{ pane:'Body', respTab:'Body', drawer:false },
+  C:{ respTab:'Body' },
+  history:[
+    { time:'14:32:08', name:'创建用户', status:201, ms:84 },
+    { time:'14:30:51', name:'创建用户', status:422, ms:62 },
+    { time:'14:28:07', name:'登录', status:200, ms:71 },
+    { time:'14:26:33', name:'查询用户', status:200, ms:53 }
+  ]
+};
+
+let variant = 'A';
+const CHOSEN = 'A';
+const VARIANTS = {
+  A:{ name:'经典三栏', desc:'IDE 式：左树 + 标签页 + 上下分屏' },
+  B:{ name:'命令优先', desc:'无树聚焦：大 URL 命令条 + 右侧检查器' },
+  C:{ name:'文档流', desc:'阅读式：纵向契约 + 常驻运行侧栏' }
+};
+
+/* =====================================================================
+   小工具
+   ===================================================================== */
+const esc = (v) => String(v == null ? '' : v)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const api = () => APIS[ui.selected];
+const cls = (s) => (s >= 200 && s < 300) ? 'ok' : (s >= 400 ? 'bad' : 'warn');
+const statusColor = (s) => (s >= 200 && s < 300) ? 'status-ok' : (s >= 400 ? 'status-bad' : 'status-warn');
+const method = (m) => `<span class="method ${esc(m)}">${esc(m)}</span>`;
+const sendLabel = () => ui.sending ? '发送中…' : '发送';
+const sentNote = () => ui.lastSent ? `<span class="pill neutral">刚刚发送</span>` : '';
+
+function kvTable(rows, k1, k2) {
+  if (!rows || !rows.length) return `<div class="empty">（无）</div>`;
+  return `<table class="a-table"><tr><th>${esc(k1)}</th><th>${esc(k2)}</th></tr>${
+    rows.map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td></tr>`).join('')
+  }</table>`;
+}
+function tableGeneric(rows, clsName) {
+  if (!rows || !rows.length) return `<div class="empty">（无）</div>`;
+  return `<table class="${clsName}"><tr><th>Key</th><th>Value</th></tr>${
+    rows.map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td></tr>`).join('')
+  }</table>`;
+}
+function headersOf(a) {
+  return [['content-type','application/json; charset=utf-8'],['content-length',a.resp.size],['x-request-id','req_7f3a91']];
+}
+function responseBlock(a, tab, o) {
+  if (tab === 'Headers') return tableGeneric(headersOf(a), o.tableClass);
+  if (tab === 'Actual') {
+    return `<pre class="${o.codeClass}">${esc(a.method)} ${esc(a.url)}
+Content-Type: application/json
+Authorization: Bearer tkn_abc123
+
+${esc(a.body || '（无 Body）')}</pre>`;
+  }
+  if (tab === 'Cookie') return `<div class="${o.emptyClass}">暂无 Cookie</div>`;
+  if (tab === 'Console') {
+    return `<pre class="${o.codeClass}">[14:32:08] request sent
+[14:32:08] ${a.resp.status} ${a.resp.text} · ${a.resp.ms} ms
+[14:32:08] assertions ${a.assertions.filter(x => x.ok).length}/${a.assertions.length} passed</pre>`;
+  }
+  return `<pre class="${o.codeClass}">${esc(a.resp.body)}</pre>`;
+}
+
+/* =====================================================================
+   A · 经典三栏
+   ===================================================================== */
+function treeA() {
+  const out = [];
+  for (const node of TREE) {
+    out.push(`<div class="a-folder"><span class="a-caret">▾</span><span>${esc(node.name)}</span></div>`);
+    for (const key of node.keys) {
+      const a = APIS[key];
+      out.push(`<button class="a-treeitem ${ui.selected === key ? 'sel' : ''}" data-act="select:${key}">${method(a.method)}<span>${esc(a.name)}</span></button>`);
+    }
+  }
+  return out.join('');
+}
+
+function paneA(a) {
+  const tab = ui.A.reqTab;
+  if (tab === 'Header') return kvTable(a.headers, 'Key', 'Value');
+  if (tab === 'Query') return kvTable(a.query, 'Key', 'Value');
+  if (tab === 'Path') return `<div class="empty">当前请求没有 Path 参数</div>`;
+  if (tab === '认证') {
+    return `<div class="a-auth">
+      <div class="a-auth-row"><span>认证方式</span><b>Bearer Token</b></div>
+      <div class="a-auth-row"><span>Token</span><code>{{token}}</code></div>
+      <div class="a-hint">Token 来自环境变量，发送时解析为真实值。</div>
+    </div>`;
+  }
+  if (tab === 'Cookie') return `<div class="empty">暂无 Cookie</div>`;
+  if (tab === '预执行操作') return `<pre class="a-editor code">// pre-request script
+pm.environment.set("ts", Date.now());</pre>`;
+  if (tab === '后执行操作') return `<pre class="a-editor code">// post-response script
+const json = pm.response.json();
+pm.environment.set("lastId", json.id);</pre>`;
+  return `<div class="a-bodytypes">${['none','form-data','urlencoded','binary','msgpack','raw'].map(t =>
+    `<span class="a-radio ${t === 'raw' ? 'on' : ''}">${t}</span>`).join('')}</div>
+    <pre class="a-editor code">${esc(a.body || '当前请求未包含 Body')}</pre>`;
+}
+
+function statusLineA(a) {
+  if (ui.sending) return `<span class="pill warn">发送中…</span>`;
+  return `${method(a.method)}<span class="${statusColor(a.resp.status)}" style="font-weight:700">${a.resp.status} ${esc(a.resp.text)}</span>
+    <span>${esc(a.resp.ms)} ms</span><span>${esc(a.resp.size)}</span>${sentNote()}`;
+}
+
+function renderA() {
+  const a = api();
+  const respTab = ui.A.respTab;
+  const respCode = responseBlock(a, respTab, { codeClass:'code a-code', tableClass:'a-table', emptyClass:'empty' });
+  const splitClass = ui.A.split === 'h' ? 'a-splitarea h' : 'a-splitarea';
+  return `
+  <div class="a">
+    <header class="a-header">
+      <div class="a-brand"><span class="a-logo"></span><span>Apipost 单机版</span></div>
+      <div class="a-head-mid">
+        <button class="a-project"><i></i> Apipost 复刻验证 <span style="color:#a99c86">▾</span></button>
+        <button class="a-ghost">打开位置</button>
+        <button class="a-ghost">↻</button>
+      </div>
+      <div class="a-head-right">
+        <button class="a-ai">AI 执行计划</button>
+        <span class="a-mcp"><span class="dot"></span> MCP 运行中 <span class="a-toggle"></span></span>
+        <button class="a-env">本地 ▾</button>
+      </div>
+    </header>
+
+    <div class="a-body">
+      <nav class="a-rail">
+        <button><span class="ico">◷</span>最近</button>
+        <button class="active"><span class="ico">{ }</span>APIs</button>
+        <button><span class="ico">▤</span>文档</button>
+        <button><span class="ico">◇</span>字典</button>
+        <button><span class="ico">⚙</span>配置</button>
+        <span class="spacer"></span>
+        <button><span class="ico">⑂</span>Git</button>
+        <button><span class="ico">⌫</span>回收站</button>
+      </nav>
+
+      <div class="a-workspace">
+        <aside class="a-tree">
+          <div class="a-tree-head"><span>全部接口</span><button>+</button></div>
+          <div class="a-search">⌕ 搜索接口</div>
+          <div class="a-tree-list">${treeA()}</div>
+          <button class="a-new">+ 新建</button>
+        </aside>
+
+        <main class="a-main">
+          <div class="a-tabbar">
+            <div class="a-filetab active">${method(a.method)} ${esc(a.name)} <span class="unsaved"></span> <span class="x">×</span></div>
+            <div class="a-filetab">${method('GET')} 查询用户 <span class="x">×</span></div>
+            <button class="a-fileadd">+</button>
+          </div>
+
+          <div class="a-seg">
+            <span>设计</span><span class="active">调试</span><span>接口用例</span><span>一键压测</span><span>Mock</span>
+          </div>
+
+          <div class="a-title-row">
+            <span class="a-state"><i></i> 开发中 ▾</span>
+            <h2>${esc(a.name)}</h2>
+            <div class="a-title-actions"><span>分享</span><span>⋯</span></div>
+          </div>
+
+          <div class="a-urlrow">
+            <div class="a-urlcapsule">
+              <span class="m">${esc(a.method)} <span style="color:#a99c86">▾</span></span>
+              <span class="a-urltext">${esc(a.url)}</span>
+              <span class="a-proto">${esc(a.protocol)} ▾</span>
+            </div>
+            <button class="a-send" data-act="send">${sendLabel()} ▾</button>
+            <button class="a-save">保存 ▾</button>
+          </div>
+
+          <div class="a-reqtabs">
+            ${['Header','Query','Path','Body','认证','Cookie','预执行操作','后执行操作'].map(t =>
+              `<button class="${ui.A.reqTab === t ? 'active' : ''}" data-act="areq:${t}">${t}${t === '认证' ? '<span class="dot"></span>' : ''}</button>`).join('')}
+          </div>
+
+          <div class="${splitClass}">
+            <section class="a-req">${paneA(a)}</section>
+            <div class="a-divider"><button data-act="asplit">${ui.A.split === 'h' ? '⇄' : '⇅'}</button></div>
+            <section class="a-resp">
+              <div class="a-resptabs">
+                ${[['Live','实时响应'],['Headers','响应头'],['Cookie','Cookie'],['Sample','响应示例'],['Actual','实际请求'],['Console','控制台']].map(([k,label]) =>
+                  `<button class="${ui.A.respTab === k ? 'active' : ''}" data-act="aresp:${k}">${label}</button>`).join('')}
+              </div>
+              <div class="a-resptools"><span class="on">美化</span><span>原生</span><span>预览</span><span>可视化</span><span>表格</span></div>
+              <div class="a-respline">${statusLineA(a)}</div>
+              ${respCode}
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <footer class="a-statusbar">
+      <span>精简模式</span>
+      <span>软件序列号：80A8463B-…-6D8ACE5C ⌕</span>
+      <span class="right"><span>⚠ 试用已结束</span><span>⚙ 设置</span></span>
+    </footer>
+  </div>`;
+}
+
+/* =====================================================================
+   B · 命令优先
+   ===================================================================== */
+function drawerB() {
+  const parts = [];
+  for (const node of TREE) {
+    parts.push(`<div class="b-dfolder">${esc(node.name)}</div>`);
+    for (const key of node.keys) {
+      const a = APIS[key];
+      parts.push(`<button class="b-ditem ${ui.selected === key ? 'sel' : ''}" data-act="select:${key}">${method(a.method)}<span>${esc(a.name)}</span></button>`);
+    }
+  }
+  return parts.join('');
+}
+
+function paneB(a) {
+  const pane = ui.B.pane;
+  if (pane === '参数') {
+    return `<div class="b-bodytype"><span class="on">Query</span><span>Path</span><span>Header</span></div>
+      ${tableGeneric([...(a.query || []), ...(a.headers || [])], 'b-table')}`;
+  }
+  if (pane === '脚本') {
+    return `<pre class="b-editor code">// 预执行
+pm.environment.set("ts", Date.now());
+
+// 后执行
+const json = pm.response.json();
+pm.environment.set("lastId", json.id);</pre>`;
+  }
+  if (pane === '断言') {
+    return `<div style="font-size:11.5px;color:#8d8270;margin-bottom:10px">断言挂在接口定义上，结果落在本次运行。</div>
+      ${a.assertions.map(x => `<div class="b-assert" style="margin-bottom:6px"><span class="tick">✓</span>${esc(x.label)}<span style="color:#a99d8a">期望</span></div>`).join('')}`;
+  }
+  return `<div class="b-bodytype"><span class="on">raw</span><span>form-data</span><span>urlencoded</span><span>binary</span><span>msgpack</span></div>
+    <pre class="b-editor code">${esc(a.body || '当前请求未包含 Body')}</pre>`;
+}
+
+function renderB() {
+  const a = api();
+  const tab = ui.B.respTab;
+  const body = responseBlock(a, tab, { codeClass:'code b-code', tableClass:'b-table', emptyClass:'empty' });
+  return `
+  <div class="b">
+    <header class="b-header">
+      <div class="b-brand"><span class="b-logo"></span><span>Apipost</span></div>
+      <button class="b-proj">Apipost 复刻验证 <span style="color:#8d8270">▾</span></button>
+      <button class="b-cmd">⌕ 搜索接口或命令 <kbd>⌘K</kbd></button>
+      <div class="b-right">
+        <span class="b-mcp"><i></i> MCP</span>
+        <span class="b-env">本地 ▾</span>
+        <span class="b-avatar">L</span>
+      </div>
+    </header>
+
+    <div class="b-body">
+      <nav class="b-rail">
+        <button data-act="bdrawer" class="${ui.B.drawer ? 'active' : ''}" title="接口列表">☰</button>
+        <button class="active" title="编辑">✎</button>
+        <button title="最近">◷</button>
+        <button title="文档">▤</button>
+        <span class="spacer"></span>
+        <button title="设置">⚙</button>
+      </nav>
+
+      <main class="b-main">
+        <section class="b-compose">
+          <div class="b-crumbs">Apipost 复刻验证 / ${esc(a.folder)} / <b>${esc(a.name)}</b></div>
+
+          <div class="b-methodrow">
+            <div class="b-method">${esc(a.method)} <span style="color:#b9ad98">▾</span></div>
+            <div class="b-url"><span class="lbl">URL</span><span class="b-urltext">${esc(a.url)}</span><span class="b-proto">HTTP/1.1</span></div>
+            <button class="b-send" data-act="send">${sendLabel()}</button>
+          </div>
+
+          <div class="b-metarow">
+            <span class="b-chip">环境 <b>本地</b></span>
+            <span class="b-chip">认证 <b>Bearer</b></span>
+            <span class="b-chip">超时 <b>10s</b></span>
+            <span class="b-spacer"></span>
+            <span class="b-saved">${ui.lastSent ? '刚刚发送' : '已保存 14:32'}</span>
+          </div>
+
+          <div class="b-panelsw">
+            ${['参数','Body','脚本','断言'].map(t =>
+              `<button class="${ui.B.pane === t ? 'active' : ''}" data-act="bpane:${t}">${t}</button>`).join('')}
+          </div>
+
+          <div class="b-surface">${paneB(a)}</div>
+
+          <div class="b-asserts">
+            ${a.assertions.map(x => `<span class="b-assert"><span class="tick">✓</span>${esc(x.label)}</span>`).join('')}
+          </div>
+
+          <div class="b-foot"><span>⌘↵ 发送</span><span>⌘S 保存</span><span>发送后自动记录到历史</span></div>
+        </section>
+
+        <aside class="b-inspector">
+          <div class="b-inspector-head">
+            <div class="b-live"><i></i> 实时响应</div>
+            ${ui.sending ? `<span class="pill warn">发送中…</span>` : `<span class="b-statusbig ${a.resp.status >= 400 ? 'bad' : ''}">${a.resp.status}</span>`}
+          </div>
+
+          <div class="b-metrics">
+            <div class="b-metric"><b>${esc(a.resp.ms)}</b><span>ms</span></div>
+            <div class="b-metric"><b>${esc(a.resp.size)}</b><span>大小</span></div>
+            <div class="b-metric"><b>${a.assertions.filter(x => x.ok).length}/${a.assertions.length}</b><span>断言</span></div>
+          </div>
+
+          <div class="b-resptabs">
+            ${['Body','Headers','Actual'].map(t =>
+              `<button class="${tab === t ? 'active' : ''}" data-act="bresp:${t}">${t === 'Actual' ? '实际请求' : t === 'Headers' ? '响应头' : 'Body'}</button>`).join('')}
+          </div>
+          <div class="b-respbody">${body}</div>
+
+          <div class="b-sectitle"><span>运行历史</span><span>${ui.history.length} 条</span></div>
+          <div class="b-history">
+            ${ui.history.slice(0,5).map(h => `
+              <div class="b-hist">
+                <span class="t">${esc(h.time)}</span>
+                <span class="n">${esc(h.name)}</span>
+                <span class="pill ${cls(h.status)}">${h.status || '—'}</span>
+              </div>`).join('')}
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <div class="b-drawer ${ui.B.drawer ? 'open' : ''}">
+      <div class="b-drawer-head"><span>接口列表</span><button data-act="bdrawer">×</button></div>
+      <div class="b-drawer-search">⌕ 搜索接口</div>
+      <div class="b-drawer-list">${drawerB()}</div>
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   C · 文档流
+   ===================================================================== */
+function navC() {
+  const parts = [];
+  for (const node of TREE) {
+    parts.push(`<div class="c-navtitle">${esc(node.name)}</div>`);
+    for (const key of node.keys) {
+      const a = APIS[key];
+      parts.push(`<button class="c-navitem ${ui.selected === key ? 'sel' : ''}" data-act="select:${key}">${method(a.method)}<span>${esc(a.name)}</span></button>`);
+    }
+  }
+  return parts.join('');
+}
+
+function renderC() {
+  const a = api();
+  const tab = ui.C.respTab || 'Body';
+  const body = responseBlock(a, tab, { codeClass:'code c-code', tableClass:'c-table', emptyClass:'empty' });
+  return `
+  <div class="c">
+    <header class="c-header">
+      <div class="c-brand"><span class="c-logo">A</span><span>Apipost 单机版</span></div>
+      <div class="c-breadcrumb">Apipost 复刻验证 <span>/</span> ${esc(a.folder)} <span>/</span> <b>${esc(a.name)}</b></div>
+      <div class="c-right">
+        <span class="c-env">本地 · 127.0.0.1:8090</span>
+        <span class="c-mcp"><i></i> MCP 运行中</span>
+        <button class="c-gear">⚙</button>
+      </div>
+    </header>
+
+    <div class="c-body">
+      <nav class="c-nav">
+        ${navC()}
+        <div class="c-navsep"></div>
+        <div class="c-navtitle">最近发送</div>
+        <div class="c-hist">
+          ${ui.history.slice(0,5).map(h => `<div class="c-histrow"><span class="t">${esc(h.time.slice(0,5))}</span><span class="n">${esc(h.name)}</span><span class="${statusColor(h.status)}" style="font-family:var(--mono)">${h.status || '—'}</span></div>`).join('')}
+        </div>
+      </nav>
+
+      <article class="c-doc">
+        <div class="c-docinner">
+          <div class="c-titleblock">
+            <div class="c-titleline">${method(a.method)}<span style="font-size:10.5px;color:#a3957e;font-family:var(--mono)">${esc(a.method)} ${esc(a.url.replace('{{baseUrl}}',''))}</span></div>
+            <h1>${esc(a.name)}</h1>
+            <p class="c-desc">${esc(a.desc)}</p>
+            <div class="c-meta"><span>更新于 14:32</span><span>创建人 local</span><span>断言 ${a.assertions.length}</span><span>状态 开发中</span></div>
+          </div>
+
+          <section class="c-section" id="c-req">
+            <h3>请求</h3>
+            <div class="c-urlrow">
+              ${method(a.method)}
+              <code>${esc(a.url)}</code>
+              <span class="c-proto">HTTP/1.1</span>
+              <button class="c-send" data-act="send">${sendLabel()}</button>
+            </div>
+
+            <div class="c-subhead"><h4>Headers</h4><span>${a.headers.length} 项</span></div>
+            <table class="c-table"><tr><th>Key</th><th>Value</th></tr>
+              ${a.headers.map(h => `<tr><td>${esc(h[0])}</td><td>${esc(h[1])}</td></tr>`).join('')}
+            </table>
+
+            <div class="c-subhead"><h4>Body</h4><span>raw · JSON</span></div>
+            <pre class="c-editor code">${esc(a.body || '当前请求未包含 Body')}</pre>
+          </section>
+
+          <section class="c-section" id="c-assert">
+            <h3>断言 <span style="color:#8fae99;text-transform:none;letter-spacing:0">${a.assertions.filter(x => x.ok).length}/${a.assertions.length} 通过</span></h3>
+            <div class="c-asserts">
+              ${a.assertions.map(x => `<div class="c-assert"><span class="tick">✓</span>${esc(x.label)}</div>`).join('')}
+            </div>
+          </section>
+
+          <section class="c-section" id="c-resp">
+            <h3 class="c-resphead">响应示例 <span class="c-respstatus">${a.resp.status} ${esc(a.resp.text)}</span></h3>
+            <div class="c-resptabs">
+              ${['Body','Headers','Actual'].map(t =>
+                `<button class="${tab === t ? 'active' : ''}" data-act="cresp:${t}">${t === 'Actual' ? '实际请求' : t === 'Headers' ? '响应头' : 'Body'}</button>`).join('')}
+            </div>
+            <div class="c-respbody">${body}</div>
+          </section>
+
+          <div class="c-foot">由 Api Workbench 本地生成 · 数据不会上传</div>
+        </div>
+      </article>
+
+      <aside class="c-aside">
+        <div class="c-card">
+          <div class="c-asidetitle">本次运行</div>
+          <div class="c-runline">
+            ${ui.sending ? `<b style="color:#9a6a12">…</b><span>发送中</span>` : `<b class="${a.resp.status >= 400 ? 'status-bad' : ''}">${a.resp.status}</b><span>${esc(a.resp.text)}</span>`}
+          </div>
+          <div class="c-runmetrics">
+            <div><b>${esc(a.resp.ms)}</b>ms</div>
+            <div><b>${esc(a.resp.size)}</b>大小</div>
+            <div><b>${a.assertions.filter(x => x.ok).length}/${a.assertions.length}</b>断言</div>
+          </div>
+          <div class="c-resptabs">
+            ${['Body','Headers'].map(t =>
+              `<button class="${tab === t ? 'active' : ''}" data-act="crespside:${t}">${t === 'Headers' ? '响应头' : 'Body'}</button>`).join('')}
+          </div>
+          <div class="c-respbody">${responseBlock(a, tab, { codeClass:'code c-code', tableClass:'c-table', emptyClass:'empty' })}</div>
+          <button class="c-send" data-act="send">${sendLabel()}</button>
+        </div>
+
+        <div class="c-card">
+          <div class="c-asidetitle">历史</div>
+          <div class="c-history">
+            ${ui.history.slice(0,6).map(h => `<div class="c-hrow"><span style="font-family:var(--mono)">${esc(h.time)}</span><span class="n">${esc(h.name)}</span><span class="${statusColor(h.status)}">${h.status || '—'}</span></div>`).join('')}
+          </div>
+        </div>
+
+        <div class="c-card">
+          <div class="c-asidetitle">本页</div>
+          <div class="c-outline">
+            <a data-act="scroll:c-req">请求</a>
+            <a data-act="scroll:c-assert">断言</a>
+            <a data-act="scroll:c-resp">响应示例</a>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   交互与切换
+   ===================================================================== */
+const host = document.getElementById('host');
+
+function render() {
+  host.innerHTML = variant === 'A' ? renderA() : variant === 'B' ? renderB() : renderC();
+  const swTitle = document.getElementById('swTitle');
+  const swSub = document.getElementById('swSub');
+  const dots = document.getElementById('swDots');
+  if (swTitle) swTitle.textContent = `${variant} · ${VARIANTS[variant].name}${variant === CHOSEN ? '  ✓ 已选定' : ''}`;
+  if (swSub) swSub.textContent = `${VARIANTS[variant].desc} · 原型变体`;
+  if (dots) dots.innerHTML = ['A','B','C'].map(k => `<i class="${k === variant ? 'on' : ''}"></i>`).join('');
+  const sw = document.getElementById('switcher');
+  if (sw) sw.classList.toggle('picked', variant === CHOSEN);
+  try { history.replaceState(null, '', '?variant=' + variant); } catch (e) {}
+}
+
+function setVariant(v) {
+  if (!VARIANTS[v]) return;
+  variant = v;
+  render();
+}
+function cycle(step) {
+  const keys = ['A','B','C'];
+  const i = keys.indexOf(variant);
+  setVariant(keys[(i + step + keys.length) % keys.length]);
+}
+
+function safeSend() {
+  if (ui.sending) return;
+  ui.sending = true;
+  render();
+  setTimeout(() => {
+    ui.sending = false;
+    ui.lastSent = '刚刚';
+    const a = api();
+    ui.history.unshift({ time:'刚刚', name:a.name, status:a.resp.status, ms:a.resp.ms });
+    ui.history = ui.history.slice(0, 8);
+    render();
+  }, 520);
+}
+
+function handleAction(act) {
+  const [name, arg] = act.split(':');
+  if (name === 'send') return safeSend();
+  if (name === 'select') { ui.selected = arg; render(); return; }
+  if (name === 'areq') { ui.A.reqTab = arg; render(); return; }
+  if (name === 'aresp') { ui.A.respTab = arg; render(); return; }
+  if (name === 'asplit') { ui.A.split = ui.A.split === 'v' ? 'h' : 'v'; render(); return; }
+  if (name === 'bpane') { ui.B.pane = arg; render(); return; }
+  if (name === 'bresp') { ui.B.respTab = arg; render(); return; }
+  if (name === 'bdrawer') { ui.B.drawer = !ui.B.drawer; render(); return; }
+  if (name === 'cresp') { ui.C.respTab = arg; render(); return; }
+  if (name === 'crespside') { ui.C.respTab = arg; render(); return; }
+  if (name === 'scroll') {
+    const el = document.getElementById(arg);
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior:'smooth', block:'start' });
+    return;
+  }
+}
+
+host.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  handleAction(el.dataset.act);
+});
+
+document.addEventListener('click', (e) => {
+  const cyc = e.target.closest('[data-cycle]');
+  if (cyc) { cycle(Number(cyc.dataset.cycle)); return; }
+});
+
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); cycle(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); cycle(1); }
+});
+
+/* 启动 */
+try {
+  const params = new URLSearchParams(location.search);
+  const v = (params.get('variant') || 'A').toUpperCase();
+  variant = VARIANTS[v] ? v : 'A';
+} catch (e) { variant = 'A'; }
+render();
+</script>
+</body>
+</html>
