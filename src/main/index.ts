@@ -5,6 +5,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { registerIpc } from './ipc'
 import { applyDebugSwitch, ensureDefaultProject } from './storage/store'
 import { shutdownMcp, startMcpServer } from './mcp/server'
+import { shutdownDocs, startDocServer } from './docs/server'
 
 const appData = app.getPath('appData')
 const legacyUserData = path.join(appData, 'api-workbench')
@@ -86,6 +87,7 @@ if (!gotLock) {
     ensureDefaultProject()
     registerIpc()
     void startMcpServer()
+    void startDocServer()
     createWindow()
 
     app.on('activate', () => {
@@ -99,5 +101,6 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     void shutdownMcp()
+    void shutdownDocs()
   })
 }

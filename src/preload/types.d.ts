@@ -3,6 +3,11 @@ import type {
   AppSettings,
   DebugConfig,
   DebugState,
+  DocServiceConfig,
+  DocServiceStatus,
+  DocShare,
+  DocShareInput,
+  DocShareSummary,
   Environment,
   Flow,
   FlowRun,
@@ -25,6 +30,7 @@ export interface ApiBridge {
   app: {
     openPath(targetPath: string): Promise<Result<string>>
     copyText(text: string): Promise<Result<boolean>>
+    openExternal(url: string): Promise<Result<boolean>>
     relaunch(): Promise<Result<boolean>>
   }
   debug: {
@@ -98,6 +104,15 @@ export interface ApiBridge {
     tools(): Promise<Result<McpToolInfo[]>>
     infoPath(): Promise<Result<string>>
     stdioPath(): Promise<Result<string>>
+  }
+  docs: {
+    list(projectId: string): Promise<Result<DocShareSummary[]>>
+    get(projectId: string, shareId: string): Promise<Result<DocShare | null>>
+    create(projectId: string, input: DocShareInput): Promise<Result<DocShare>>
+    update(projectId: string, shareId: string, input: DocShareInput): Promise<Result<DocShare>>
+    remove(projectId: string, shareIds: string[]): Promise<Result<boolean>>
+    serviceStatus(): Promise<Result<DocServiceStatus>>
+    saveService(config: DocServiceConfig): Promise<Result<DocServiceStatus>>
   }
 }
 

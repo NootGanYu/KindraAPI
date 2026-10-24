@@ -8,6 +8,7 @@ const api = {
   app: {
     openPath: (targetPath: string) => invoke('app:openPath', targetPath),
     copyText: (text: string) => invoke('app:copyText', text),
+    openExternal: (url: string) => invoke('app:openExternal', url),
     relaunch: () => invoke('app:relaunch')
   },
 
@@ -86,6 +87,18 @@ const api = {
     tools: () => invoke('mcp:tools'),
     infoPath: () => invoke('mcp:info:path'),
     stdioPath: () => invoke('mcp:stdio:path')
+  },
+
+  docs: {
+    list: (projectId: string) => invoke('doc:list', projectId),
+    get: (projectId: string, shareId: string) => invoke('doc:get', projectId, shareId),
+    create: (projectId: string, input: unknown) => invoke('doc:create', projectId, input),
+    update: (projectId: string, shareId: string, input: unknown) =>
+      invoke('doc:update', projectId, shareId, input),
+    remove: (projectId: string, shareIds: string[]) =>
+      invoke('doc:delete', projectId, shareIds),
+    serviceStatus: () => invoke('doc:service:get'),
+    saveService: (config: unknown) => invoke('doc:service:save', config)
   }
 }
 

@@ -13,8 +13,12 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  createDocShare,
   createTargetInProject,
+  deleteDocShares,
   ensureDefaultProject,
+  getDocServiceConfig,
+  saveDocServiceConfig,
   saveEnvironment,
   saveFlow,
   saveMcpConfig,
@@ -25,6 +29,7 @@ import {
   mcpInfoPath
 } from '../src/main/storage/store'
 import {
+  createDocSettings,
   createEnvironment,
   createFlow,
   createFlowEvent,
@@ -32,6 +37,7 @@ import {
 } from '../src/shared/factories'
 import { runFlow } from '../src/main/flow/engine'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
+import { startDocServer, stopDocServer } from '../src/main/docs/server'
 
 function assert(condition: unknown, label: string): void {
   if (!condition) throw new Error(`断言失败：${label}`)
@@ -293,6 +299,76 @@ async function main(): Promise<void> {
   assert(parsed.projects.length === 1, 'stdio tools/call')
   child.kill()
 
+  // Docs · local share service
+  const docPort = await new Promise<number>((resolve) => {
+    const probe = net.createServer()
+    probe.listen(0, '127.0.0.1', () => {
+      const port = (probe.address() as net.AddressInfo).port
+      probe.close(() => resolve(port))
+    })
+  })
+  saveDocServiceConfig({ enabled: true, port: docPort })
+  const docStatus = await startDocServer()
+  assert(docStatus.running, 'doc server running')
+  assert(docStatus.port === docPort, 'doc server port')
+  const docBase = `http://127.0.0.1:${docPort}`
+
+  const publicShare = createDocShare(project.project_id, {
+    name: 'smoke 文档',
+    scope: 'project',
+    target_ids: [],
+    settings: createDocSettings({ openapi: true, show_scripts: true })
+  })
+  const docPage = await fetch(`${docBase}/share/${publicShare.share_id}`)
+  assert(docPage.status === 200, 'doc page 200')
+  const docHtml = await docPage.text()
+  assert(docHtml.includes('smoke 文档'), 'doc page contains name')
+  assert(docHtml.includes('查询订单'), 'doc page contains api')
+
+  const md = await fetch(`${docBase}/share/${publicShare.share_id}/download?format=md`)
+  assert(md.status === 200, 'doc markdown 200')
+  const mdText = await md.text()
+  assert(mdText.includes('# smoke 文档') && mdText.includes('查询订单'), 'doc markdown content')
+
+  const openapiResponse = await fetch(
+    `${docBase}/share/${publicShare.share_id}/download?format=openapi`
+  )
+  assert(openapiResponse.status === 200, 'doc openapi 200')
+  const spec = (await openapiResponse.json()) as { openapi?: string; paths?: Record<string, unknown> }
+  assert(spec.openapi === '3.0.3' && Boolean(spec.paths?.['/orders']), 'doc openapi content')
+
+  const passwordShare = createDocShare(project.project_id, {
+    name: '密码文档',
+    scope: 'api',
+    target_ids: [orders.target_id],
+    settings: createDocSettings({ password: 'secret' })
+  })
+  const locked = await fetch(`${docBase}/share/${passwordShare.share_id}`)
+  assert(locked.status === 401, 'doc password required')
+  const wrong = await fetch(`${docBase}/share/${passwordShare.share_id}/auth`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'password=wrong',
+    redirect: 'manual'
+  })
+  assert(wrong.status === 302, 'doc wrong password redirect')
+  const right = await fetch(`${docBase}/share/${passwordShare.share_id}/auth`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'password=secret',
+    redirect: 'manual'
+  })
+  assert(right.status === 302, 'doc auth redirect')
+  const cookie = (right.headers.get('set-cookie') ?? '').split(';')[0]
+  assert(cookie.startsWith('openpost_doc_token='), 'doc auth cookie')
+  const unlocked = await fetch(`${docBase}/share/${passwordShare.share_id}`, {
+    headers: { cookie }
+  })
+  assert(unlocked.status === 200, 'doc password accepted')
+
+  deleteDocShares(project.project_id, [publicShare.share_id, passwordShare.share_id])
+  saveDocServiceConfig(getDocServiceConfig())
+  await stopDocServer()
   await stopMcpServer()
   httpServer.close()
 
@@ -309,7 +385,10 @@ async function main(): Promise<void> {
         mcp_sync_created: sync.result.created,
         mcp_synced_api: syncedApis.result.apis[0]?.name,
         stdio_tools: stdioTools.result.tools.length,
-        stdio_call_projects: parsed.projects.length
+        stdio_call_projects: parsed.projects.length,
+        doc_status: docStatus,
+        doc_markdown_bytes: mdText.length,
+        doc_openapi_paths: Object.keys(spec.paths ?? {}).length
       },
       null,
       2

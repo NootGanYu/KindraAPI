@@ -1,6 +1,7 @@
 import type {
   AuthModel,
   BodyModel,
+  DocSettings,
   Environment,
   Flow,
   FlowAssertion,
@@ -193,5 +194,19 @@ export function createFlow(projectId: string, name = '新建流程', envId = '')
     events: [],
     created_at: now,
     updated_at: now
+  }
+}
+
+export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettings {
+  return {
+    password: '',
+    expire_days: -1,
+    show_request: true,
+    show_body: true,
+    show_response: true,
+    show_headers: true,
+    show_scripts: false,
+    openapi: false,
+    ...partial
   }
 }

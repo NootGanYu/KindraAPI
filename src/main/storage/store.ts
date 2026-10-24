@@ -1,12 +1,21 @@
 import { app } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import type {
   AppPaths,
   AppSettings,
   DebugConfig,
   DebugState,
+  DocScope,
+  DocServiceConfig,
+  DocSettings,
+  DocShare,
+  DocShareInput,
+  DocShareSummary,
+  DocSnapshot,
+  DocTargetSnapshot,
   Environment,
   Flow,
   FlowEventResult,
@@ -21,7 +30,14 @@ import type {
   Target,
   TargetSummary
 } from '@shared/types'
-import { createEnvironment, createProject, createTarget, createRequest } from '@shared/factories'
+import {
+  createDocSettings,
+  createEnvironment,
+  createId,
+  createProject,
+  createTarget,
+  createRequest
+} from '@shared/factories'
 
 const DEFAULT_SETTINGS: AppSettings = {
   send_timeout: 60000,
@@ -668,4 +684,352 @@ export function deleteEnvironment(projectId: string, envId: string): void {
   const index = readEnvIndex(projectId)
   index.items = index.items.filter((item) => item.env_id !== envId)
   writeEnvIndex(projectId, index)
+}
+
+// ---------------------------------------------------------------------------
+// Docs · local share
+// ---------------------------------------------------------------------------
+
+export const DOC_DEFAULT_PORT = 30999
+
+const DOC_SCOPES: DocScope[] = ['project', 'folder', 'api', 'custom']
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function docsDir(projectId: string): string {
+  return path.join(projectDir(projectId), 'docs')
+}
+
+function docSharesPath(projectId: string): string {
+  return path.join(docsDir(projectId), 'shares.json')
+}
+
+function readDocShares(projectId: string): DocShare[] {
+  return readJson<DocShare[]>(docSharesPath(projectId), [])
+}
+
+function writeDocShares(projectId: string, shares: DocShare[]): void {
+  writeJson(docSharesPath(projectId), shares)
+}
+
+function docServiceConfigPath(): string {
+  return path.join(getPaths().localRoot, 'settings', 'docs_config.json')
+}
+
+function normalizeDocPort(value: unknown, fallback = DOC_DEFAULT_PORT): number {
+  const port = Number(value)
+  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : fallback
+}
+
+export function getDocServiceConfig(): DocServiceConfig {
+  const raw = readJson<Partial<DocServiceConfig>>(docServiceConfigPath(), {})
+  return {
+    enabled: raw.enabled !== false,
+    port: normalizeDocPort(raw.port)
+  }
+}
+
+export function saveDocServiceConfig(input: DocServiceConfig): DocServiceConfig {
+  const config: DocServiceConfig = {
+    enabled: input.enabled !== false,
+    port: normalizeDocPort(input.port)
+  }
+  writeJson(docServiceConfigPath(), config)
+  return config
+}
+
+function normalizeDocScope(value: unknown): DocScope {
+  const scope = String(value) as DocScope
+  if (!DOC_SCOPES.includes(scope)) throw new Error('分享范围无效')
+  return scope
+}
+
+function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
+  const base = createDocSettings()
+  const rawDays = Number(input?.expire_days)
+  const days =
+    rawDays === -1 || (Number.isFinite(rawDays) && rawDays >= 1 && rawDays <= 3650)
+      ? Math.trunc(rawDays)
+      : base.expire_days
+  return {
+    password: typeof input?.password === 'string' ? input.password.slice(0, 128) : '',
+    expire_days: days,
+    show_request: input?.show_request !== false,
+    show_body: input?.show_body !== false,
+    show_response: input?.show_response !== false,
+    show_headers: input?.show_headers !== false,
+    show_scripts: input?.show_scripts === true,
+    openapi: input?.openapi === true
+  }
+}
+
+function normalizeDocTargetIds(scope: DocScope, ids: unknown): string[] {
+  if (scope === 'project') return []
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new Error(scope === 'folder' ? '请选择要分享的目录' : '请选择要分享的接口')
+  }
+  return Array.from(new Set(ids.map((id) => assertId(String(id), 'target_id'))))
+}
+
+function docProtocolLabel(target: DocTargetSnapshot): string {
+  const raw = `${target.protocol ?? ''} ${target.method ?? ''}`.toLowerCase()
+  if (raw.includes('socket.io') || raw.includes('socketio')) return 'Socket.IO'
+  if (raw.includes('graphql')) return 'GraphQL'
+  if (raw.includes('grpc')) return 'gRPC'
+  if (raw.includes('websocket') || raw.includes('ws://') || raw.includes('wss://')) {
+    return 'Websocket'
+  }
+  if (raw.includes('tcp')) return 'TCP'
+  if (raw.includes('sse') || raw.includes('event-stream')) return 'SSE'
+  if (raw.includes('markdown') || raw.startsWith('md ')) return 'MD'
+  return 'HTTP'
+}
+
+function docOwner(): string {
+  try {
+    return os.userInfo().username || 'local'
+  } catch {
+    return 'local'
+  }
+}
+
+function docExpireAt(share: Pick<DocShare, 'created_at' | 'settings'>): string | null {
+  if (share.settings.expire_days === -1) return null
+  const created = new Date(share.created_at).getTime()
+  if (!Number.isFinite(created)) return null
+  return new Date(created + share.settings.expire_days * DAY_MS).toISOString()
+}
+
+function docExpireInfo(share: DocShare): {
+  expire_at: string | null
+  expire_label: string
+  expired: boolean
+} {
+  const expireAt = docExpireAt(share)
+  if (!expireAt) return { expire_at: null, expire_label: '永久有效', expired: false }
+  const remain = new Date(expireAt).getTime() - Date.now()
+  if (remain <= 0) return { expire_at: expireAt, expire_label: '已过期', expired: true }
+  const days = Math.max(1, Math.ceil(remain / DAY_MS))
+  return { expire_at: expireAt, expire_label: `${days} 天后过期`, expired: false }
+}
+
+function toDocTargetSnapshot(target: Target): DocTargetSnapshot {
+  return {
+    target_id: target.target_id,
+    target_type: target.target_type,
+    parent_id: target.parent_id,
+    name: target.name,
+    description: target.description,
+    method: target.method,
+    url: target.url,
+    protocol: target.protocol,
+    sort: target.sort,
+    request: target.request,
+    response: target.response
+  }
+}
+
+function collectDocTargets(projectId: string, scope: DocScope, targetIds: string[]): Target[] {
+  const index = readTargetIndex(projectId)
+  const byId = new Map(index.items.map((item) => [item.target_id, item]))
+  const ids = new Set<string>()
+
+  const addWithDescendants = (id: string, seen = new Set<string>()): void => {
+    if (seen.has(id)) return
+    seen.add(id)
+    if (!byId.has(id)) return
+    ids.add(id)
+    for (const child of index.items) {
+      if (child.parent_id === id) addWithDescendants(child.target_id, seen)
+    }
+  }
+
+  if (scope === 'project') {
+    for (const item of index.items) ids.add(item.target_id)
+  } else {
+    for (const id of targetIds) {
+      const item = byId.get(id)
+      if (!item) throw new Error('分享目标不存在或已被删除')
+      if (scope === 'folder' && item.target_type !== 'folder') throw new Error('请选择目录')
+      if (scope === 'api' && item.target_type !== 'api') throw new Error('请选择接口')
+      addWithDescendants(id)
+    }
+    // 保留祖先目录，分享页才能呈现完整树。
+    for (const id of [...ids]) {
+      let current = byId.get(id)
+      let guard = 0
+      while (current && current.parent_id !== '0' && guard < 200) {
+        ids.add(current.parent_id)
+        current = byId.get(current.parent_id)
+        guard += 1
+      }
+    }
+  }
+
+  const targets = [...ids]
+    .map((id) => getTarget(projectId, id))
+    .filter((target): target is Target => Boolean(target))
+
+  const apiCount = targets.filter((target) => target.target_type === 'api').length
+  if (scope !== 'project' && apiCount === 0) {
+    throw new Error(scope === 'folder' ? '所选目录下没有接口' : '请选择要分享的接口')
+  }
+
+  return targets.sort(
+    (a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-Hans-CN')
+  )
+}
+
+function buildDocSnapshot(
+  project: Project,
+  projectId: string,
+  scope: DocScope,
+  targetIds: string[]
+): DocSnapshot {
+  const targets = collectDocTargets(projectId, scope, targetIds)
+  return {
+    project_name: project.name,
+    project_intro: project.intro,
+    generated_at: new Date().toISOString(),
+    targets: targets.map(toDocTargetSnapshot)
+  }
+}
+
+export function docShareTypeLabel(share: DocShare): string {
+  if (share.scope === 'project') return '项目'
+  if (share.scope === 'folder') return '目录'
+  if (share.scope === 'custom') return '自定义'
+  const api = share.snapshot.targets.find((item) => item.target_type === 'api')
+  return api ? docProtocolLabel(api) : 'HTTP'
+}
+
+function toDocShareSummary(share: DocShare): DocShareSummary {
+  const expire = docExpireInfo(share)
+  const typeLabel = docShareTypeLabel(share)
+  return {
+    share_id: share.share_id,
+    project_id: share.project_id,
+    name: share.name,
+    scope: share.scope,
+    type_label: typeLabel,
+    visibility: share.settings.password ? 'password' : 'public',
+    target_count: share.snapshot.targets.filter((item) => item.target_type === 'api').length,
+    expire_at: expire.expire_at,
+    expire_label: expire.expire_label,
+    expired: expire.expired,
+    owner: docOwner(),
+    created_at: share.created_at,
+    updated_at: share.updated_at
+  }
+}
+
+export function listDocShares(projectId: string): DocShare[] {
+  return readDocShares(projectId).sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+}
+
+export function listDocShareSummaries(projectId: string): DocShareSummary[] {
+  return listDocShares(projectId).map(toDocShareSummary)
+}
+
+export function getDocShare(projectId: string, shareId: string): DocShare | null {
+  return readDocShares(projectId).find((item) => item.share_id === shareId) ?? null
+}
+
+export function createDocShare(projectId: string, input: DocShareInput): DocShare {
+  const project = getProject(projectId)
+  if (!project) throw new Error('项目不存在')
+  const scope = normalizeDocScope(input.scope)
+  const targetIds = normalizeDocTargetIds(scope, input.target_ids)
+  const now = new Date().toISOString()
+  const share: DocShare = {
+    share_id: createId('s'),
+    project_id: projectId,
+    name: (input.name ?? '').trim().slice(0, 120) || '未命名分享',
+    scope,
+    target_ids: targetIds,
+    settings: normalizeDocSettings(input.settings),
+    snapshot: buildDocSnapshot(project, projectId, scope, targetIds),
+    created_at: now,
+    updated_at: now
+  }
+  const shares = readDocShares(projectId)
+  shares.unshift(share)
+  writeDocShares(projectId, shares)
+  return share
+}
+
+export function updateDocShare(
+  projectId: string,
+  shareId: string,
+  input: DocShareInput
+): DocShare {
+  const project = getProject(projectId)
+  if (!project) throw new Error('项目不存在')
+  const shares = readDocShares(projectId)
+  const index = shares.findIndex((item) => item.share_id === shareId)
+  if (index < 0) throw new Error('分享不存在')
+  const existing = shares[index]
+  const scope = normalizeDocScope(input.scope)
+  const targetIds = normalizeDocTargetIds(scope, input.target_ids)
+  const next: DocShare = {
+    ...existing,
+    name: (input.name ?? '').trim().slice(0, 120) || '未命名分享',
+    scope,
+    target_ids: targetIds,
+    settings: normalizeDocSettings(input.settings),
+    snapshot: buildDocSnapshot(project, projectId, scope, targetIds),
+    updated_at: new Date().toISOString()
+  }
+  shares[index] = next
+  writeDocShares(projectId, shares)
+  return next
+}
+
+export function deleteDocShares(projectId: string, shareIds: string[]): void {
+  const remove = new Set(shareIds.map((id) => assertId(id, 'share_id')))
+  writeDocShares(
+    projectId,
+    readDocShares(projectId).filter((item) => !remove.has(item.share_id))
+  )
+}
+
+/**
+ * 分享服务面向所有项目，按 share_id 全局查找。
+ * 说明：注册表里的 path 可能是旧版本迁移前的路径，这里统一按 project_id
+ * 从当前 projectRoot 推导，确保与 createDocShare 的落盘位置一致。
+ */
+function allDocShareFiles(): string[] {
+  return readRegistry().map((entry) =>
+    path.join(
+      getPaths().projectRoot,
+      assertId(entry.project_id, 'project_id'),
+      'docs',
+      'shares.json'
+    )
+  )
+}
+
+export function findDocShare(shareId: string): DocShare | null {
+  const id = assertId(shareId, 'share_id')
+  for (const file of allDocShareFiles()) {
+    const shares = readJson<DocShare[]>(file, [])
+    const hit = shares.find((item) => item.share_id === id)
+    if (hit) return hit
+  }
+  return null
+}
+
+export function listAllDocShares(): DocShare[] {
+  const result: DocShare[] = []
+  for (const file of allDocShareFiles()) {
+    result.push(...readJson<DocShare[]>(file, []))
+  }
+  return result.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+}
+
+export function docShareExpireInfo(share: DocShare): {
+  expire_at: string | null
+  expire_label: string
+  expired: boolean
+} {
+  return docExpireInfo(share)
 }
