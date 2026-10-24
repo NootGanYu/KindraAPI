@@ -70,6 +70,48 @@ Testing 的汇总报告用的是 `report_id`，不要与 `run_id` 混用。
 字段标识：`flow_id`、`steps[].step_id`。
 **不要**把它与 Testing 事件树都简称为“流程”；必要时写全称。
 
+## 字典
+
+**Dictionary Module（字典模块）**
+产品中承载数据字典、数据库管理与数据模型的模块。
+_Avoid_: 数据字典（指整个模块时）
+
+**Dictionary Entry（字段描述条目）**
+一条“字段名 + 类型 + 描述”的记录，用于接口参数和模型字段的描述联想。
+_Avoid_: 字典项、参数字典
+
+**Built-in Dictionary Entry（系统内置描述）**
+随应用发布、只读的常用字段描述；可以在联想中整体关闭，但不能逐条修改。
+_Avoid_: 默认字典、官方字典
+
+**Custom Dictionary Entry（自定义描述）**
+项目内新增的字段描述条目，可编辑和删除。
+_Avoid_: 用户字典
+
+**Data Model（数据模型）**
+项目级、可被接口引用的结构化数据定义；以 JSON Schema 描述字段，由模型目录组织。
+_Avoid_: 数据结构、Schema（单独使用时）
+
+**Model Folder（模型目录）**
+组织数据模型的容器节点，不承载字段定义。
+_Avoid_: 分组、文件夹
+
+**Model Alias（模型别名）**
+数据模型的可选搜索名，方便用业务叫法定位模型。
+_Avoid_: 备注名
+
+**Model Reference（模型引用）**
+接口请求体或响应示例指向某个数据模型的关系；内容在使用时按模型生成，不是独立快照。
+_Avoid_: 模型快照、模型副本
+
+**Database Connection（数据库连接）**
+项目级的 MySQL 连接配置，用于测试连接和把表结构导入为数据模型。
+_Avoid_: 数据源、DB 配置
+
+**Table Import（表结构导入）**
+把 MySQL 表的列与类型转换为一个数据模型的动作。
+_Avoid_: 反向生成、同步表
+
 ## 两个系统
 
 **Original App（原应用）**

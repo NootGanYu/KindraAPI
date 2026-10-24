@@ -134,7 +134,10 @@ window.app.fileDB.projectRead(projectId, "apis/<id>.json")
 | `07-复刻实现建议.md` | MVP 范围、技术选型、接口契约、里程碑与坑 |
 | `08-MCP实现分析.md` | MCP 全链路：stdio → TCP 桥 → IPC → 执行引擎、30 个工具、权限与存储 |
 | `09-UI设计与界面分析.md` | 设计令牌、应用外壳、路由与页面结构、交互规范、复刻建议、CSS 变量；含 10 张实机截图（`docs/images/`） |
-| `../GLOSSARY.md` | 规范术语表：Project / Target / API / Folder / Send Record / Testing / Event / Run / MCP Execution Flow |
+| `10-字典模块实现计划.md` | 数据字典、数据模型、MySQL 连接与导入、API 引用、MCP 工具、存储与校验计划 |
+| `adr/0001-model-reference-live-generation.md` | 模型引用采用实时生成而非快照 |
+| `adr/0002-mysql-only-plaintext-credentials.md` | 首版仅 MySQL、凭据明文、SSH 仅记录 |
+| `../GLOSSARY.md` | 规范术语表：Project / Target / API / Folder / Send Record / Testing / Event / Run / MCP Execution Flow / Dictionary / Data Model |
 
 ---
 
