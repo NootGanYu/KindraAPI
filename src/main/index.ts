@@ -8,15 +8,21 @@ import { shutdownMcp, startMcpServer } from './mcp/server'
 
 const appData = app.getPath('appData')
 const legacyUserData = path.join(appData, 'api-workbench')
-const openPostUserData = path.join(appData, 'openPost')
-if (!fs.existsSync(openPostUserData) && fs.existsSync(legacyUserData)) {
+// 允许通过环境变量运行隔离实例（测试/预览），默认仍使用 openPost。
+const appName = process.env.OPENPOST_APP_NAME?.trim() || 'openPost'
+const openPostUserData = path.join(appData, appName)
+if (
+  appName === 'openPost' &&
+  !fs.existsSync(openPostUserData) &&
+  fs.existsSync(legacyUserData)
+) {
   try {
     fs.cpSync(legacyUserData, openPostUserData, { recursive: true })
   } catch (error) {
     console.error('Failed to migrate api-workbench data to openPost:', error)
   }
 }
-app.setName('openPost')
+app.setName(appName)
 app.setPath('userData', openPostUserData)
 
 // 远程调试开关在启动阶段生效，必须在 app ready 之前读取配置。

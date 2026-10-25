@@ -416,3 +416,111 @@ export interface McpStatus {
   port: number
   error?: string
 }
+
+// ---------------------------------------------------------------------------
+// Git
+// ---------------------------------------------------------------------------
+
+export interface GitAvailability {
+  available: boolean
+  version?: string
+  error?: string
+}
+
+export interface GitRemote {
+  name: string
+  fetch_url: string
+  push_url: string
+}
+
+export interface GitRepoInfo {
+  is_repo: boolean
+  root: string | null
+  branch: string | null
+  detached: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+  remotes: GitRemote[]
+}
+
+export type GitFileKind =
+  | 'added'
+  | 'modified'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'untracked'
+  | 'conflicted'
+  | 'typechange'
+
+export interface GitFileChange {
+  path: string
+  old_path?: string
+  /** porcelain 第一列：暂存区状态 */
+  index_status: string
+  /** porcelain 第二列：工作区状态 */
+  worktree_status: string
+  kind: GitFileKind
+}
+
+export interface GitStatus {
+  is_repo: boolean
+  branch: string | null
+  detached: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+  files: GitFileChange[]
+}
+
+export interface GitCommit {
+  hash: string
+  short_hash: string
+  author: string
+  email: string
+  date: string
+  subject: string
+  refs: string
+}
+
+export interface GitBranch {
+  name: string
+  current: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+}
+
+export interface GitDiffResult {
+  diff: string
+  truncated: boolean
+}
+
+export interface GitOperationResult {
+  message: string
+  output: string
+}
+
+export interface GitDiffRequest {
+  path: string
+  staged: boolean
+  untracked: boolean
+}
+
+export interface GitDiscardTarget {
+  path: string
+  untracked: boolean
+}
+
+export interface GitPullOptions {
+  remote?: string
+  branch?: string
+  rebase?: boolean
+}
+
+export interface GitPushOptions {
+  remote?: string
+  branch?: string
+  set_upstream?: boolean
+}

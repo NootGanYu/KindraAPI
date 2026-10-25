@@ -9,6 +9,7 @@ import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import AutomationPage from './pages/AutomationPage'
+import GitPage from './pages/GitPage'
 
 function Shell(): JSX.Element {
   return (
@@ -40,6 +41,7 @@ function Shell(): JSX.Element {
               }
             />
             <Route path="/automation" element={<AutomationPage />} />
+            <Route path="/git" element={<GitPage />} />
             <Route path="*" element={<Navigate to="/apis" replace />} />
           </Routes>
         </div>
