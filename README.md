@@ -60,13 +60,13 @@ npm run pack:win
 
 生成 x64 的 NSIS 安装包与免安装 `.zip`。
 
-> 构建未签名、未公证。macOS 首次打开如被拦截，可在 Finder 中右键选择“打开”，或执行：
+> macOS 构建会通过 `scripts/after-pack.cjs` 自动执行 ad-hoc 签名，但未做 Apple 公证。首次打开如被拦截，可在 Finder 中右键选择“打开”，或执行：
 >
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/KindraAPI.app
 > ```
 >
-> Windows 可能出现 SmartScreen 提示，选择“仍要运行”即可。
+> Windows 构建未签名，可能出现 SmartScreen 提示，选择“仍要运行”即可。
 
 ### 手动指定目标
 
@@ -80,12 +80,12 @@ npx electron-builder --win nsis zip --x64
 构建完成后，使用 GitHub CLI 创建 Release 并上传产物：
 
 ```bash
-gh release create v0.1.0 \
-  release/KindraAPI-0.1.0-mac-arm64.dmg \
-  release/KindraAPI-0.1.0-mac-arm64.zip \
-  release/KindraAPI-0.1.0-win-x64.exe \
-  release/KindraAPI-0.1.0-win-x64.zip \
-  --title "KindraAPI v0.1.0" \
+gh release create v0.1.1 \
+  release/KindraAPI-0.1.1-mac-arm64.dmg \
+  release/KindraAPI-0.1.1-mac-arm64.zip \
+  release/KindraAPI-0.1.1-win-x64.exe \
+  release/KindraAPI-0.1.1-win-x64.zip \
+  --title "KindraAPI v0.1.1" \
   --notes "首个公开版本"
 ```
 
