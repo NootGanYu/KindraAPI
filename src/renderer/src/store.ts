@@ -45,6 +45,9 @@ interface AppState {
   reloadEnvironments: () => Promise<void>
   openTarget: (id: string) => Promise<void>
   createTarget: (parentId: string, type: 'folder' | 'api') => Promise<Target>
+  cloneTarget: (id: string) => Promise<Target>
+  replaceDraft: (target: Target) => void
+  addEnvironment: (name?: string) => Promise<Environment>
   saveTarget: (id: string) => Promise<void>
   renameTarget: (id: string, name: string) => Promise<void>
   reorderTargets: (parentId: string, orderedIds: string[]) => Promise<void>
@@ -259,6 +262,37 @@ export const useApp = create<AppState>((set, get) => ({
       }))
     }
     return target
+  },
+
+  cloneTarget: async (id) => {
+    const project = get().project
+    if (!project) throw new Error('项目未就绪')
+    const target = unwrap(await window.api.targets.clone(project.project_id, id))
+    await get().reloadTargets()
+    await get().openTarget(target.target_id)
+    return target
+  },
+
+  replaceDraft: (target) => {
+    set((state) => ({
+      drafts: { ...state.drafts, [target.target_id]: target },
+      tabs: state.tabs.map((tab) =>
+        tab.id === target.target_id
+          ? { ...tab, name: target.name, dirty: false }
+          : tab
+      )
+    }))
+  },
+
+  addEnvironment: async (name = '新环境') => {
+    const project = get().project
+    if (!project) throw new Error('项目未就绪')
+    const env = unwrap(
+      await window.api.envs.save(project.project_id, createEnvironment(project.project_id, name))
+    )
+    await get().reloadEnvironments()
+    await get().setEnv(env.env_id)
+    return env
   },
 
   saveTarget: async (id) => {

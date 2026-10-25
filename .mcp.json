@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "openPost": {
+    "KindraAPI": {
       "command": "node",
       "args": ["mcp-stdio.cjs"]
     }

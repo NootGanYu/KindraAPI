@@ -27,7 +27,7 @@ const DEFAULT_COLUMNS: ColumnSetting[] = [
 ]
 
 function storageKey(projectId: string): string {
-  return `openpost.modelColumns.${projectId}`
+  return `kindraapi.modelColumns.${projectId}`
 }
 
 function loadColumns(projectId: string): ColumnSetting[] {

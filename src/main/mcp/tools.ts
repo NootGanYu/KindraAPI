@@ -1702,8 +1702,8 @@ function assertModelSchema(value: unknown): ModelSchema {
   if (schema.type !== undefined && !allowed.has(String(schema.type))) {
     throw new Error(`不支持的 schema 类型：${String(schema.type)}`)
   }
-  if (schema.$ref !== undefined && !String(schema.$ref).startsWith('openpost://model/')) {
-    throw new Error('模型引用必须使用 openpost://model/<model_id> 协议')
+  if (schema.$ref !== undefined && !String(schema.$ref).startsWith('kindraapi://model/')) {
+    throw new Error('模型引用必须使用 kindraapi://model/<model_id> 协议')
   }
   return schema
 }

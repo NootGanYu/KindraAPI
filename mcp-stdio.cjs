@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * openPost MCP stdio bridge.
+ * KindraAPI MCP stdio bridge.
  *
  * An MCP client launches this file. It reads the local bridge descriptor
  * (host / port / token) written by the desktop app, forwards tool calls over
@@ -20,14 +20,14 @@ const DEFAULT_PROTOCOL = '2024-11-05'
 function infoCandidates() {
   if (process.platform === 'darwin') {
     const base = path.join(os.homedir(), 'Library', 'Application Support')
-    return [path.join(base, 'openPost', 'mcp_info.json'), path.join(base, 'api-workbench', 'mcp_info.json')]
+    return [path.join(base, 'KindraAPI', 'mcp_info.json'), path.join(base, 'api-workbench', 'mcp_info.json')]
   }
   if (process.platform === 'win32') {
     const base = process.env.APPDATA || ''
-    return [path.join(base, 'openPost', 'mcp_info.json'), path.join(base, 'api-workbench', 'mcp_info.json')]
+    return [path.join(base, 'KindraAPI', 'mcp_info.json'), path.join(base, 'api-workbench', 'mcp_info.json')]
   }
   const base = path.join(os.homedir(), '.config')
-  return [path.join(base, 'openPost', 'mcp_info.json'), path.join(base, 'api-workbench', 'mcp_info.json')]
+  return [path.join(base, 'KindraAPI', 'mcp_info.json'), path.join(base, 'api-workbench', 'mcp_info.json')]
 }
 
 function defaultInfoPath() {
@@ -37,16 +37,16 @@ function defaultInfoPath() {
 
 function infoPath() {
   return (
-    process.env.OPENPOST_MCP_INFO ||
+    process.env.KINDRAAPI_MCP_INFO ||
     process.env.API_WORKBENCH_MCP_INFO ||
     defaultInfoPath()
   )
 }
 
 function loadInfo() {
-  const host = process.env.OPENPOST_MCP_HOST || process.env.API_WORKBENCH_MCP_HOST
-  const port = Number(process.env.OPENPOST_MCP_PORT || process.env.API_WORKBENCH_MCP_PORT)
-  const token = process.env.OPENPOST_MCP_TOKEN || process.env.API_WORKBENCH_MCP_TOKEN
+  const host = process.env.KINDRAAPI_MCP_HOST || process.env.API_WORKBENCH_MCP_HOST
+  const port = Number(process.env.KINDRAAPI_MCP_PORT || process.env.API_WORKBENCH_MCP_PORT)
+  const token = process.env.KINDRAAPI_MCP_TOKEN || process.env.API_WORKBENCH_MCP_TOKEN
   if (host && port && token) return { host, port, token }
   const file = infoPath()
   try {
@@ -54,7 +54,7 @@ function loadInfo() {
     return { host: raw.host || '127.0.0.1', port: Number(raw.port), token: raw.token || '' }
   } catch (error) {
     throw new Error(
-      `无法读取 MCP 描述文件 ${file}。请先启动 openPost 并在「配置 → MCP」中开启服务。`
+      `无法读取 MCP 描述文件 ${file}。请先启动 KindraAPI 并在「配置 → MCP」中开启服务。`
     )
   }
 }
@@ -95,11 +95,11 @@ function callBridge(tool, args) {
         finish(new Error('MCP 桥返回了无效 JSON'))
       }
     })
-    socket.on('timeout', () => finish(new Error('连接 openPost 超时')))
+    socket.on('timeout', () => finish(new Error('连接 KindraAPI 超时')))
     socket.on('error', (error) =>
       finish(
         new Error(
-          `无法连接 openPost（${info.host}:${info.port}）：${error.message}。请确认应用正在运行且 MCP 已开启。`
+          `无法连接 KindraAPI（${info.host}:${info.port}）：${error.message}。请确认应用正在运行且 MCP 已开启。`
         )
       )
     )
@@ -132,9 +132,9 @@ async function handle(message) {
     reply(id, {
       protocolVersion: params.protocolVersion || DEFAULT_PROTOCOL,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: 'openPost', version: '1.0.0' },
+      serverInfo: { name: 'KindraAPI', version: '1.0.0' },
       instructions:
-        'openPost 本地 MCP。写操作与执行操作需要在桌面端「配置 → MCP」中显式开启。'
+        'KindraAPI 本地 MCP。写操作与执行操作需要在桌面端「配置 → MCP」中显式开启。'
     })
     return
   }

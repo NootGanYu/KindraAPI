@@ -117,6 +117,6 @@ _Avoid_: 反向生成、同步表
 **Original App（原应用）**
 `/Applications/Apipost单机版.app`，分析对象。
 
-**openPost（本仓库实现）**
+**KindraAPI（本仓库实现）**
 当前仓库 `src/` 下的自研替代实现。文档中提到“现状/M1”时指它，
 提到“分析/实测”时指 Original App。

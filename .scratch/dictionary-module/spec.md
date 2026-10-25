@@ -6,11 +6,11 @@ Feature: dictionary-module
 
 ## Problem Statement
 
-openPost 的「字典」页目前只是占位。用户无法维护字段描述、数据模型或数据库连接；接口请求体和响应示例只能手写 JSON，字段命名与描述无法复用；已有 MySQL 表结构无法转成模型；MCP agent 也读不到、改不了这些资产。用户需要像原应用一样，在一个模块里管理数据字典、数据模型与数据库连接，并让接口直接引用模型。
+KindraAPI 的「字典」页目前只是占位。用户无法维护字段描述、数据模型或数据库连接；接口请求体和响应示例只能手写 JSON，字段命名与描述无法复用；已有 MySQL 表结构无法转成模型；MCP agent 也读不到、改不了这些资产。用户需要像原应用一样，在一个模块里管理数据字典、数据模型与数据库连接，并让接口直接引用模型。
 
 ## Solution
 
-在 openPost 的字典模块中提供三块完整能力：
+在 KindraAPI 的字典模块中提供三块完整能力：
 
 - **数据字典**：自定义与系统内置字段描述，支持搜索、分页、类型徽标、增删改与总开关，并在模型字段与接口参数描述处联想。
 - **数据模型**：模型目录树、模型列表、可视化字段编辑器、Raw JSON Schema、预览，以及复制、移动、拖拽排序与删除。
@@ -22,7 +22,7 @@ openPost 的「字典」页目前只是占位。用户无法维护字段描述�
 
 ### 模块与导航
 
-1. 作为一个 openPost 用户，我希望左栏有明确的「字典」入口，以便快速进入数据字典、数据模型与数据库管理。
+1. 作为一个 KindraAPI 用户，我希望左栏有明确的「字典」入口，以便快速进入数据字典、数据模型与数据库管理。
 2. 作为一个用户，我希望字典模块内部有「数据字典 / 数据库管理 / 全部模型 / 具体模型」页内标签，以便同时处理多个资产而不丢失上下文。
 3. 作为一个用户，我希望关闭未保存的模型标签时收到确认，以便避免误丢编辑内容。
 4. 作为一个用户，我希望左侧树支持搜索、分组、折叠/展开、刷新与排序，以便在大量模型和目录中快速定位。
@@ -160,7 +160,7 @@ DataModel {
 
 ModelSchema {
   type?, properties?, items?, required?, default?, enum?,
-  description?, example?, $ref?: 'openpost://model/<model_id>',
+  description?, example?, $ref?: 'kindraapi://model/<model_id>',
   'x-schema-orders'?: string[], 'x-nullable'?: boolean
 }
 
@@ -183,7 +183,7 @@ DbConnection {
 - 模型目录与模型共用一棵树；目录删除级联删除子节点。
 - 模型名称必填，别名可选；创建人与修改人记录本地用户名。
 - `ModelSchema` 是唯一事实来源；可视化编辑器读写 schema，并用 `x-schema-orders` 保持字段顺序、用 `x-nullable` 表示可空。
-- 模型引用使用稳定协议 `openpost://model/<model_id>`；生成与校验都必须识别该协议。
+- 模型引用使用稳定协议 `kindraapi://model/<model_id>`；生成与校验都必须识别该协议。
 - 删除被引用的模型：先返回引用列表并警告，确认后删除；接口上的引用保留为失效引用，不自动改写接口。
 - 模型重复名称在保存时提示，但允许用户改名后继续。
 
@@ -221,7 +221,7 @@ DbConnection {
   - `test_db_connection` / `import_db_schema`
 - 权限：CRUD 写操作要求 `allow_write`；测试连接与导入要求 `allow_execute`；读取工具不受写权限限制。
 - MCP 返回数据库连接时脱敏密码、私钥与 passphrase；删除类工具要求 `confirm: true`，模型删除返回引用列表。
-- MCP 工具名不带 `apipost_` / `openpost_` 前缀，与现有 30 个工具一致。
+- MCP 工具名不带 `apipost_` / `kindraapi_` 前缀，与现有 30 个工具一致。
 
 ### UI 细节
 
@@ -253,7 +253,7 @@ DbConnection {
 
 1. **现有 Electron smoke 脚本（首选、现有缝）**：扩展主进程级 smoke，覆盖字典 CRUD、项目开关、模型 CRUD/复制/移动/排序、引用扫描、示例生成（含循环/失效）、数据库连接 CRUD/测试/导入、MCP 全部新工具与权限拒绝。沿用脚本现有的真实服务、显式汇总与退出码风格。
 2. **UI 自动化（新增缝）**：通过 Electron 调试 CDP 驱动已构建应用，覆盖模块导航、字典子标签/分页/联想、模型列表/编辑器双模式/预览、引用弹窗与解除、数据库连接弹窗与导入流程。新增 Playwright/CDP 依赖；这是本轮唯一新增的测试缝。
-3. **MySQL 集成**：使用本机 MySQL 8.4.9 创建 `openpost_dict_test` 临时库，建表覆盖整数、字符串、decimal、datetime、tinyint(1)、json、注释、可空与默认值；验证连接、表清单与导入映射；结束后删除临时库。
+3. **MySQL 集成**：使用本机 MySQL 8.4.9 创建 `kindraapi_dict_test` 临时库，建表覆盖整数、字符串、decimal、datetime、tinyint(1)、json、注释、可空与默认值；验证连接、表清单与导入映射；结束后删除临时库。
 
 ### 被测试的模块
 

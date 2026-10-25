@@ -10,10 +10,11 @@ import type {
   ResponseExample
 } from '@shared/types'
 import * as store from '../storage/store'
+import { htmlToText, sanitizeRichHtml } from '@shared/richText'
 
 const DOC_HOST = '0.0.0.0'
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000
-const COOKIE_NAME = 'openpost_doc_token'
+const COOKIE_NAME = 'kindraapi_doc_token'
 const MAX_BODY_BYTES = 16 * 1024
 const AUTH_WINDOW_MS = 60 * 1000
 const AUTH_MAX_ATTEMPTS = 10
@@ -370,7 +371,12 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.PUT,.method.PATCH{background:#b7791f}
 .method.DELETE{background:var(--red)}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
-.api-desc{color:var(--text);margin:10px 0 0;white-space:pre-wrap}
+.api-desc{color:var(--text);margin:10px 0 0}
+.api-desc img{max-width:100%}
+.api-desc blockquote{margin:8px 0;padding-left:10px;border-left:3px solid #d9c7a5;color:#6b5d48}
+.api-desc pre{background:#f7f3ea;padding:8px 10px;border-radius:4px;overflow:auto}
+.api-desc table{border-collapse:collapse}
+.api-desc th,.api-desc td{border:1px solid #e3d9c6;padding:4px 8px}
 .url-line{margin:14px 0 2px;padding:9px 12px;background:var(--soft);border:1px solid var(--line);border-radius:7px;font-size:12.5px;word-break:break-all;color:#4a3d29}
 .url-line b{color:var(--gold);margin-right:8px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
 .api-block{margin-top:22px}
@@ -609,7 +615,7 @@ ${
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${escapeHtml(target.name)}</h2>
 </div>
-${target.description ? `<p class="api-desc">${escapeHtml(target.description)}</p>` : ''}
+${target.description ? `<div class="api-desc">${sanitizeRichHtml(target.description)}</div>` : ''}
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
     target.url || '（未设置 URL）'
   )}</div>
@@ -666,7 +672,7 @@ function renderDocPage(share: DocShare): string {
 
   const body = `
 <header class="doc-top">
-  <div class="brand"><span class="logo">o</span> openPost 文档</div>
+  <div class="brand"><span class="logo">K</span> KindraAPI 文档</div>
   <div class="top-crumb">${escapeHtml(share.snapshot.project_name)} / ${escapeHtml(share.name)}</div>
   <div class="top-badges">${shareChips(share)}</div>
 </header>
@@ -694,16 +700,16 @@ function renderDocPage(share: DocShare): string {
     ${content}
   </main>
 </div>
-<footer class="doc-footer">由 openPost 生成 · ${escapeHtml(formatTime(share.updated_at))}</footer>`
+<footer class="doc-footer">由 KindraAPI 生成 · ${escapeHtml(formatTime(share.updated_at))}</footer>`
 
-  return pageShell(`${share.name} · openPost 文档`, body)
+  return pageShell(`${share.name} · KindraAPI 文档`, body)
 }
 
 function renderPasswordPage(share: DocShare, error = false): string {
   const body = `
 <div class="gate-wrap">
   <div class="gate">
-    <div class="logo">o</div>
+    <div class="logo">K</div>
     <h1>受保护的文档</h1>
     <p>${escapeHtml(share.name)}</p>
     <form method="post" action="/share/${escapeHtml(share.share_id)}/auth">
@@ -712,7 +718,7 @@ function renderPasswordPage(share: DocShare, error = false): string {
       <button type="submit">进入文档</button>
       ${error ? '<div class="error">密码错误，请重试。</div>' : ''}
     </form>
-    <div class="foot">由 openPost 提供本地文档分享</div>
+    <div class="foot">由 KindraAPI 提供本地文档分享</div>
   </div>
 </div>`
   return pageShell(`${share.name} · 需要密码`, body)
@@ -722,13 +728,13 @@ function renderMessagePage(title: string, message: string, code = 404): string {
   const body = `
 <div class="gate-wrap">
   <div class="gate" style="text-align:center">
-    <div class="logo" style="margin:0 auto 18px">o</div>
+    <div class="logo" style="margin:0 auto 18px">K</div>
     <h1>${escapeHtml(title)}</h1>
     <p style="margin-bottom:0">${escapeHtml(message)}</p>
     <div class="foot">HTTP ${code}</div>
   </div>
 </div>`
-  return pageShell(`${title} · openPost 文档`, body)
+  return pageShell(`${title} · KindraAPI 文档`, body)
 }
 
 function renderIndexPage(): string {
@@ -750,13 +756,13 @@ function renderIndexPage(): string {
     .join('')
   const body = `
 <header class="doc-top">
-  <div class="brand"><span class="logo">o</span> openPost 文档</div>
+  <div class="brand"><span class="logo">K</span> KindraAPI 文档</div>
   <div class="top-crumb">本机分享索引</div>
   <div class="top-badges"><span class="chip">${shares.length} 份文档</span></div>
 </header>
 <div class="doc-layout">
   <main class="doc-main" style="max-width:960px;margin:0 auto">
-    <div class="hero"><h1>文档分享</h1><p>这些文档由 openPost 在本机生成，点击即可查看。</p></div>
+    <div class="hero"><h1>文档分享</h1><p>这些文档由 KindraAPI 在本机生成，点击即可查看。</p></div>
     ${
       shares.length
         ? `<table><thead><tr><th>名称</th><th>项目</th><th>访问</th><th>更新时间</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -764,7 +770,7 @@ function renderIndexPage(): string {
     }
   </main>
 </div>`
-  return pageShell('文档分享 · openPost', body)
+  return pageShell('文档分享 · KindraAPI', body)
 }
 
 // ---------------------------------------------------------------------------
@@ -800,7 +806,8 @@ function buildMarkdown(share: DocShare): string {
     lines.push('```http')
     lines.push(`${method} ${api.url || ''}`)
     lines.push('```', '')
-    if (api.description) lines.push(api.description, '')
+    const descriptionText = htmlToText(api.description ?? '')
+    if (descriptionText) lines.push(descriptionText, '')
 
     const request = api.request
     if (settings.show_request) {
@@ -914,7 +921,7 @@ function buildOpenApi(share: DocShare): Record<string, unknown> | null {
     const path = urlToOpenApiPath(api.url)
     const operation: Record<string, unknown> = {
       summary: api.name || path,
-      description: api.description || undefined,
+      description: htmlToText(api.description ?? '') || undefined,
       parameters: [] as Record<string, unknown>[],
       responses: {} as Record<string, unknown>
     }

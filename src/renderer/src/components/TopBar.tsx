@@ -80,7 +80,7 @@ export default function TopBar(): JSX.Element {
           <span className="logo">
             <ApiOutlined style={{ fontSize: 11 }} />
           </span>
-          <span>openPost</span>
+          <span>KindraAPI</span>
         </div>
         <button className="new-project" onClick={() => setProjectModal(true)}>
           <PlusOutlined style={{ fontSize: 11 }} /> 新建/导入项目

@@ -3,6 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import type {
   AppSettings,
+  CookieJar,
   DataModel,
   DbConnection,
   DebugConfig,
@@ -30,7 +31,8 @@ import type {
 } from '@shared/types'
 import * as store from './storage/store'
 import * as git from './git/git'
-import { sendRequest } from './request/executor'
+import { resolveEffectiveRequest, sendRequest } from './request/executor'
+import { generateCurl } from './codegen/curl'
 import { runFlow } from './flow/engine'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
@@ -103,15 +105,46 @@ export function registerIpc(): void {
   handle('target:reorder', (projectId: string, parentId: string, orderedIds: string[]) =>
     store.reorderTargets(projectId, parentId, orderedIds)
   )
+  handle('target:clone', (projectId: string, targetId: string) =>
+    store.cloneTarget(projectId, targetId)
+  )
+  handle('target:versions:list', (projectId: string, targetId: string) =>
+    store.listTargetVersions(projectId, targetId)
+  )
+  handle('target:versions:get', (projectId: string, targetId: string, versionId: string) =>
+    store.getTargetVersion(projectId, targetId, versionId)
+  )
+  handle('target:versions:restore', (projectId: string, targetId: string, versionId: string) =>
+    store.restoreTargetVersion(projectId, targetId, versionId)
+  )
+  handle(
+    'target:versions:tag',
+    (projectId: string, targetId: string, versionId: string, label: string) =>
+      store.tagTargetVersion(projectId, targetId, versionId, label)
+  )
+  handle(
+    'target:codegen:curl',
+    (projectId: string, target: Target, environmentId?: string) =>
+      generateCurl(resolveEffectiveRequest(projectId, target, environmentId))
+  )
 
   handle('env:list', (projectId: string) => store.listEnvironments(projectId))
   handle('env:save', (projectId: string, env: Environment) => store.saveEnvironment(projectId, env))
+  handle('env:delete', (projectId: string, envId: string) => {
+    store.deleteEnvironment(projectId, envId)
+    return true
+  })
 
   handle('globals:get', (projectId: string) => store.getGlobalVars(projectId))
   handle('globals:save', (projectId: string, vars: GlobalVars) => store.saveGlobalVars(projectId, vars))
   handle('globalParams:get', (projectId: string) => store.getGlobalParams(projectId))
   handle('globalParams:save', (projectId: string, req: RequestModel) =>
     store.saveGlobalParams(projectId, req)
+  )
+
+  handle('cookieJar:get', (projectId: string) => store.getCookieJar(projectId))
+  handle('cookieJar:save', (projectId: string, jar: CookieJar) =>
+    store.saveCookieJar(projectId, jar)
   )
 
   handle('settings:get', () => store.getSettings())

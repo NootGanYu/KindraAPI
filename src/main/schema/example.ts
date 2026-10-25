@@ -1,7 +1,7 @@
 import type { ModelSchema } from '@shared/types'
 import * as store from '../storage/store'
 
-export const MODEL_REF_PREFIX = 'openpost://model/'
+export const MODEL_REF_PREFIX = 'kindraapi://model/'
 export const MAX_REF_DEPTH = 8
 
 export type ExampleWarningCode =

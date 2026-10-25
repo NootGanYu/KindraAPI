@@ -805,3 +805,48 @@ export interface GitPushOptions {
   branch?: string
   set_upstream?: boolean
 }
+
+// ---------------------------------------------------------------------------
+// API 版本历史 / Cookie 管理器 / 代码生成
+// ---------------------------------------------------------------------------
+
+export interface TargetVersion {
+  version_id: string
+  version: number
+  created_at: string
+  label?: string
+  tagged_at?: string
+  /** 内容签名，用于避免相同内容重复记录 */
+  signature: string
+  snapshot: Target
+}
+
+export interface TargetVersionSummary {
+  version_id: string
+  version: number
+  created_at: string
+  label?: string
+  tagged_at?: string
+  method?: string
+  url?: string
+  name?: string
+}
+
+export interface CookieDomain {
+  domain: string
+  /** document.cookie 形式：a=1; b=2 */
+  cookies: string
+  updated_at: string
+}
+
+export interface CookieJar {
+  project_id: string
+  enabled: boolean
+  domains: CookieDomain[]
+  updated_at: string
+}
+
+export interface CurlResult {
+  script: string
+  warnings: string[]
+}

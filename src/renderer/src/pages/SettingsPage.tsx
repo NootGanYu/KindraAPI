@@ -249,11 +249,11 @@ export default function SettingsPage(): JSX.Element {
   const mcpSnippet = JSON.stringify(
     {
       mcpServers: {
-        openPost: {
+        KindraAPI: {
           command: 'node',
           args: [mcpStdio || '/path/to/mcp-stdio.cjs'],
           env: {
-            OPENPOST_MCP_INFO: mcpInfo || '/path/to/mcp_info.json'
+            KINDRAAPI_MCP_INFO: mcpInfo || '/path/to/mcp_info.json'
           }
         }
       }

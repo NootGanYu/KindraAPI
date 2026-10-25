@@ -9,7 +9,7 @@ const path = require('node:path')
 const { _electron: electron } = require('playwright-core')
 
 const ARTIFACTS = path.join(__dirname, '.ui-artifacts')
-const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'openpost-ui-'))
+const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindraapi-ui-'))
 const logs = []
 let app = null
 let page = null
@@ -133,8 +133,8 @@ async function main() {
     args: ['.'],
     env: {
       ...process.env,
-      OPENPOST_USER_DATA: userData,
-      OPENPOST_DISABLE_SINGLE_INSTANCE: '1',
+      KINDRAAPI_USER_DATA: userData,
+      KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1',
       ELECTRON_ENABLE_LOGGING: '1'
     }
   })
@@ -142,7 +142,7 @@ async function main() {
   page.on('console', (message) => logs.push(`[console:${message.type()}] ${message.text()}`))
   page.on('pageerror', (error) => logs.push(`[pageerror] ${error.message}`))
   await page.waitForSelector('.app-shell', { timeout: 20000 })
-  await waitText('openPost')
+  await waitText('KindraAPI')
 
   await step('导航到字典模块', async () => {
     await openSchemas()
@@ -500,10 +500,10 @@ async function main() {
     await btn(page.locator('.dict-head'), '新建').click()
     const modal = visibleModal('新建数据库连接')
     await modal.getByPlaceholder('连接名称').fill('UI MySQL')
-    const host = process.env.OPENPOST_UI_MYSQL_HOST || '127.0.0.1'
-    const port = process.env.OPENPOST_UI_MYSQL_PORT || '3306'
-    const user = process.env.OPENPOST_UI_MYSQL_USER || 'root'
-    const database = process.env.OPENPOST_UI_MYSQL_DATABASE || 'openpost_dict_test'
+    const host = process.env.KINDRAAPI_UI_MYSQL_HOST || '127.0.0.1'
+    const port = process.env.KINDRAAPI_UI_MYSQL_PORT || '3306'
+    const user = process.env.KINDRAAPI_UI_MYSQL_USER || 'root'
+    const database = process.env.KINDRAAPI_UI_MYSQL_DATABASE || 'kindraapi_dict_test'
     await modal.locator('.ant-form-item').filter({ hasText: '数据库地址' }).locator('input').fill(host)
     await modal.locator('.ant-form-item').filter({ hasText: '端口' }).locator('input').fill(port)
     await modal.locator('.ant-form-item').filter({ hasText: '用户名' }).locator('input').fill(user)
@@ -515,7 +515,7 @@ async function main() {
     await modal.locator('.ant-tabs-tab').filter({ hasText: 'SSH' }).click()
     await page.locator('.ant-modal:visible').getByText('SSH 隧道后续支持').waitFor()
     await modal.locator('.ant-tabs-tab').filter({ hasText: '常规' }).click()
-    if (process.env.OPENPOST_UI_MYSQL_HOST) {
+    if (process.env.KINDRAAPI_UI_MYSQL_HOST) {
       await btn(modal, '测试连接').click()
       await waitText('连接成功')
     }
@@ -528,7 +528,7 @@ async function main() {
     await editModal.getByPlaceholder('连接名称').fill('UI MySQL 2')
     await btn(editModal, '确定').click()
     await waitText('UI MySQL 2')
-    if (process.env.OPENPOST_UI_MYSQL_HOST) {
+    if (process.env.KINDRAAPI_UI_MYSQL_HOST) {
       const edited = page.locator('.ant-table-tbody tr').filter({ hasText: 'UI MySQL 2' }).first()
       await edited.locator('.icon-btn').nth(1).click()
       await page.locator('.ant-modal:visible').getByText('导入表结构').waitFor()

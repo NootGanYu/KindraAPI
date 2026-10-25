@@ -2,24 +2,30 @@ import { app, BrowserWindow, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import appIcon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
 import { applyDebugSwitch, ensureDefaultProject } from './storage/store'
 import { shutdownMcp, startMcpServer } from './mcp/server'
 import { shutdownDocs, startDocServer } from './docs/server'
 
 const appData = app.getPath('appData')
-const legacyUserData = path.join(appData, 'api-workbench')
-const openPostUserData = path.join(appData, 'openPost')
-if (!process.env.OPENPOST_USER_DATA && !fs.existsSync(openPostUserData) && fs.existsSync(legacyUserData)) {
-  try {
-    fs.cpSync(legacyUserData, openPostUserData, { recursive: true })
-  } catch (error) {
-    console.error('Failed to migrate api-workbench data to openPost:', error)
+const legacyUserDataDirs = ['JinLoomAPI', 'openPost', 'api-workbench'].map((name) =>
+  path.join(appData, name)
+)
+const kindraAPIUserData = path.join(appData, 'KindraAPI')
+if (!process.env.KINDRAAPI_USER_DATA && !fs.existsSync(kindraAPIUserData)) {
+  const legacyUserData = legacyUserDataDirs.find((dir) => fs.existsSync(dir))
+  if (legacyUserData) {
+    try {
+      fs.cpSync(legacyUserData, kindraAPIUserData, { recursive: true })
+    } catch (error) {
+      console.error('Failed to migrate legacy data to KindraAPI:', error)
+    }
   }
 }
-app.setName('openPost')
+app.setName('KindraAPI')
 // 测试/自动化使用独立 userData，避免污染真实项目。
-app.setPath('userData', process.env.OPENPOST_USER_DATA || openPostUserData)
+app.setPath('userData', process.env.KINDRAAPI_USER_DATA || kindraAPIUserData)
 
 // 远程调试开关在启动阶段生效，必须在 app ready 之前读取配置。
 applyDebugSwitch()
@@ -36,6 +42,7 @@ function createWindow(): void {
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     backgroundColor: '#FAF5EA',
+    icon: appIcon,
     trafficLightPosition: { x: 12, y: 14 },
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -70,7 +77,7 @@ function createWindow(): void {
 }
 
 const gotLock =
-  process.env.OPENPOST_DISABLE_SINGLE_INSTANCE === '1'
+  process.env.KINDRAAPI_DISABLE_SINGLE_INSTANCE === '1'
     ? true
     : app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -83,7 +90,8 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
-    electronApp.setAppUserModelId('local.openpost')
+    electronApp.setAppUserModelId('local.kindraapi')
+    if (process.platform === 'darwin') app.dock?.setIcon(appIcon)
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })

@@ -105,7 +105,7 @@ function bridgeCall(
 }
 
 async function main(): Promise<void> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openpost-smoke-'))
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kindraapi-smoke-'))
   app.setPath('userData', tmp)
   ;(app as unknown as { dock?: { hide(): void } }).dock?.hide()
   await app.whenReady()
@@ -309,11 +309,11 @@ async function main(): Promise<void> {
   cycleB.name = 'CycleB'
   cycleA.data = {
     description: '',
-    schema: { type: 'object', properties: { b: { $ref: `openpost://model/${cycleB.model_id}` } } }
+    schema: { type: 'object', properties: { b: { $ref: `kindraapi://model/${cycleB.model_id}` } } }
   }
   cycleB.data = {
     description: '',
-    schema: { type: 'object', properties: { a: { $ref: `openpost://model/${cycleA.model_id}` } } }
+    schema: { type: 'object', properties: { a: { $ref: `kindraapi://model/${cycleA.model_id}` } } }
   }
   saveModel(pid, cycleA)
   saveModel(pid, cycleB)
@@ -324,7 +324,7 @@ async function main(): Promise<void> {
     type: 'object',
     properties: {
       ok: { type: 'string' },
-      lost: { $ref: 'openpost://model/not-exists' }
+      lost: { $ref: 'kindraapi://model/not-exists' }
     }
   })
   assert((missing.value as Record<string, unknown>).ok === '', 'partial result kept')
@@ -595,15 +595,15 @@ async function main(): Promise<void> {
   assert(mcpSshDeleted.ok, 'mcp delete ssh db')
 
   // Real MySQL integration (opt-in via env, set up by scripts/mysql-smoke.cjs)
-  const mysqlHost = process.env.OPENPOST_SMOKE_MYSQL_HOST
+  const mysqlHost = process.env.KINDRAAPI_SMOKE_MYSQL_HOST
   let mysqlSummary: Record<string, unknown> | null = null
   if (mysqlHost) {
     const mysqlConfig = {
       host: mysqlHost,
-      port: Number(process.env.OPENPOST_SMOKE_MYSQL_PORT ?? 3307),
-      user: process.env.OPENPOST_SMOKE_MYSQL_USER ?? 'root',
-      password: process.env.OPENPOST_SMOKE_MYSQL_PASSWORD ?? '',
-      database: process.env.OPENPOST_SMOKE_MYSQL_DATABASE ?? 'openpost_dict_test'
+      port: Number(process.env.KINDRAAPI_SMOKE_MYSQL_PORT ?? 3307),
+      user: process.env.KINDRAAPI_SMOKE_MYSQL_USER ?? 'root',
+      password: process.env.KINDRAAPI_SMOKE_MYSQL_PASSWORD ?? '',
+      database: process.env.KINDRAAPI_SMOKE_MYSQL_DATABASE ?? 'kindraapi_dict_test'
     }
     const mysqlTest = await testDbConnection(mysqlConfig, undefined)
     assert(mysqlTest.ok, `mysql test connection: ${mysqlTest.message}`)
@@ -703,7 +703,7 @@ async function main(): Promise<void> {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      OPENPOST_MCP_INFO: mcpInfoPath()
+      KINDRAAPI_MCP_INFO: mcpInfoPath()
     },
     stdio: ['pipe', 'pipe', 'inherit']
   })
@@ -736,7 +736,7 @@ async function main(): Promise<void> {
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
     })
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
-  assert(init.result?.serverInfo?.name === 'openPost', 'stdio initialize')
+  assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
   assert(stdioTools.result?.tools?.length === 46, 'stdio tools/list')
   const stdioCall = await rpc(3, 'tools/call', {
@@ -808,7 +808,7 @@ async function main(): Promise<void> {
   })
   assert(right.status === 302, 'doc auth redirect')
   const cookie = (right.headers.get('set-cookie') ?? '').split(';')[0]
-  assert(cookie.startsWith('openpost_doc_token='), 'doc auth cookie')
+  assert(cookie.startsWith('kindraapi_doc_token='), 'doc auth cookie')
   const unlocked = await fetch(`${docBase}/share/${passwordShare.share_id}`, {
     headers: { cookie }
   })

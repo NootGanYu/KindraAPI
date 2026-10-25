@@ -4,6 +4,7 @@ import {
   Checkbox,
   Dropdown,
   Input,
+  Popover,
   Tag,
   Tooltip
 } from 'antd'
@@ -11,17 +12,21 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import {
   ApiOutlined,
   CloseOutlined,
+  CodeOutlined,
+  CopyOutlined,
   DeleteOutlined,
   DownOutlined,
-  FilterOutlined,
+  FileTextOutlined,
   FolderAddOutlined,
   FolderOutlined,
+  HistoryOutlined,
   LayoutOutlined,
   LeftOutlined,
   MoreOutlined,
   PlusOutlined,
   RightOutlined,
   SaveOutlined,
+  SearchOutlined,
   ShareAltOutlined
 } from '@ant-design/icons'
 import type { Target } from '@shared/types'
@@ -33,6 +38,10 @@ import DocShareDialog from '../components/DocShareDialog'
 import DocShareLinkDialog, {
   type DocShareLinkInfo
 } from '../components/DocShareLinkDialog'
+import ApiDescriptionDialog from '../components/ApiDescriptionDialog'
+import TargetVersionDrawer from '../components/TargetVersionDrawer'
+import CodeGenDialog from '../components/CodeGenDialog'
+import EnvironmentModal from '../components/EnvironmentModal'
 
 const ENTRIES = [
   { label: 'HTTP', color: '#ff6b6b', icon: <ApiOutlined /> },
@@ -68,7 +77,9 @@ export default function ApisPage(): JSX.Element {
   const environments = useApp((s) => s.environments)
   const currentEnvId = useApp((s) => s.currentEnvId)
   const setEnv = useApp((s) => s.setEnv)
-  const reloadTargets = useApp((s) => s.reloadTargets)
+  const cloneTarget = useApp((s) => s.cloneTarget)
+  const replaceDraft = useApp((s) => s.replaceDraft)
+  const addEnvironment = useApp((s) => s.addEnvironment)
 
   const [creating, setCreating] = useState(false)
   const [mode, setMode] = useState<Mode>('调试')
@@ -78,6 +89,13 @@ export default function ApisPage(): JSX.Element {
   const [tabEdges, setTabEdges] = useState({ left: false, right: false })
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null)
   const [shareLink, setShareLink] = useState<DocShareLinkInfo | null>(null)
+  const [descOpen, setDescOpen] = useState(false)
+  const [versionOpen, setVersionOpen] = useState(false)
+  const [codeOpen, setCodeOpen] = useState(false)
+  const [envMenuOpen, setEnvMenuOpen] = useState(false)
+  const [envSearch, setEnvSearch] = useState('')
+  const [envModalOpen, setEnvModalOpen] = useState(false)
+  const [envModalInitial, setEnvModalInitial] = useState<string | undefined>(undefined)
 
   const updateTabScroll = (): void => {
     const el = tabScrollRef.current
@@ -196,6 +214,41 @@ export default function ApisPage(): JSX.Element {
   }
 
   const envName = environments.find((item) => item.env_id === currentEnvId)?.name ?? '无环境'
+  const filteredEnvs = environments.filter((env) =>
+    env.name.toLowerCase().includes(envSearch.trim().toLowerCase())
+  )
+
+  const openEnvModal = (envId?: string): void => {
+    setEnvModalInitial(envId)
+    setEnvModalOpen(true)
+  }
+
+  const createEnvironmentFromMenu = async (): Promise<void> => {
+    try {
+      const env = await addEnvironment('新环境')
+      openEnvModal(env.env_id)
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
+
+  const cloneActive = async (): Promise<void> => {
+    if (!active) return
+    try {
+      await cloneTarget(active.target_id)
+      message.success('已克隆接口')
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
+
+  const commitDescription = (html: string): void => {
+    if (!active) return
+    patchDraft(active.target_id, { description: html })
+    void saveTarget(active.target_id)
+      .then(() => message.success('接口说明已保存'))
+      .catch((error) => message.error((error as Error).message))
+  }
 
   return (
     <div className="page">
@@ -285,19 +338,58 @@ export default function ApisPage(): JSX.Element {
               <button className="tab-add" onClick={() => void handleCreate('0', 'api')}>
                 <PlusOutlined style={{ fontSize: 13 }} />
               </button>
-              <button className="tab-more">
-                <MoreOutlined style={{ fontSize: 13 }} />
-              </button>
-              <Dropdown
-                trigger={['click']}
-                menu={{
-                  items: environments.map((env) => ({
-                    key: env.env_id,
-                    label: env.name,
-                    disabled: env.env_id === currentEnvId
-                  })),
-                  onClick: ({ key }) => void setEnv(key)
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                open={envMenuOpen}
+                onOpenChange={(next) => {
+                  setEnvMenuOpen(next)
+                  if (!next) setEnvSearch('')
                 }}
+                content={
+                  <div className="env-menu">
+                    <Input
+                      allowClear
+                      autoFocus
+                      prefix={<SearchOutlined />}
+                      placeholder="请输入环境名称"
+                      value={envSearch}
+                      onChange={(event) => setEnvSearch(event.target.value)}
+                    />
+                    <div className="env-menu-list">
+                      {filteredEnvs.map((env) => (
+                        <button
+                          key={env.env_id}
+                          type="button"
+                          className={`env-menu-row${
+                            env.env_id === currentEnvId ? ' active' : ''
+                          }`}
+                          onClick={() => {
+                            void setEnv(env.env_id)
+                            setEnvMenuOpen(false)
+                          }}
+                        >
+                          <span className="env-badge">默</span>
+                          <span className="env-menu-name">{env.name}</span>
+                        </button>
+                      ))}
+                      {filteredEnvs.length === 0 ? (
+                        <div className="env-menu-empty">无匹配环境</div>
+                      ) : null}
+                    </div>
+                    <div className="env-menu-divider" />
+                    <button
+                      type="button"
+                      className="env-menu-row add"
+                      onClick={() => {
+                        setEnvMenuOpen(false)
+                        void createEnvironmentFromMenu()
+                      }}
+                    >
+                      <PlusOutlined /> 新建环境
+                    </button>
+                  </div>
+                }
               >
                 <button className="env-pill">
                   <span style={{ color: 'var(--blue-2)', display: 'flex' }}>
@@ -305,11 +397,11 @@ export default function ApisPage(): JSX.Element {
                   </span>
                   {envName} <DownOutlined style={{ fontSize: 9 }} />
                 </button>
-              </Dropdown>
-              <Tooltip title="更多">
+              </Popover>
+              <Tooltip title="环境管理">
                 <button
                   className="icon-btn"
-                  onClick={() => void reloadTargets()}
+                  onClick={() => openEnvModal(currentEnvId)}
                   style={{ marginBottom: 4 }}
                 >
                   <MoreOutlined style={{ fontSize: 14 }} />
@@ -352,9 +444,9 @@ export default function ApisPage(): JSX.Element {
                         }}
                       />
                     </span>
-                    <Tooltip title="筛选（后续支持）">
-                      <button className="mini">
-                        <FilterOutlined style={{ fontSize: 14 }} />
+                    <Tooltip title="接口说明">
+                      <button className="mini" onClick={() => setDescOpen(true)}>
+                        <FileTextOutlined style={{ fontSize: 14 }} />
                       </button>
                     </Tooltip>
                     <button className="share-btn" onClick={() => void openShare()}>
@@ -364,10 +456,26 @@ export default function ApisPage(): JSX.Element {
                       trigger={['click']}
                       menu={{
                         items: [
+                          {
+                            key: 'versions',
+                            label: '版本管理',
+                            icon: <HistoryOutlined />
+                          },
+                          { key: 'code', label: '生成代码', icon: <CodeOutlined /> },
+                          { key: 'clone', label: '克隆', icon: <CopyOutlined /> },
+                          { type: 'divider' },
                           { key: 'save', label: '保存', icon: <SaveOutlined /> },
-                          { key: 'delete', label: '删除接口', icon: <DeleteOutlined />, danger: true }
+                          {
+                            key: 'delete',
+                            label: '删除接口',
+                            icon: <DeleteOutlined />,
+                            danger: true
+                          }
                         ],
                         onClick: ({ key }) => {
+                          if (key === 'versions') setVersionOpen(true)
+                          if (key === 'code') setCodeOpen(true)
+                          if (key === 'clone') void cloneActive()
                           if (key === 'save') void saveActive()
                           if (key === 'delete') deleteActive()
                         }
@@ -469,6 +577,39 @@ export default function ApisPage(): JSX.Element {
         }}
       />
       <DocShareLinkDialog share={shareLink} onClose={() => setShareLink(null)} />
+
+      <ApiDescriptionDialog
+        open={descOpen}
+        value={active?.description ?? ''}
+        onClose={() => setDescOpen(false)}
+        onCommit={commitDescription}
+      />
+      <TargetVersionDrawer
+        open={versionOpen}
+        projectId={projectId ?? ''}
+        targetId={active?.target_id ?? ''}
+        targetName={active?.name ?? ''}
+        onClose={() => setVersionOpen(false)}
+        onRestored={(target) => {
+          replaceDraft(target)
+          message.success('已恢复版本')
+        }}
+      />
+      <CodeGenDialog
+        open={codeOpen}
+        projectId={projectId ?? ''}
+        target={active ?? null}
+        environmentId={currentEnvId}
+        onClose={() => setCodeOpen(false)}
+      />
+      <EnvironmentModal
+        open={envModalOpen}
+        initialEnvId={envModalInitial}
+        onClose={() => {
+          setEnvModalOpen(false)
+          setEnvModalInitial(undefined)
+        }}
+      />
     </div>
   )
 }
@@ -510,8 +651,8 @@ function Welcome({ onCreate }: { onCreate: () => void }): JSX.Element {
     <div className="surface welcome">
       <div className="welcome-inner">
         <div className="brand">
-          <span className="brand-logo">o</span>
-          <span>openPost</span>
+          <span className="brand-logo">K</span>
+          <span>KindraAPI</span>
         </div>
         <div className="welcome-title">真正重要的创意，不该经过任何一朵云。</div>
         <div className="welcome-sub">新建接口，或从左侧目录开始整理你的 API。</div>

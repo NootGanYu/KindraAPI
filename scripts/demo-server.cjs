@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
     console.log(`${new Date().toISOString()} ${method} ${url.pathname}${url.search}`)
 
     if (method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, { ok: true, service: 'openpost-demo' })
+      return json(res, 200, { ok: true, service: 'kindraapi-demo' })
     }
 
     if (method === 'GET' && /^\/users\/\d+$/.test(url.pathname)) {

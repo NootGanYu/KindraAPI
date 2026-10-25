@@ -43,8 +43,12 @@ import type {
   Result,
   SendRecord,
   SendRecordSummary,
+  CookieJar,
+  CurlResult,
   Target,
   TargetSummary,
+  TargetVersion,
+  TargetVersionSummary,
   DbTable
 } from '@shared/types'
 
@@ -81,10 +85,32 @@ export interface ApiBridge {
       parentId: string,
       orderedIds: string[]
     ): Promise<Result<TargetSummary[]>>
+    clone(projectId: string, targetId: string): Promise<Result<Target>>
+    versions: {
+      list(projectId: string, targetId: string): Promise<Result<TargetVersionSummary[]>>
+      get(
+        projectId: string,
+        targetId: string,
+        versionId: string
+      ): Promise<Result<TargetVersion | null>>
+      restore(projectId: string, targetId: string, versionId: string): Promise<Result<Target>>
+      tag(
+        projectId: string,
+        targetId: string,
+        versionId: string,
+        label: string
+      ): Promise<Result<TargetVersionSummary>>
+    }
+    codegenCurl(
+      projectId: string,
+      target: Target,
+      environmentId?: string
+    ): Promise<Result<CurlResult>>
   }
   envs: {
     list(projectId: string): Promise<Result<Environment[]>>
     save(projectId: string, env: Environment): Promise<Result<Environment>>
+    remove(projectId: string, envId: string): Promise<Result<boolean>>
   }
   globals: {
     get(projectId: string): Promise<Result<GlobalVars>>
@@ -93,6 +119,10 @@ export interface ApiBridge {
   globalParams: {
     get(projectId: string): Promise<Result<RequestModel | null>>
     save(projectId: string, request: RequestModel): Promise<Result<RequestModel>>
+  }
+  cookies: {
+    get(projectId: string): Promise<Result<CookieJar>>
+    save(projectId: string, jar: CookieJar): Promise<Result<CookieJar>>
   }
   settings: {
     get(): Promise<Result<AppSettings>>

@@ -32,12 +32,27 @@ const api = {
     save: (projectId: string, target: unknown) => invoke('target:save', projectId, target),
     delete: (projectId: string, targetId: string) => invoke('target:delete', projectId, targetId),
     reorder: (projectId: string, parentId: string, orderedIds: string[]) =>
-      invoke('target:reorder', projectId, parentId, orderedIds)
+      invoke('target:reorder', projectId, parentId, orderedIds),
+    clone: (projectId: string, targetId: string) =>
+      invoke('target:clone', projectId, targetId),
+    versions: {
+      list: (projectId: string, targetId: string) =>
+        invoke('target:versions:list', projectId, targetId),
+      get: (projectId: string, targetId: string, versionId: string) =>
+        invoke('target:versions:get', projectId, targetId, versionId),
+      restore: (projectId: string, targetId: string, versionId: string) =>
+        invoke('target:versions:restore', projectId, targetId, versionId),
+      tag: (projectId: string, targetId: string, versionId: string, label: string) =>
+        invoke('target:versions:tag', projectId, targetId, versionId, label)
+    },
+    codegenCurl: (projectId: string, target: unknown, environmentId?: string) =>
+      invoke('target:codegen:curl', projectId, target, environmentId)
   },
 
   envs: {
     list: (projectId: string) => invoke('env:list', projectId),
-    save: (projectId: string, env: unknown) => invoke('env:save', projectId, env)
+    save: (projectId: string, env: unknown) => invoke('env:save', projectId, env),
+    remove: (projectId: string, envId: string) => invoke('env:delete', projectId, envId)
   },
 
   globals: {
@@ -48,6 +63,11 @@ const api = {
   globalParams: {
     get: (projectId: string) => invoke('globalParams:get', projectId),
     save: (projectId: string, request: unknown) => invoke('globalParams:save', projectId, request)
+  },
+
+  cookies: {
+    get: (projectId: string) => invoke('cookieJar:get', projectId),
+    save: (projectId: string, jar: unknown) => invoke('cookieJar:save', projectId, jar)
   },
 
   settings: {

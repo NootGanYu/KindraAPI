@@ -1,6 +1,6 @@
 import type { ModelSchema } from '@shared/types'
 
-export const MODEL_REF_PREFIX = 'openpost://model/'
+export const MODEL_REF_PREFIX = 'kindraapi://model/'
 
 export const SCHEMA_TYPES: Array<NonNullable<ModelSchema['type']>> = [
   'string',

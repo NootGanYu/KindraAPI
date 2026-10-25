@@ -1,8 +1,8 @@
 {
-  "name": "openpost",
-  "productName": "openPost",
+  "name": "kindraapi",
+  "productName": "KindraAPI",
   "version": "0.1.0",
-  "description": "openPost — local-first API client with request history, flow automation and MCP",
+  "description": "KindraAPI — local-first API client with request history, flow automation and MCP",
   "main": "./out/main/index.js",
   "author": "local",
   "license": "MIT",

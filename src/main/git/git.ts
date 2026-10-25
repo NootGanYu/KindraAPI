@@ -333,7 +333,7 @@ export async function initRepo(cwd: string, branch = 'main'): Promise<GitOperati
   if (!fs.existsSync(ignoreFile)) {
     fs.writeFileSync(
       ignoreFile,
-      '# openPost 运行记录（可能包含敏感信息）\nexecutions/runs/\n',
+      '# KindraAPI 运行记录（可能包含敏感信息）\nexecutions/runs/\n',
       'utf8'
     )
   }

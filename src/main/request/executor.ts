@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import type {
   AssertionResult,
+  AuthModel,
+  BodyModel,
   ConsoleEntry,
   Environment,
   Param,
@@ -23,11 +25,25 @@ interface ResolvedRequest {
   headers: Array<{ key: string; value: string }>
   body: unknown
   auth: unknown
+  bodyMode: string
+  bodyModel?: BodyModel
+  authModel?: AuthModel
   querys: Record<string, string>
   paths: Record<string, string>
   cookies: Record<string, string>
   protocolVersion: 'http1' | 'auto' | 'http2'
   baseUrl: string
+}
+
+/** 供代码生成复用的有效请求描述（已完成环境变量/服务前缀替换）。 */
+export interface EffectiveRequest {
+  url: string
+  method: string
+  headers: Array<{ key: string; value: string }>
+  bodyMode: string
+  bodyModel?: BodyModel
+  authModel?: AuthModel
+  warnings: string[]
 }
 
 function normalizeKey(key: string): string {
@@ -183,12 +199,28 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
       acc[p.key] = p.value
       return acc
     }, {})
-  const cookieHeader = Object.entries(cookies)
-    .map(([k, v]) => `${k}=${v}`)
-    .join('; ')
-  if (cookieHeader && !headers.some((h) => h.key.toLowerCase() === 'cookie')) {
-    headers.push({ key: 'Cookie', value: cookieHeader })
+
+  // Cookie 优先级：全局 jar < 请求 Cookie 参数 < 显式 Cookie 头。
+  const mergedCookies: Record<string, string> = {
+    ...store.getCookieJarForUrl(projectId, url)
   }
+  for (const [key, value] of Object.entries(cookies)) mergedCookies[key] = value
+  const explicitCookieHeaders = headers.filter(
+    (item) => item.key.toLowerCase() === 'cookie'
+  )
+  for (const header of explicitCookieHeaders) {
+    for (const [key, value] of parseCookieHeader(header.value)) mergedCookies[key] = value
+  }
+  if (explicitCookieHeaders.length > 0) {
+    for (let i = headers.length - 1; i >= 0; i -= 1) {
+      if (headers[i].key.toLowerCase() === 'cookie') headers.splice(i, 1)
+    }
+  }
+  const cookieHeader = Object.entries(mergedCookies)
+    .map(([key, value]) => `${stripHeaderBreaks(key)}=${stripHeaderBreaks(value)}`)
+    .filter((pair) => !pair.startsWith('='))
+    .join('; ')
+  if (cookieHeader) headers.push({ key: 'Cookie', value: cookieHeader })
 
   if (bodyMode === 'json' && !headers.some((h) => h.key.toLowerCase() === 'content-type')) {
     headers.push({ key: 'Content-Type', value: 'application/json' })
@@ -204,11 +236,60 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
     headers,
     body: toPostmanBody(bodyMode, body),
     auth: toPostmanAuth(auth),
+    bodyMode,
+    bodyModel: body,
+    authModel: auth,
     querys,
     paths,
     cookies,
     protocolVersion,
     baseUrl
+  }
+}
+
+function stripHeaderBreaks(value: string): string {
+  return String(value ?? '').replace(/[\r\n]/g, '')
+}
+
+function parseCookieHeader(value: string): Array<[string, string]> {
+  const pairs: Array<[string, string]> = []
+  for (const part of String(value ?? '').split(';')) {
+    const index = part.indexOf('=')
+    if (index <= 0) continue
+    const key = part.slice(0, index).trim()
+    const cookieValue = part.slice(index + 1).trim()
+    if (key) pairs.push([key, cookieValue])
+  }
+  return pairs
+}
+
+function loadScopes(
+  projectId: string,
+  environmentId?: string
+): { env: Environment | null; globals: ReturnType<typeof store.getGlobalVars> } {
+  const envs = store.listEnvironments(projectId)
+  const settings = store.getSettings()
+  const preferredEnvId = environmentId || settings.environment_id
+  const env = envs.find((e) => e.env_id === preferredEnvId) ?? envs[0] ?? null
+  return { env, globals: store.getGlobalVars(projectId) }
+}
+
+/** 为代码生成等场景提供已完成环境替换与 Cookie 合并的请求。 */
+export function resolveEffectiveRequest(
+  projectId: string,
+  target: Target,
+  environmentId?: string
+): EffectiveRequest {
+  const { env } = loadScopes(projectId, environmentId)
+  const resolved = resolveRequest(projectId, target, env)
+  return {
+    url: resolved.url,
+    method: resolved.method,
+    headers: resolved.headers,
+    bodyMode: resolved.bodyMode,
+    bodyModel: resolved.bodyModel,
+    authModel: resolved.authModel,
+    warnings: []
   }
 }
 
@@ -306,12 +387,8 @@ export async function sendRequest(
   target: Target,
   environmentId?: string
 ): Promise<SendRecord> {
-  const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
-  const preferredEnvId = environmentId || settings.environment_id
-  const env =
-    envs.find((e) => e.env_id === preferredEnvId) ?? envs[0] ?? null
-  const globals = store.getGlobalVars(projectId)
+  const { env, globals } = loadScopes(projectId, environmentId)
   const resolved = resolveRequest(projectId, target, env)
 
   const environmentValues: Record<string, { current_value?: string; value?: string }> = env

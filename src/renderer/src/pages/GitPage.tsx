@@ -981,7 +981,7 @@ export default function GitPage(): JSX.Element {
             type="info"
             showIcon
             message="尚未配置远程仓库"
-            description="支持 HTTPS / SSH 地址。认证由系统 git credential helper 处理，openPost 不保存密码或私钥。"
+            description="支持 HTTPS / SSH 地址。认证由系统 git credential helper 处理，KindraAPI 不保存密码或私钥。"
           />
         )}
         <div className="git-remote-list">

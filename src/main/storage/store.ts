@@ -36,8 +36,11 @@ import type {
   RequestModel,
   SendRecord,
   SendRecordSummary,
+  CookieJar,
   Target,
-  TargetSummary
+  TargetSummary,
+  TargetVersion,
+  TargetVersionSummary
 } from '@shared/types'
 import {
   createDataModel,
@@ -240,9 +243,299 @@ export function createTargetInProject(
   return target
 }
 
+// ---------------------------------------------------------------------------
+// API 版本历史（本地作用域，不进入 Git）
+// ---------------------------------------------------------------------------
+
+const MAX_TARGET_VERSIONS = 100
+
+interface TargetVersionFile {
+  target_id: string
+  versions: TargetVersion[]
+}
+
+function targetVersionsPath(projectId: string, targetId: string): string {
+  return path.join(
+    localProjectDir(projectId),
+    'api_versions',
+    `${assertId(targetId, 'target_id')}.json`
+  )
+}
+
+function readTargetVersions(projectId: string, targetId: string): TargetVersionFile {
+  const file = readJson<TargetVersionFile>(targetVersionsPath(projectId, targetId), {
+    target_id: targetId,
+    versions: []
+  })
+  return {
+    target_id: targetId,
+    versions: Array.isArray(file?.versions) ? file.versions : []
+  }
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`
+}
+
+/** 只对可编辑内容做签名，忽略时间、排序与版本元数据。 */
+function targetSignature(target: Target): string {
+  const { updated_at, created_at, version, sort, parent_id, ...content } = target as Target
+  void updated_at
+  void created_at
+  void version
+  void sort
+  void parent_id
+  return crypto.createHash('sha1').update(stableStringify(content)).digest('hex')
+}
+
+function toVersionSummary(version: TargetVersion): TargetVersionSummary {
+  return {
+    version_id: version.version_id,
+    version: version.version,
+    created_at: version.created_at,
+    label: version.label,
+    tagged_at: version.tagged_at,
+    method: version.snapshot?.method,
+    url: version.snapshot?.url,
+    name: version.snapshot?.name
+  }
+}
+
+/** 保存时记录版本；内容未变化则不重复记录。 */
+function recordTargetVersion(projectId: string, target: Target): void {
+  if (target.target_type === 'folder') return
+  const file = readTargetVersions(projectId, target.target_id)
+  const signature = targetSignature(target)
+  const newest = file.versions[0]
+  if (newest && newest.signature === signature) {
+    target.version = newest.version
+    return
+  }
+  const version = file.versions.reduce((max, item) => Math.max(max, item.version), 0) + 1
+  target.version = version
+  const snapshot = JSON.parse(JSON.stringify(target)) as Target
+  file.versions.unshift({
+    version_id: createId('v'),
+    version,
+    created_at: new Date().toISOString(),
+    signature,
+    snapshot
+  })
+  let untagged = 0
+  file.versions = file.versions.filter((item) => {
+    if (item.label) return true
+    untagged += 1
+    return untagged <= MAX_TARGET_VERSIONS
+  })
+  writeJson(targetVersionsPath(projectId, target.target_id), file)
+}
+
+export function listTargetVersions(
+  projectId: string,
+  targetId: string
+): TargetVersionSummary[] {
+  return readTargetVersions(projectId, targetId).versions.map(toVersionSummary)
+}
+
+export function getTargetVersion(
+  projectId: string,
+  targetId: string,
+  versionId: string
+): TargetVersion | null {
+  return (
+    readTargetVersions(projectId, targetId).versions.find(
+      (item) => item.version_id === versionId
+    ) ?? null
+  )
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+export function restoreTargetVersion(
+  projectId: string,
+  targetId: string,
+  versionId: string
+): Target {
+  const live = getTarget(projectId, targetId)
+  if (!live) throw new Error('接口不存在')
+  const found = getTargetVersion(projectId, targetId, versionId)
+  if (!found) throw new Error('版本不存在')
+  const snapshot = found.snapshot
+  const restored: Target = {
+    ...live,
+    name: snapshot.name,
+    description: snapshot.description,
+    method: snapshot.method,
+    url: snapshot.url,
+    protocol: snapshot.protocol,
+    server_id: snapshot.server_id,
+    status: snapshot.status,
+    tags: snapshot.tags ? [...snapshot.tags] : [],
+    is_exampled: snapshot.is_exampled,
+    request: snapshot.request ? cloneJson(snapshot.request) : live.request,
+    response: snapshot.response ? cloneJson(snapshot.response) : live.response,
+    updated_at: new Date().toISOString()
+  }
+  return saveTarget(projectId, restored)
+}
+
+export function tagTargetVersion(
+  projectId: string,
+  targetId: string,
+  versionId: string,
+  label: string
+): TargetVersionSummary {
+  const file = readTargetVersions(projectId, targetId)
+  const found = file.versions.find((item) => item.version_id === versionId)
+  if (!found) throw new Error('版本不存在')
+  const clean = String(label ?? '').trim().slice(0, 60)
+  if (clean) {
+    found.label = clean
+    found.tagged_at = new Date().toISOString()
+  } else {
+    delete found.label
+    delete found.tagged_at
+  }
+  writeJson(targetVersionsPath(projectId, targetId), file)
+  return toVersionSummary(found)
+}
+
+function uniqueTargetName(projectId: string, parentId: string, base: string): string {
+  const names = new Set(
+    readTargetIndex(projectId)
+      .items.filter((item) => item.parent_id === parentId)
+      .map((item) => item.name)
+  )
+  if (!names.has(base)) return base
+  let index = 2
+  while (names.has(`${base} (${index})`)) index += 1
+  return `${base} (${index})`
+}
+
+export function cloneTarget(projectId: string, targetId: string): Target {
+  const source = getTarget(projectId, targetId)
+  if (!source) throw new Error('接口不存在')
+  if (source.target_type === 'folder') throw new Error('目录暂不支持克隆')
+  const index = readTargetIndex(projectId)
+  const siblings = index.items.filter((item) => item.parent_id === source.parent_id)
+  const maxSort = siblings.reduce((max, item) => Math.max(max, item.sort), 0)
+  const now = new Date().toISOString()
+  const cloned: Target = {
+    ...cloneJson(source),
+    target_id: createId('t'),
+    parent_id: source.parent_id,
+    name: uniqueTargetName(projectId, source.parent_id, `${source.name} 副本`),
+    sort: maxSort + 100,
+    version: 1,
+    created_at: now,
+    updated_at: now
+  }
+  return saveTarget(projectId, cloned)
+}
+
+// ---------------------------------------------------------------------------
+// Cookie 管理器（本地作用域，可能包含凭据）
+// ---------------------------------------------------------------------------
+
+function cookieJarPath(projectId: string): string {
+  return path.join(localProjectDir(projectId), 'cookie_jar.json')
+}
+
+function normalizeCookieDomain(input: string): string {
+  let domain = String(input ?? '').trim().toLowerCase()
+  domain = domain.replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+  domain = domain.replace(/[/?#].*$/, '')
+  domain = domain.replace(/^[^@]*@/, '')
+  domain = domain.replace(/:\d+$/, '')
+  domain = domain.replace(/^\.+/, '').replace(/\.+$/, '')
+  return domain
+}
+
+export function getCookieJar(projectId: string): CookieJar {
+  return readJson<CookieJar>(cookieJarPath(projectId), {
+    project_id: projectId,
+    enabled: false,
+    domains: [],
+    updated_at: new Date().toISOString()
+  })
+}
+
+export function saveCookieJar(projectId: string, jar: CookieJar): CookieJar {
+  const now = new Date().toISOString()
+  const seen = new Set<string>()
+  const domains = (Array.isArray(jar?.domains) ? jar.domains : [])
+    .map((item) => ({
+      domain: normalizeCookieDomain(item.domain),
+      cookies: String(item.cookies ?? ''),
+      updated_at: item.updated_at || now
+    }))
+    .filter((item) => {
+      if (!item.domain || seen.has(item.domain)) return false
+      seen.add(item.domain)
+      return true
+    })
+  const clean: CookieJar = {
+    project_id: projectId,
+    enabled: jar?.enabled === true,
+    domains,
+    updated_at: now
+  }
+  const file = cookieJarPath(projectId)
+  writeJson(file, clean)
+  try {
+    fs.chmodSync(file, 0o600)
+  } catch {
+    // best effort
+  }
+  return clean
+}
+
+function parseCookiePairs(value: string): Array<[string, string]> {
+  const pairs: Array<[string, string]> = []
+  for (const part of String(value ?? '').split(';')) {
+    const index = part.indexOf('=')
+    if (index <= 0) continue
+    const name = part.slice(0, index).trim().replace(/[\r\n]/g, '')
+    const cookieValue = part.slice(index + 1).trim().replace(/[\r\n]/g, '')
+    if (name) pairs.push([name, cookieValue])
+  }
+  return pairs
+}
+
+/** 返回与 URL 主机匹配的 Cookie；更长的域名优先。 */
+export function getCookieJarForUrl(projectId: string, rawUrl: string): Record<string, string> {
+  const jar = getCookieJar(projectId)
+  if (!jar.enabled || jar.domains.length === 0) return {}
+  let host = ''
+  try {
+    host = new URL(rawUrl).hostname.toLowerCase()
+  } catch {
+    return {}
+  }
+  const matched = jar.domains
+    .filter((item) => host === item.domain || host.endsWith(`.${item.domain}`))
+    .sort((a, b) => b.domain.length - a.domain.length)
+  const result: Record<string, string> = {}
+  for (const item of matched) {
+    for (const [name, value] of parseCookiePairs(item.cookies)) {
+      if (!(name in result)) result[name] = value
+    }
+  }
+  return result
+}
+
 export function saveTarget(projectId: string, target: Target): Target {
   if (target.project_id !== projectId) throw new Error('项目不匹配')
   target.updated_at = new Date().toISOString()
+  recordTargetVersion(projectId, target)
   writeJson(
     path.join(projectDir(projectId), 'apis', `${assertId(target.target_id, 'target_id')}.json`),
     target
@@ -272,6 +565,7 @@ export function deleteTarget(projectId: string, targetId: string): void {
   for (const id of toDelete) {
     const file = path.join(projectDir(projectId), 'apis', `${assertId(id, 'target_id')}.json`)
     fs.rmSync(file, { force: true })
+    fs.rmSync(targetVersionsPath(projectId, id), { force: true })
   }
   index.items = index.items.filter((i) => !toDelete.has(i.target_id))
   writeTargetIndex(projectId, index)
