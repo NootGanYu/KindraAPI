@@ -45,6 +45,8 @@ export interface BodyModel {
   formdata?: Param[]
   binary?: { file_path?: string; data_url?: string; file_name?: string }
   json?: string
+  /** 引用数据模型；存在时 raw 仅作为最近一次生成结果 */
+  model_id?: string
 }
 
 export interface RequestModel {
@@ -76,6 +78,8 @@ export interface ResponseExample {
     is_default?: number
     schema?: unknown
     verify_type?: string
+    /** 引用数据模型；存在时 raw 仅作为最近一次生成结果 */
+    model_id?: string
   }
   raw?: string
   raw_parameter?: Param[]
@@ -131,6 +135,8 @@ export interface Project {
   team_id?: string
   created_at: string
   updated_at: string
+  /** 系统内置描述总开关：1 开启，-1 关闭 */
+  is_describe_library?: number
 }
 
 export interface EnvVar {
@@ -415,4 +421,192 @@ export interface McpStatus {
   host: string
   port: number
   error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Data dictionary
+// ---------------------------------------------------------------------------
+
+export type DictFieldType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array'
+
+export interface DictionaryEntry {
+  id: string
+  project_id: string
+  key: string
+  field_type: DictFieldType
+  description: string
+  remarks?: string
+  default_value?: string
+  schema?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface DictionaryEntryView extends DictionaryEntry {
+  source: 'builtin' | 'custom'
+}
+
+export interface DictionarySettings {
+  builtin_enabled: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Data models
+// ---------------------------------------------------------------------------
+
+export type ModelType = 'model' | 'folder'
+
+export interface ModelSchema {
+  type?: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null'
+  properties?: Record<string, ModelSchema>
+  items?: ModelSchema
+  required?: string[]
+  default?: unknown
+  enum?: unknown[]
+  description?: string
+  example?: unknown
+  $ref?: string
+  'x-schema-orders'?: string[]
+  'x-nullable'?: boolean
+  [key: string]: unknown
+}
+
+export interface DataModel {
+  model_id: string
+  project_id: string
+  parent_id: string
+  model_type: ModelType
+  name: string
+  alias?: string
+  sort: number
+  version: number
+  status: number
+  data: {
+    description: string
+    schema: ModelSchema
+  }
+  created_by?: string
+  updated_by?: string
+  created_time: string
+  updated_time: string
+}
+
+export interface ModelSummary {
+  model_id: string
+  parent_id: string
+  model_type: ModelType
+  name: string
+  alias?: string
+  sort: number
+  created_by?: string
+  created_time: string
+  updated_by?: string
+  updated_time: string
+}
+
+export type ModelReferenceKind = 'request-body' | 'response-example'
+
+export interface ModelReference {
+  target_id: string
+  target_name: string
+  method?: string
+  kind: ModelReferenceKind
+  example_id?: string
+}
+
+export interface GeneratedExampleResult {
+  value: unknown
+  warnings: Array<{
+    code: 'cycle' | 'missing-model' | 'invalid-ref' | 'depth-limit'
+    message: string
+    ref?: string
+    path?: string
+  }>
+}
+
+// ---------------------------------------------------------------------------
+// Database connections
+// ---------------------------------------------------------------------------
+
+export interface DbDefaultConfig {
+  host: string
+  port: number
+  user: string
+  password: string
+  database: string
+  charset?: string
+}
+
+export interface DbSshConfig {
+  enable: -1 | 1
+  host: string
+  port: number
+  username: string
+  password: string
+  auth_type: 1 | 2 | 3
+  private_key: string
+  passphrase: string
+}
+
+export interface DbConnection {
+  db_id: string
+  project_id: string
+  name: string
+  type: 'mysql'
+  remarks: string
+  config: { default: DbDefaultConfig }
+  ssh: DbSshConfig
+  created_at: string
+  updated_at: string
+}
+
+export type DbConnectionView = Omit<DbConnection, 'config' | 'ssh'> & {
+  config: { default: Omit<DbDefaultConfig, 'password'> & { has_password: boolean } }
+  ssh: Omit<DbSshConfig, 'password' | 'private_key' | 'passphrase'> & {
+    has_password: boolean
+    has_private_key: boolean
+    has_passphrase: boolean
+  }
+}
+
+export interface DbTable {
+  name: string
+  comment: string
+  columns: DbColumnInfo[]
+}
+
+export interface DbColumnInfo {
+  name: string
+  data_type: string
+  column_type: string
+  is_nullable: boolean
+  default_value: string | null
+  comment: string
+  extra: string
+}
+
+export type ImportConflictStrategy = 'update' | 'skip' | 'copy'
+
+export interface ImportDbOptions {
+  tables: string[]
+  target_parent_id?: string
+  conflict?: ImportConflictStrategy
+}
+
+export interface ImportDbTableResult {
+  table: string
+  status: 'created' | 'updated' | 'skipped' | 'copied' | 'failed'
+  model_id?: string
+  model_name?: string
+  message?: string
+}
+
+export interface ImportDbResult {
+  items: ImportDbTableResult[]
+  created: number
+  updated: number
+  skipped: number
+  copied: number
+  failed: number
+  warnings: string[]
 }

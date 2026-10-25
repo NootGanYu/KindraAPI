@@ -8,6 +8,8 @@ import {
 } from '@ant-design/icons'
 import type { Param } from '@shared/types'
 import { createParam } from '@shared/factories'
+import { useApp } from '../store'
+import DictionarySuggest from './schemas/DictionarySuggest'
 
 interface Props {
   params: Param[]
@@ -27,6 +29,7 @@ export default function ParamTable({
   showDescription = true
 }: Props): JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
+  const projectId = useApp((state) => state.project?.project_id ?? '')
 
   const update = (index: number, patch: Partial<Param>): void => {
     onChange(params.map((param, i) => (i === index ? { ...param, ...patch } : param)))
@@ -114,12 +117,22 @@ export default function ParamTable({
               </div>
               {showDescription ? (
                 <div className="param-td param-desc">
-                  <Input
-                    variant="borderless"
-                    value={param.description ?? ''}
-                    placeholder="描述"
-                    onChange={(event) => update(index, { description: event.target.value })}
-                  />
+                  {projectId ? (
+                    <DictionarySuggest
+                      projectId={projectId}
+                      value={param.description ?? ''}
+                      placeholder="描述"
+                      size="small"
+                      onChange={(value) => update(index, { description: value })}
+                    />
+                  ) : (
+                    <Input
+                      variant="borderless"
+                      value={param.description ?? ''}
+                      placeholder="描述"
+                      onChange={(event) => update(index, { description: event.target.value })}
+                    />
+                  )}
                 </div>
               ) : null}
               <div className="param-actions">

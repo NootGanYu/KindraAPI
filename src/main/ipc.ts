@@ -3,11 +3,18 @@ import path from 'node:path'
 import fs from 'node:fs'
 import type {
   AppSettings,
+  DataModel,
+  DbConnection,
   DebugConfig,
+  DictionaryEntry,
+  DictionarySettings,
   Environment,
   Flow,
   GlobalVars,
+  ImportDbOptions,
   McpConfig,
+  ModelSchema,
+  ModelType,
   Project,
   RequestModel,
   Result,
@@ -19,6 +26,8 @@ import * as store from './storage/store'
 import { sendRequest } from './request/executor'
 import { runFlow } from './flow/engine'
 import { createFlow } from '@shared/factories'
+import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
+import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
 import {
   getMcpStatus,
   restartMcpServer
@@ -127,6 +136,75 @@ export function registerIpc(): void {
   handle('flow:runs', (projectId: string, limit?: number) => store.listFlowRuns(projectId, limit))
   handle('flow:run:get', (projectId: string, runId: string) =>
     store.getFlowRun(projectId, runId)
+  )
+
+  // Data dictionary
+  handle('dictionary:list', (projectId: string) => store.listDictionaryEntries(projectId))
+  handle('dictionary:suggestions', (projectId: string) => store.listDictionarySuggestions(projectId))
+  handle('dictionary:save', (projectId: string, entry: DictionaryEntry) =>
+    store.saveDictionaryEntry(projectId, entry)
+  )
+  handle('dictionary:delete', (projectId: string, id: string) => {
+    store.deleteDictionaryEntry(projectId, id)
+    return true
+  })
+  handle('dictionary:getSettings', (projectId: string) => store.getDictionarySettings(projectId))
+  handle('dictionary:saveSettings', (projectId: string, settings: DictionarySettings) =>
+    store.saveDictionarySettings(projectId, settings)
+  )
+
+  // Data models
+  handle('model:list', (projectId: string) => store.listModels(projectId))
+  handle('model:listAll', (projectId: string) => store.listModelsAll(projectId))
+  handle('model:get', (projectId: string, modelId: string) => store.getModel(projectId, modelId))
+  handle('model:save', (projectId: string, model: DataModel) => store.saveModel(projectId, model))
+  handle('model:delete', (projectId: string, modelId: string) =>
+    store.deleteModelWithReferences(projectId, modelId)
+  )
+  handle('model:create', (projectId: string, parentId: string, kind: ModelType) =>
+    store.createModelInProject(projectId, parentId, kind)
+  )
+  handle('model:copy', (projectId: string, modelId: string, destParentId: string) =>
+    store.copyModel(projectId, modelId, destParentId)
+  )
+  handle(
+    'model:move',
+    (projectId: string, modelId: string, destParentId: string, orderedIds?: string[]) =>
+      store.moveModel(projectId, modelId, destParentId, orderedIds)
+  )
+  handle('model:reorder', (projectId: string, parentId: string, orderedIds: string[]) =>
+    store.reorderModels(projectId, parentId, orderedIds)
+  )
+  handle('model:references', (projectId: string, modelId: string) =>
+    store.findModelReferences(projectId, modelId)
+  )
+  handle('model:generateExample', (projectId: string, modelId: string) =>
+    generateModelExample(projectId, modelId)
+  )
+  handle('model:generateFromSchema', (projectId: string, schema: ModelSchema) =>
+    generateFromSchema(projectId, schema)
+  )
+  handle('model:resolveRefs', (projectId: string, schema: ModelSchema) =>
+    resolveModelRefs(projectId, schema)
+  )
+
+  // Database connections
+  handle('db:list', (projectId: string) => store.listDbConnections(projectId))
+  handle('db:save', (projectId: string, connection: DbConnection) =>
+    store.saveDbConnection(projectId, connection)
+  )
+  handle('db:delete', (projectId: string, dbId: string) => {
+    store.deleteDbConnection(projectId, dbId)
+    return true
+  })
+  handle('db:test', (config: DbConnection['config']['default'], ssh?: DbConnection['ssh']) =>
+    testDbConnection(config, ssh)
+  )
+  handle('db:tables', (config: DbConnection['config']['default'], ssh?: DbConnection['ssh']) =>
+    listDbTables(config, ssh)
+  )
+  handle('db:import', (projectId: string, dbId: string, options: ImportDbOptions) =>
+    importDbTables(projectId, dbId, options)
   )
 
   // M3 · MCP

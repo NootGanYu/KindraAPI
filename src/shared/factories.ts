@@ -1,11 +1,16 @@
 import type {
   AuthModel,
   BodyModel,
+  DataModel,
+  DbConnection,
+  DictionaryEntry,
   Environment,
   Flow,
   FlowAssertion,
   FlowEvent,
   FlowEventType,
+  ModelSchema,
+  ModelType,
   Param,
   Project,
   RequestModel,
@@ -193,5 +198,89 @@ export function createFlow(projectId: string, name = '新建流程', envId = '')
     events: [],
     created_at: now,
     updated_at: now
+  }
+}
+
+export function createDictionaryEntry(
+  projectId: string,
+  partial: Partial<DictionaryEntry> = {}
+): DictionaryEntry {
+  const now = new Date().toISOString()
+  return {
+    id: createId('d'),
+    project_id: projectId,
+    key: '',
+    field_type: 'string',
+    description: '',
+    remarks: '',
+    default_value: '',
+    created_at: now,
+    updated_at: now,
+    ...partial
+  }
+}
+
+export function createEmptyModelSchema(): ModelSchema {
+  return { type: 'object', properties: {}, 'x-schema-orders': [] }
+}
+
+export function createDataModel(
+  projectId: string,
+  parentId: string,
+  kind: ModelType = 'model',
+  name?: string
+): DataModel {
+  const now = new Date().toISOString()
+  return {
+    model_id: createId('m'),
+    project_id: projectId,
+    parent_id: parentId || '0',
+    model_type: kind,
+    name: name || (kind === 'folder' ? '新建目录' : '新建数据模型'),
+    alias: '',
+    sort: 1000,
+    version: 1,
+    status: 1,
+    data: {
+      description: '',
+      schema: kind === 'model' ? createEmptyModelSchema() : {}
+    },
+    created_by: '本地',
+    updated_by: '本地',
+    created_time: now,
+    updated_time: now
+  }
+}
+
+export function createDbConnection(projectId: string, partial: Partial<DbConnection> = {}): DbConnection {
+  const now = new Date().toISOString()
+  return {
+    db_id: createId('db'),
+    project_id: projectId,
+    name: '新建数据库连接',
+    type: 'mysql',
+    remarks: '',
+    config: {
+      default: {
+        host: '127.0.0.1',
+        port: 3306,
+        user: 'root',
+        password: '',
+        database: ''
+      }
+    },
+    ssh: {
+      enable: -1,
+      host: '',
+      port: 22,
+      username: '',
+      password: '',
+      auth_type: 1,
+      private_key: '',
+      passphrase: ''
+    },
+    created_at: now,
+    updated_at: now,
+    ...partial
   }
 }

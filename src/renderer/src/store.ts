@@ -266,8 +266,11 @@ export const useApp = create<AppState>((set, get) => ({
     const draft = get().drafts[id]
     if (!project || !draft) return
     const record = get().records[id]
+    const hasModelExample = (draft.response?.example ?? []).some(
+      (example) => Boolean(example.expect?.model_id)
+    )
     const payload =
-      record?.response != null
+      record?.response != null && !hasModelExample
         ? { ...draft, response: { example: [exampleFromRecord(record)] } }
         : draft
     const saved = unwrap(await window.api.targets.save(project.project_id, payload))

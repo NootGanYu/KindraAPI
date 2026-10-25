@@ -10,6 +10,7 @@ import type {
 } from '@shared/types'
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
+import { generateModelExample } from '../schema/example'
 
 const runtime = require('postman-runtime') as any
 const { Collection, VariableScope } = require('postman-collection') as any
@@ -107,6 +108,23 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
     if (req.body && (req.body.mode !== 'none' || (req.body.raw ?? '').length > 0)) {
       bodyMode = req.body.mode
       body = req.body
+    }
+  }
+
+  // 引用了数据模型时，发送前按模型实时重新生成，忽略手改的 raw。
+  // 模型失效时保留最近一次生成的 raw，避免发送 "null"。
+  if (body?.model_id) {
+    const generated = generateModelExample(projectId, body.model_id)
+    const broken = generated.warnings.some(
+      (warning) => warning.code === 'missing-model' || warning.code === 'invalid-ref'
+    )
+    if (!broken) {
+      body = {
+        ...body,
+        mode: body.mode === 'none' ? 'json' : body.mode,
+        raw: JSON.stringify(generated.value, null, 2)
+      }
+      if (bodyMode === 'none') bodyMode = 'json'
     }
   }
 

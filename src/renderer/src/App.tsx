@@ -9,6 +9,7 @@ import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import AutomationPage from './pages/AutomationPage'
+import SchemasPage from './pages/SchemasPage'
 
 function Shell(): JSX.Element {
   return (
@@ -30,15 +31,7 @@ function Shell(): JSX.Element {
                 />
               }
             />
-            <Route
-              path="/schemas"
-              element={
-                <PlaceholderPage
-                  title="字典"
-                  description="数据模型与字典库将在后续里程碑接入。"
-                />
-              }
-            />
+            <Route path="/schemas" element={<SchemasPage />} />
             <Route path="/automation" element={<AutomationPage />} />
             <Route path="*" element={<Navigate to="/apis" replace />} />
           </Routes>

@@ -1,7 +1,9 @@
-import { useState } from 'react'
-import { App as AntApp } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { App as AntApp, Tag, Tooltip } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
-import type { Param, ResponseExample, SendRecord } from '@shared/types'
+import type { ModelSummary, Param, ResponseExample, SendRecord } from '@shared/types'
+import { createId } from '@shared/factories'
+import ModelPickerModal from './schemas/ModelPickerModal'
 
 type ViewMode = 'pretty' | 'raw' | 'preview' | 'visual' | 'table'
 
@@ -9,6 +11,8 @@ interface Props {
   record: SendRecord | null
   examples?: ResponseExample[]
   loading?: boolean
+  projectId?: string
+  onChangeExamples?: (examples: ResponseExample[]) => void
 }
 
 const TABS = ['实时响应', '响应头', 'Cookie', '响应示例', '实际请求', '控制台']
@@ -78,10 +82,19 @@ function HeaderTable({ rows }: { rows: Array<[string, string]> }): JSX.Element {
   )
 }
 
-export default function ResponsePanel({ record, examples, loading }: Props): JSX.Element {
-  const { message } = AntApp.useApp()
+export default function ResponsePanel({
+  record,
+  examples,
+  loading,
+  projectId,
+  onChangeExamples
+}: Props): JSX.Element {
+  const { message, modal } = AntApp.useApp()
   const [viewMode, setViewMode] = useState<ViewMode>('pretty')
   const [activeTab, setActiveTab] = useState('实时响应')
+  const [models, setModels] = useState<ModelSummary[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [modelWarning, setModelWarning] = useState('')
 
   const response = record?.response ?? null
   const ok = response && !record?.error
@@ -106,19 +119,171 @@ export default function ResponsePanel({ record, examples, loading }: Props): JSX
   const toRows = (params?: Param[]): Array<[string, string]> =>
     (params ?? []).map((item) => [item.key, item.value])
 
+  useEffect(() => {
+    if (!projectId) return
+    let active = true
+    window.api.models
+      .list(projectId)
+      .then((result) => {
+        if (active && result.ok) setModels(result.data)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [projectId])
+
+  const exampleModelId = example?.expect?.model_id
+  const referencedModel = useMemo(
+    () => models.find((model) => model.model_id === exampleModelId),
+    [models, exampleModelId]
+  )
+  const modelMissing = Boolean(exampleModelId) && !referencedModel
+
+  useEffect(() => {
+    if (!exampleModelId || !projectId || !onChangeExamples || !example) return
+    let active = true
+    window.api.models
+      .generateExample(projectId, exampleModelId)
+      .then((result) => {
+        if (!active) return
+        if (!result.ok) {
+          setModelWarning(result.error)
+          return
+        }
+        setModelWarning(result.data.warnings[0]?.message ?? '')
+        const raw = JSON.stringify(result.data.value, null, 2)
+        if (raw !== (example.raw ?? '')) {
+          onChangeExamples(
+            (examples ?? []).map((item) =>
+              item.example_id === example.example_id ? { ...item, raw } : item
+            )
+          )
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exampleModelId, example?.raw, projectId])
+
+  const selectExampleModel = async (model: ModelSummary): Promise<void> => {
+    if (!projectId) return
+    const result = await window.api.models.generateExample(projectId, model.model_id)
+    if (!result.ok) {
+      message.error(result.error)
+      return
+    }
+    if (result.data.warnings.length > 0) message.warning(result.data.warnings[0].message)
+    const nextExample: ResponseExample = {
+      ...(example ?? {
+        example_id: createId('ex'),
+        raw_parameter: [],
+        headers: [],
+        cookies: []
+      }),
+      expect: {
+        ...(example?.expect ?? {
+          name: '模型示例',
+          code: 200,
+          content_type: 'application/json',
+          is_default: 1
+        }),
+        name: model.name,
+        code: example?.expect?.code ?? 200,
+        content_type: 'application/json',
+        is_default: 1,
+        model_id: model.model_id
+      },
+      raw: JSON.stringify(result.data.value, null, 2)
+    }
+    const nextList = example
+      ? (examples ?? []).map((item) =>
+          item.example_id === example.example_id ? nextExample : item
+        )
+      : [...(examples ?? []), nextExample]
+    onChangeExamples?.(nextList)
+    setPickerOpen(false)
+  }
+
+  const clearExampleModel = (): void => {
+    if (!example) return
+    const nextExpect = { ...(example.expect ?? {}) }
+    delete nextExpect.model_id
+    onChangeExamples?.(
+      (examples ?? []).map((item) =>
+        item.example_id === example.example_id
+          ? { ...item, expect: nextExpect }
+          : item
+      )
+    )
+  }
+
+  const editExampleModel = (): void => {
+    modal.confirm({
+      title: '编辑将解除模型引用',
+      content: '解除后保留当前生成的示例 JSON，可继续手动维护。',
+      okText: '解除并编辑',
+      cancelText: '取消',
+      onOk: () => clearExampleModel()
+    })
+  }
+
   const renderContent = (): JSX.Element => {
     if (activeTab === '响应示例') {
+      const referenceBar =
+        projectId && onChangeExamples ? (
+          <div className="body-model-bar" style={{ marginBottom: 8 }}>
+            {exampleModelId ? (
+              <>
+                {modelMissing ? (
+                  <Tag color="error">模型已删除</Tag>
+                ) : (
+                  <Tag color="gold">模型 · {referencedModel?.name}</Tag>
+                )}
+                <span className="muted">按模型实时生成，只读</span>
+                <span style={{ flex: 1 }} />
+                <Tooltip title="解除引用后保留当前 JSON">
+                  <button className="mini" onClick={editExampleModel}>
+                    编辑
+                  </button>
+                </Tooltip>
+                <button className="mini" onClick={clearExampleModel}>
+                  解除引用
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="mini" onClick={() => setPickerOpen(true)}>
+                  引用模型
+                </button>
+                <span className="muted">关联模型后实时生成示例 JSON</span>
+              </>
+            )}
+          </div>
+        ) : null
+
       if (!example) {
         return (
-          <div className="resp-empty" style={{ paddingBottom: 0 }}>
-            <RocketIllustration />
-            <span>暂无响应示例</span>
+          <div className="resp-filled">
+            {referenceBar}
+            <div className="resp-empty" style={{ paddingBottom: 0, minHeight: 180 }}>
+              <RocketIllustration />
+              <span>暂无响应示例</span>
+            </div>
           </div>
         )
       }
       const raw = example.raw ?? ''
       return (
         <div className="resp-filled">
+          {referenceBar}
+          {modelWarning ? (
+            <div className="muted" style={{ color: '#a47400', marginBottom: 8, fontSize: 11 }}>
+              {modelWarning}
+            </div>
+          ) : null}
           <div className="resp-meta">
             <span className="method-text">{example.expect?.code ?? '200'}</span>
             <span>{example.expect?.name ?? '示例'}</span>
@@ -323,6 +488,16 @@ export default function ResponsePanel({ record, examples, loading }: Props): JSX
         </div>
       ) : null}
       {renderContent()}
+
+      {projectId ? (
+        <ModelPickerModal
+          open={pickerOpen}
+          projectId={projectId}
+          title="选择响应示例模型"
+          onCancel={() => setPickerOpen(false)}
+          onSelect={(model) => void selectExampleModel(model)}
+        />
+      ) : null}
     </section>
   )
 }

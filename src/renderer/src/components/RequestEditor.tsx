@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react'
-import { App as AntApp, Dropdown, Input, Radio, Select, Space } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { App as AntApp, Dropdown, Input, Radio, Select, Space, Tag, Tooltip } from 'antd'
 import { DownOutlined } from '@ant-design/icons'
-import type { AuthType, BodyMode, RequestModel, Target } from '@shared/types'
+import type {
+  AuthType,
+  BodyMode,
+  ModelSummary,
+  RequestModel,
+  Target
+} from '@shared/types'
 import { createBody } from '@shared/factories'
 import { useApp } from '../store'
 import ParamTable from './ParamTable'
+import ModelPickerModal from './schemas/ModelPickerModal'
 
 interface Props {
   draft: Target
@@ -73,13 +80,16 @@ function DocIllustration(): JSX.Element {
 }
 
 export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
+  const projectId = useApp((s) => s.project?.project_id ?? '')
   const saveTarget = useApp((s) => s.saveTarget)
   const sendActive = useApp((s) => s.sendActive)
   const sending = useApp((s) => s.sendingId === draft.target_id)
   const [activeTab, setActiveTab] = useState('Body')
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
+  const [models, setModels] = useState<ModelSummary[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const request = draft.request ?? ({
     auth: { type: 'inherit' },
@@ -100,6 +110,61 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
 
   const setBody = (patch: Partial<RequestModel['body']>): void => {
     setRequest({ body: { ...(request.body ?? createBody()), ...patch } })
+  }
+
+  useEffect(() => {
+    if (!projectId) return
+    let active = true
+    window.api.models
+      .list(projectId)
+      .then((result) => {
+        if (active && result.ok) setModels(result.data)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [projectId])
+
+  const bodyModel = (request.body ?? createBody()).model_id
+  const referencedModel = useMemo(
+    () => models.find((model) => model.model_id === bodyModel),
+    [models, bodyModel]
+  )
+  const modelMissing = Boolean(bodyModel) && !referencedModel
+
+  const clearModelRef = (): void => {
+    const current = request.body ?? createBody()
+    const next = { ...current }
+    delete next.model_id
+    setRequest({ body: next })
+  }
+
+  const confirmEdit = (): void => {
+    modal.confirm({
+      title: '编辑将解除模型引用',
+      content: '解除后保留当前生成的 JSON，可继续手动修改。',
+      okText: '解除并编辑',
+      cancelText: '取消',
+      onOk: () => clearModelRef()
+    })
+  }
+
+  const selectModel = async (model: ModelSummary): Promise<void> => {
+    const result = await window.api.models.generateExample(projectId, model.model_id)
+    if (!result.ok) {
+      message.error(result.error)
+      return
+    }
+    if (result.data.warnings.length > 0) {
+      message.warning(result.data.warnings[0].message)
+    }
+    setBody({
+      mode: 'json',
+      raw: JSON.stringify(result.data.value, null, 2),
+      model_id: model.model_id
+    })
+    setPickerOpen(false)
   }
 
   const formatJsonBody = (): void => {
@@ -223,20 +288,52 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     }
     if (body.mode === 'raw' || body.mode === 'json') {
       return (
-        <div className="editor-shell fill">
-          <Input.TextArea
-            className="editor-input"
-            value={body.raw ?? ''}
-            onChange={(event) => setBody({ raw: event.target.value })}
-            onBlur={() => {
-              formatJsonBody()
-              const problem = validateJson(request.body?.raw ?? '')
-              setJsonError(problem)
-              if (problem) setTimeout(() => focusJsonError(problem), 0)
-            }}
-            placeholder={body.mode === 'json' ? '{ "key": "value" }' : '请求体'}
-            spellCheck={false}
-          />
+        <div className="body-editor-wrap">
+          <div className="body-model-bar">
+            {bodyModel ? (
+              <>
+                {modelMissing ? (
+                  <Tag color="error">模型已删除</Tag>
+                ) : (
+                  <Tag color="gold">模型 · {referencedModel?.name}</Tag>
+                )}
+                <span className="muted">发送时按模型实时生成，内容只读</span>
+                <span style={{ flex: 1 }} />
+                <Tooltip title="解除引用后保留当前 JSON 可编辑">
+                  <button className="mini" onClick={confirmEdit}>
+                    编辑
+                  </button>
+                </Tooltip>
+                <button className="mini" onClick={clearModelRef}>
+                  解除引用
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="mini" onClick={() => setPickerOpen(true)} disabled={!projectId}>
+                  引用模型
+                </button>
+                <span className="muted">也可直接手写 JSON</span>
+              </>
+            )}
+          </div>
+          <div className="editor-shell fill">
+            <Input.TextArea
+              className="editor-input"
+              value={body.raw ?? ''}
+              readOnly={Boolean(bodyModel)}
+              onChange={(event) => setBody({ raw: event.target.value })}
+              onBlur={() => {
+                if (bodyModel) return
+                formatJsonBody()
+                const problem = validateJson(request.body?.raw ?? '')
+                setJsonError(problem)
+                if (problem) setTimeout(() => focusJsonError(problem), 0)
+              }}
+              placeholder={body.mode === 'json' ? '{ "key": "value" }' : '请求体'}
+              spellCheck={false}
+            />
+          </div>
         </div>
       )
     }
@@ -290,7 +387,11 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
                   message.info('msgpack 将在后续里程碑支持')
                   return
                 }
-                setBody({ mode: (value === 'raw' ? 'json' : value) as BodyMode })
+                const nextMode = (value === 'raw' ? 'json' : value) as BodyMode
+                const current = request.body ?? createBody()
+                const next = { ...current, mode: nextMode }
+                if (nextMode !== 'raw' && nextMode !== 'json') delete next.model_id
+                setRequest({ body: next })
               }}
               options={BODY_OPTIONS}
             />
@@ -472,6 +573,13 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
       </div>
 
       {renderContent()}
+
+      <ModelPickerModal
+        open={pickerOpen}
+        projectId={projectId}
+        onCancel={() => setPickerOpen(false)}
+        onSelect={(model) => void selectModel(model)}
+      />
     </div>
   )
 }

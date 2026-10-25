@@ -1,11 +1,18 @@
 import type {
+  DbConnection,
+  DbSshConfig,
+  DictionaryEntry,
   Environment,
   FlowEvent,
   FlowRequestInput,
+  ImportConflictStrategy,
   McpConfig,
-  McpToolInfo
+  McpToolInfo,
+  ModelReference,
+  ModelSchema
 } from '@shared/types'
 import {
+  createDbConnection,
   createEnvironment,
   createFlow,
   createFlowEvent,
@@ -16,6 +23,8 @@ import {
 import * as store from '../storage/store'
 import { sendRequest } from '../request/executor'
 import { applyRequestInput, runFlow } from '../flow/engine'
+import { generateSchemaExample } from '../schema/example'
+import { importDbTables, testDbConnection } from '../db/mysql'
 
 type Args = Record<string, unknown>
 
@@ -84,23 +93,8 @@ function currentEnv(projectId: string, envId?: string): Environment {
   return env
 }
 
-function exampleFromSchema(schema: any, depth = 0): unknown {
-  if (!schema || depth > 6) return null
-  if (schema.example !== undefined) return schema.example
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0]
-  const type = schema.type
-  if (type === 'object' || schema.properties) {
-    const result: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(schema.properties ?? {})) {
-      result[key] = exampleFromSchema(value, depth + 1)
-    }
-    return result
-  }
-  if (type === 'array') return [exampleFromSchema(schema.items, depth + 1)]
-  if (type === 'number' || type === 'integer') return 0
-  if (type === 'boolean') return false
-  if (type === 'string') return ''
-  return null
+function exampleFromSchema(value: unknown): unknown {
+  return generateSchemaExample(value as any).value
 }
 
 function stepEvents(projectId: string, steps: unknown): FlowEvent[] {
@@ -1243,8 +1237,544 @@ const TOOLS: ToolDefinition[] = [
       store.saveGlobalVars(projectId, globals)
       return { deleted: true }
     }
+  },
+
+  // -------------------------------------------------------------------------
+  // Data dictionary
+  // -------------------------------------------------------------------------
+  {
+    name: 'list_dictionary_entries',
+    description: '列出数据字典条目，可按内置/自定义过滤并搜索名称或描述。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        source: { type: 'string', enum: ['all', 'builtin', 'custom'], description: '默认 all' },
+        keyword: { type: 'string', description: '按名称或描述搜索' }
+      },
+      ['project_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const source = str(args, 'source') || 'all'
+      const keyword = str(args, 'keyword').trim().toLowerCase()
+      const entries = store
+        .listDictionaryEntries(projectId)
+        .filter((entry) => source === 'all' || entry.source === source)
+        .filter(
+          (entry) =>
+            !keyword ||
+            entry.key.toLowerCase().includes(keyword) ||
+            entry.description.toLowerCase().includes(keyword)
+        )
+        .map((entry) => ({
+          id: entry.id,
+          key: entry.key,
+          field_type: entry.field_type,
+          description: entry.description,
+          remarks: entry.remarks ?? '',
+          default_value: entry.default_value ?? '',
+          source: entry.source
+        }))
+      return { entries, total: entries.length }
+    }
+  },
+  {
+    name: 'create_dictionary_entry',
+    description: '创建自定义字段描述。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        key: { type: 'string', description: '参数名称' },
+        field_type: {
+          type: 'string',
+          enum: ['string', 'number', 'integer', 'boolean', 'object', 'array']
+        },
+        description: { type: 'string', description: '参数描述' },
+        remarks: { type: 'string' },
+        default_value: { type: 'string' }
+      },
+      ['project_id', 'key', 'description']
+    ),
+    handler: (args) => {
+      const entry = store.saveDictionaryEntry(projectIdOf(args), {
+        id: '',
+        project_id: projectIdOf(args),
+        key: str(args, 'key'),
+        field_type: (str(args, 'field_type') || 'string') as DictionaryEntry['field_type'],
+        description: str(args, 'description'),
+        remarks: str(args, 'remarks'),
+        default_value: str(args, 'default_value'),
+        created_at: '',
+        updated_at: ''
+      })
+      return { entry }
+    }
+  },
+  {
+    name: 'update_dictionary_entry',
+    description: '更新自定义字段描述；系统内置条目不可修改。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        id: { type: 'string' },
+        key: { type: 'string' },
+        field_type: {
+          type: 'string',
+          enum: ['string', 'number', 'integer', 'boolean', 'object', 'array']
+        },
+        description: { type: 'string' },
+        remarks: { type: 'string' },
+        default_value: { type: 'string' }
+      },
+      ['project_id', 'id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const id = requiredStr(args, 'id')
+      if (id.startsWith('builtin_')) throw new Error('系统内置描述不能修改')
+      const existing = store
+        .listCustomDictionaryEntries(projectId)
+        .find((entry) => entry.id === id)
+      if (!existing) throw new Error('字典条目不存在')
+      const entry = store.saveDictionaryEntry(projectId, {
+        ...existing,
+        key: args.key !== undefined ? str(args, 'key') : existing.key,
+        field_type:
+          args.field_type !== undefined
+            ? (str(args, 'field_type') as DictionaryEntry['field_type'])
+            : existing.field_type,
+        description:
+          args.description !== undefined ? str(args, 'description') : existing.description,
+        remarks: args.remarks !== undefined ? str(args, 'remarks') : existing.remarks,
+        default_value:
+          args.default_value !== undefined
+            ? str(args, 'default_value')
+            : existing.default_value
+      })
+      return { entry }
+    }
+  },
+  {
+    name: 'delete_dictionary_entry',
+    description: '删除自定义字段描述。必须传 confirm: true；系统内置条目不可删除。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      { project_id: S.project, id: { type: 'string' }, confirm: S.confirm },
+      ['project_id', 'id', 'confirm']
+    ),
+    handler: (args) => {
+      if (!boolArg(args, 'confirm')) throw new Error('删除操作需要 confirm: true')
+      const id = requiredStr(args, 'id')
+      if (id.startsWith('builtin_')) throw new Error('系统内置描述不能删除')
+      store.deleteDictionaryEntry(projectIdOf(args), id)
+      return { deleted: true }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Data models
+  // -------------------------------------------------------------------------
+  {
+    name: 'list_data_models',
+    description: '列出数据模型与目录，返回 schema 摘要与被引用次数。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        keyword: { type: 'string', description: '按名称或别名搜索' },
+        parent_id: { type: 'string', description: '仅返回指定目录下的模型' }
+      },
+      ['project_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const keyword = str(args, 'keyword').trim().toLowerCase()
+      const parentId = str(args, 'parent_id')
+      const models = store
+        .listModelsAll(projectId)
+        .filter((model) => !parentId || model.parent_id === parentId)
+        .filter(
+          (model) =>
+            !keyword ||
+            model.name.toLowerCase().includes(keyword) ||
+            (model.alias ?? '').toLowerCase().includes(keyword)
+        )
+        .map((model) => ({
+          model_id: model.model_id,
+          parent_id: model.parent_id,
+          model_type: model.model_type,
+          name: model.name,
+          alias: model.alias ?? '',
+          description: model.data?.description ?? '',
+          schema: model.data?.schema ?? {},
+          reference_count: store.findModelReferences(projectId, model.model_id).length
+        }))
+      return { models, total: models.length }
+    }
+  },
+  {
+    name: 'get_data_model',
+    description: '读取数据模型详情、schema 与引用它的接口。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project, model_id: { type: 'string' } }, [
+      'project_id',
+      'model_id'
+    ]),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const modelId = requiredStr(args, 'model_id')
+      const model = store.getModel(projectId, modelId)
+      if (!model) throw new Error('模型不存在')
+      return { model, references: store.findModelReferences(projectId, modelId) }
+    }
+  },
+  {
+    name: 'create_data_model',
+    description: '创建数据模型或模型目录。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        name: { type: 'string' },
+        parent_id: { type: 'string', description: '父目录，默认 0' },
+        model_type: { type: 'string', enum: ['model', 'folder'] },
+        alias: { type: 'string' },
+        description: { type: 'string' },
+        schema: { type: 'object', description: 'JSON Schema' }
+      },
+      ['project_id', 'name']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const kind = str(args, 'model_type') === 'folder' ? 'folder' : 'model'
+      const model = store.createModelInProject(
+        projectId,
+        str(args, 'parent_id') || '0',
+        kind
+      )
+      model.name = requiredStr(args, 'name')
+      model.alias = str(args, 'alias')
+      if (kind === 'model') {
+        model.data = {
+          description: str(args, 'description'),
+          schema: assertModelSchema(args.schema)
+        }
+      } else {
+        model.data = { description: str(args, 'description'), schema: {} }
+      }
+      return { model: store.saveModel(projectId, model) }
+    }
+  },
+  {
+    name: 'update_data_model',
+    description: '更新数据模型名称、别名、目录、描述或 schema。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        model_id: { type: 'string' },
+        name: { type: 'string' },
+        alias: { type: 'string' },
+        parent_id: { type: 'string' },
+        description: { type: 'string' },
+        schema: { type: 'object' }
+      },
+      ['project_id', 'model_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const modelId = requiredStr(args, 'model_id')
+      const model = store.getModel(projectId, modelId)
+      if (!model) throw new Error('模型不存在')
+      if (args.name !== undefined) model.name = str(args, 'name')
+      if (args.alias !== undefined) model.alias = str(args, 'alias')
+      if (args.parent_id !== undefined) model.parent_id = str(args, 'parent_id') || '0'
+      if (args.description !== undefined && model.model_type === 'model') {
+        model.data.description = str(args, 'description')
+      }
+      if (args.schema !== undefined && model.model_type === 'model') {
+        model.data.schema = assertModelSchema(args.schema)
+      }
+      return { model: store.saveModel(projectId, model) }
+    }
+  },
+  {
+    name: 'delete_data_model',
+    description:
+      '删除数据模型或目录（目录级联删除子节点）。必须传 confirm: true；返回仍引用该模型的接口，引用不会被自动改写。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      { project_id: S.project, model_id: { type: 'string' }, confirm: S.confirm },
+      ['project_id', 'model_id', 'confirm']
+    ),
+    handler: (args) => {
+      if (!boolArg(args, 'confirm')) throw new Error('删除操作需要 confirm: true')
+      const projectId = projectIdOf(args)
+      const modelId = requiredStr(args, 'model_id')
+      const references = collectModelReferences(projectId, modelId)
+      store.deleteModel(projectId, modelId)
+      return { deleted: true, references }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Database connections
+  // -------------------------------------------------------------------------
+  {
+    name: 'list_db_connections',
+    description: '列出 MySQL 连接；响应不包含密码、私钥或 passphrase。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project }, ['project_id']),
+    handler: (args) => {
+      const connections = store
+        .listDbConnections(projectIdOf(args))
+        .map((connection) => store.redactDbConnection(connection))
+      return { connections, total: connections.length }
+    }
+  },
+  {
+    name: 'create_db_connection',
+    description: '创建 MySQL 连接。SSH 配置会保存，但本轮不建立隧道。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        name: { type: 'string' },
+        remarks: { type: 'string' },
+        host: { type: 'string' },
+        port: { type: 'number' },
+        user: { type: 'string' },
+        password: { type: 'string' },
+        database: { type: 'string' },
+        charset: { type: 'string' },
+        ssh: { type: 'object', description: 'SSH 配置（仅保存）' }
+      },
+      ['project_id', 'name', 'host', 'user']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const connection = createDbConnection(projectId)
+      connection.name = requiredStr(args, 'name')
+      connection.remarks = str(args, 'remarks')
+      connection.config.default = dbConfigFromArgs(args)
+      connection.ssh = sshFromArgs(args.ssh)
+      const saved = store.saveDbConnection(projectId, connection)
+      return { connection: store.redactDbConnection(saved) }
+    }
+  },
+  {
+    name: 'update_db_connection',
+    description: '更新 MySQL 连接；未提供的密码字段保持不变。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        db_id: { type: 'string' },
+        name: { type: 'string' },
+        remarks: { type: 'string' },
+        host: { type: 'string' },
+        port: { type: 'number' },
+        user: { type: 'string' },
+        password: { type: 'string' },
+        database: { type: 'string' },
+        charset: { type: 'string' },
+        ssh: { type: 'object' }
+      },
+      ['project_id', 'db_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const dbId = requiredStr(args, 'db_id')
+      const existing = store.getDbConnection(projectId, dbId)
+      if (!existing) throw new Error('数据库连接不存在')
+      const merged: DbConnection = {
+        ...existing,
+        name: args.name !== undefined ? str(args, 'name') : existing.name,
+        remarks: args.remarks !== undefined ? str(args, 'remarks') : existing.remarks,
+        config: {
+          default: {
+            ...existing.config.default,
+            ...dbConfigFromArgs(args, true)
+          }
+        },
+        ssh: args.ssh !== undefined ? sshFromArgs(args.ssh) : existing.ssh
+      }
+      const saved = store.saveDbConnection(projectId, merged)
+      return { connection: store.redactDbConnection(saved) }
+    }
+  },
+  {
+    name: 'delete_db_connection',
+    description: '删除 MySQL 连接。必须传 confirm: true；已导入模型会保留。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      { project_id: S.project, db_id: { type: 'string' }, confirm: S.confirm },
+      ['project_id', 'db_id', 'confirm']
+    ),
+    handler: (args) => {
+      if (!boolArg(args, 'confirm')) throw new Error('删除操作需要 confirm: true')
+      store.deleteDbConnection(projectIdOf(args), requiredStr(args, 'db_id'))
+      return { deleted: true }
+    }
+  },
+  {
+    name: 'test_db_connection',
+    description: '使用已保存的连接配置执行直连测试（SELECT VERSION()，8 秒超时）。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema({ project_id: S.project, db_id: { type: 'string' } }, [
+      'project_id',
+      'db_id'
+    ]),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const connection = store.getDbConnection(projectId, requiredStr(args, 'db_id'))
+      if (!connection) throw new Error('数据库连接不存在')
+      const result = await testDbConnection(connection.config.default, connection.ssh)
+      if (!result.ok) throw new Error(result.message)
+      return result
+    }
+  },
+  {
+    name: 'import_db_schema',
+    description:
+      '读取 MySQL 表结构并导入为数据模型。可勾选表、选择目标目录与同名策略（update/skip/copy）。',
+    requires_write: true,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        db_id: { type: 'string' },
+        tables: { type: 'array', items: { type: 'string' }, description: '要导入的表名' },
+        target_parent_id: { type: 'string', description: '目标模型目录，默认 0' },
+        conflict: { type: 'string', enum: ['update', 'skip', 'copy'] }
+      },
+      ['project_id', 'db_id', 'tables']
+    ),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const tables = Array.isArray(args.tables)
+        ? (args.tables as unknown[]).map((table) => String(table))
+        : []
+      const conflict = str(args, 'conflict') as ImportConflictStrategy
+      return importDbTables(projectId, requiredStr(args, 'db_id'), {
+        tables,
+        target_parent_id: str(args, 'target_parent_id') || '0',
+        conflict: conflict || 'update'
+      })
+    }
   }
 ]
+
+function assertModelSchema(value: unknown): ModelSchema {
+  if (value === undefined) {
+    return { type: 'object', properties: {}, 'x-schema-orders': [] }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('schema 必须是 JSON 对象')
+  }
+  const schema = value as ModelSchema
+  const allowed = new Set([
+    'object',
+    'array',
+    'string',
+    'number',
+    'integer',
+    'boolean',
+    'null'
+  ])
+  if (schema.type !== undefined && !allowed.has(String(schema.type))) {
+    throw new Error(`不支持的 schema 类型：${String(schema.type)}`)
+  }
+  if (schema.$ref !== undefined && !String(schema.$ref).startsWith('openpost://model/')) {
+    throw new Error('模型引用必须使用 openpost://model/<model_id> 协议')
+  }
+  return schema
+}
+
+function collectModelReferences(projectId: string, modelId: string): Array<ModelReference & { model_id: string }> {
+  const models = store.listModels(projectId)
+  const ids = new Set<string>([modelId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const model of models) {
+      if (ids.has(model.parent_id) && !ids.has(model.model_id)) {
+        ids.add(model.model_id)
+        changed = true
+      }
+    }
+  }
+  const references: Array<ModelReference & { model_id: string }> = []
+  for (const id of ids) {
+    for (const reference of store.findModelReferences(projectId, id)) {
+      references.push({ ...reference, model_id: id })
+    }
+  }
+  return references
+}
+
+function dbConfigFromArgs(
+  args: Args,
+  partial = false
+): DbConnection['config']['default'] {
+  const text = (key: string): string | undefined =>
+    args[key] !== undefined ? String(args[key]) : undefined
+  const portValue = args.port !== undefined ? Number(args.port) : undefined
+  if (partial) {
+    const config: Partial<DbConnection['config']['default']> = {}
+    const host = text('host')
+    if (host !== undefined) config.host = host
+    if (portValue !== undefined && Number.isFinite(portValue)) config.port = portValue
+    const user = text('user')
+    if (user !== undefined) config.user = user
+    const password = text('password')
+    if (password !== undefined) config.password = password
+    const database = text('database')
+    if (database !== undefined) config.database = database
+    const charset = text('charset')
+    if (charset !== undefined) config.charset = charset
+    return config as DbConnection['config']['default']
+  }
+  return {
+    host: text('host') ?? '',
+    port: portValue && Number.isFinite(portValue) ? portValue : 3306,
+    user: text('user') ?? '',
+    password: text('password') ?? '',
+    database: text('database') ?? '',
+    charset: text('charset') || 'utf8mb4'
+  }
+}
+
+function sshFromArgs(value: unknown): DbSshConfig {
+  const raw = (value ?? {}) as Record<string, unknown>
+  return {
+    enable: raw.enable === 1 || raw.enable === true ? 1 : -1,
+    host: String(raw.host ?? ''),
+    port: Number(raw.port) || 22,
+    username: String(raw.username ?? ''),
+    password: String(raw.password ?? ''),
+    auth_type: raw.auth_type === 2 || raw.auth_type === 3 ? raw.auth_type : 1,
+    private_key: String(raw.private_key ?? ''),
+    passphrase: String(raw.passphrase ?? '')
+  }
+}
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))
 

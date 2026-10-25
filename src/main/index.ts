@@ -9,7 +9,7 @@ import { shutdownMcp, startMcpServer } from './mcp/server'
 const appData = app.getPath('appData')
 const legacyUserData = path.join(appData, 'api-workbench')
 const openPostUserData = path.join(appData, 'openPost')
-if (!fs.existsSync(openPostUserData) && fs.existsSync(legacyUserData)) {
+if (!process.env.OPENPOST_USER_DATA && !fs.existsSync(openPostUserData) && fs.existsSync(legacyUserData)) {
   try {
     fs.cpSync(legacyUserData, openPostUserData, { recursive: true })
   } catch (error) {
@@ -17,7 +17,8 @@ if (!fs.existsSync(openPostUserData) && fs.existsSync(legacyUserData)) {
   }
 }
 app.setName('openPost')
-app.setPath('userData', openPostUserData)
+// 测试/自动化使用独立 userData，避免污染真实项目。
+app.setPath('userData', process.env.OPENPOST_USER_DATA || openPostUserData)
 
 // 远程调试开关在启动阶段生效，必须在 app ready 之前读取配置。
 applyDebugSwitch()
@@ -67,7 +68,10 @@ function createWindow(): void {
   }
 }
 
-const gotLock = app.requestSingleInstanceLock()
+const gotLock =
+  process.env.OPENPOST_DISABLE_SINGLE_INSTANCE === '1'
+    ? true
+    : app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {

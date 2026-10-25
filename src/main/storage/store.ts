@@ -5,8 +5,13 @@ import path from 'node:path'
 import type {
   AppPaths,
   AppSettings,
+  DataModel,
+  DbConnection,
   DebugConfig,
   DebugState,
+  DictionaryEntry,
+  DictionaryEntryView,
+  DictionarySettings,
   Environment,
   Flow,
   FlowEventResult,
@@ -14,6 +19,10 @@ import type {
   FlowRunSummary,
   GlobalVars,
   McpConfig,
+  ModelReference,
+  ModelSchema,
+  ModelSummary,
+  ModelType,
   Project,
   RequestModel,
   SendRecord,
@@ -21,7 +30,16 @@ import type {
   Target,
   TargetSummary
 } from '@shared/types'
-import { createEnvironment, createProject, createTarget, createRequest } from '@shared/factories'
+import {
+  createDataModel,
+  createDictionaryEntry,
+  createEnvironment,
+  createId,
+  createProject,
+  createRequest,
+  createTarget
+} from '@shared/factories'
+import { BUILTIN_DICTIONARY } from '@shared/dictionary'
 
 const DEFAULT_SETTINGS: AppSettings = {
   send_timeout: 60000,
@@ -107,9 +125,13 @@ export function createProjectWithDefaults(name: string): Project {
   fs.mkdirSync(path.join(dir, 'apis'), { recursive: true })
   fs.mkdirSync(path.join(dir, 'envs'), { recursive: true })
   fs.mkdirSync(path.join(dir, 'settings'), { recursive: true })
+  fs.mkdirSync(path.join(dir, 'schemas'), { recursive: true })
   writeJson(path.join(dir, 'project.json'), project)
   writeJson(path.join(dir, 'apis', 'index.json'), { project_id: project.project_id, items: [] })
   writeJson(path.join(dir, 'envs', 'index.json'), { project_id: project.project_id, items: [] })
+  writeJson(path.join(dir, 'schemas', 'index.json'), { project_id: project.project_id, items: [] })
+  writeJson(path.join(dir, 'settings', 'desc_list.json'), [])
+  writeJson(path.join(dir, 'settings', 'db_links.json'), [])
   saveGlobalParams(project.project_id, createRequest())
   saveGlobalVars(project.project_id, {
     project_id: project.project_id,
@@ -668,4 +690,489 @@ export function deleteEnvironment(projectId: string, envId: string): void {
   const index = readEnvIndex(projectId)
   index.items = index.items.filter((item) => item.env_id !== envId)
   writeEnvIndex(projectId, index)
+}
+
+// ---------------------------------------------------------------------------
+// Data dictionary
+// ---------------------------------------------------------------------------
+
+function descListPath(projectId: string): string {
+  return path.join(projectDir(projectId), 'settings', 'desc_list.json')
+}
+
+export function listCustomDictionaryEntries(projectId: string): DictionaryEntry[] {
+  return readJson<DictionaryEntry[]>(descListPath(projectId), [])
+    .filter((entry) => entry && entry.project_id === projectId)
+    .sort((a, b) => a.key.localeCompare(b.key, 'zh-CN'))
+}
+
+export function listDictionaryEntries(projectId: string): DictionaryEntryView[] {
+  const custom: DictionaryEntryView[] = listCustomDictionaryEntries(projectId).map((entry) => ({
+    ...entry,
+    source: 'custom'
+  }))
+  const builtin: DictionaryEntryView[] = BUILTIN_DICTIONARY.map((entry) => ({
+    ...entry,
+    source: 'builtin'
+  }))
+  return [...custom, ...builtin]
+}
+
+const DICT_FIELD_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array']
+
+export function saveDictionaryEntry(projectId: string, input: DictionaryEntry): DictionaryEntry {
+  const key = String(input.key ?? '').trim()
+  const description = String(input.description ?? '').trim()
+  if (!key) throw new Error('参数名称不能为空')
+  if (!description) throw new Error('参数描述不能为空')
+  if (!DICT_FIELD_TYPES.includes(String(input.field_type))) {
+    throw new Error(`不支持的字段类型：${String(input.field_type)}`)
+  }
+  const entries = listCustomDictionaryEntries(projectId)
+  const now = new Date().toISOString()
+  const existingIndex = input.id ? entries.findIndex((entry) => entry.id === input.id) : -1
+  if (existingIndex < 0 && input.id && input.id.startsWith('builtin_')) {
+    throw new Error('系统内置描述不能修改')
+  }
+  const entry: DictionaryEntry = {
+    id: input.id && !input.id.startsWith('builtin_') ? input.id : createDictionaryEntry(projectId).id,
+    project_id: projectId,
+    key,
+    field_type: input.field_type ?? 'string',
+    description,
+    remarks: String(input.remarks ?? ''),
+    default_value: String(input.default_value ?? ''),
+    schema: input.schema,
+    created_at: existingIndex >= 0 ? entries[existingIndex].created_at : now,
+    updated_at: now
+  }
+  if (existingIndex >= 0) entries[existingIndex] = entry
+  else entries.push(entry)
+  writeJson(descListPath(projectId), entries)
+  return entry
+}
+
+export function deleteDictionaryEntry(projectId: string, id: string): void {
+  if (!id || id.startsWith('builtin_')) throw new Error('系统内置描述不能删除')
+  const entries = listCustomDictionaryEntries(projectId)
+  const next = entries.filter((entry) => entry.id !== id)
+  if (next.length === entries.length) throw new Error('字典条目不存在')
+  writeJson(descListPath(projectId), next)
+}
+
+export function getDictionarySettings(projectId: string): DictionarySettings {
+  const project = getProject(projectId)
+  return { builtin_enabled: project?.is_describe_library !== -1 }
+}
+
+export function saveDictionarySettings(
+  projectId: string,
+  settings: DictionarySettings
+): Project {
+  const project = getProject(projectId)
+  if (!project) throw new Error('项目不存在')
+  project.is_describe_library = settings.builtin_enabled ? 1 : -1
+  return saveProject(project)
+}
+
+/** 联想数据源：自定义 + （开关开启时）系统内置。 */
+export function listDictionarySuggestions(projectId: string): DictionaryEntryView[] {
+  const settings = getDictionarySettings(projectId)
+  return listDictionaryEntries(projectId).filter(
+    (entry) => entry.source === 'custom' || settings.builtin_enabled
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Data models
+// ---------------------------------------------------------------------------
+
+interface ModelIndex {
+  project_id: string
+  items: ModelSummary[]
+}
+
+function schemasDir(projectId: string): string {
+  return path.join(projectDir(projectId), 'schemas')
+}
+
+function modelIndexPath(projectId: string): string {
+  return path.join(schemasDir(projectId), 'index.json')
+}
+
+function modelPath(projectId: string, modelId: string): string {
+  return path.join(schemasDir(projectId), `${assertId(modelId, 'model_id')}.json`)
+}
+
+function readModelIndex(projectId: string): ModelIndex {
+  return readJson<ModelIndex>(modelIndexPath(projectId), { project_id: projectId, items: [] })
+}
+
+function writeModelIndex(projectId: string, index: ModelIndex): void {
+  writeJson(modelIndexPath(projectId), index)
+}
+
+function toModelSummary(model: DataModel): ModelSummary {
+  return {
+    model_id: model.model_id,
+    parent_id: model.parent_id,
+    model_type: model.model_type,
+    name: model.name,
+    alias: model.alias ?? '',
+    sort: model.sort,
+    created_by: model.created_by,
+    created_time: model.created_time,
+    updated_by: model.updated_by,
+    updated_time: model.updated_time
+  }
+}
+
+export function listModels(projectId: string): ModelSummary[] {
+  return readModelIndex(projectId)
+    .items.slice()
+    .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-CN'))
+}
+
+export function listModelsAll(projectId: string): DataModel[] {
+  return listModels(projectId)
+    .map((summary) => getModel(projectId, summary.model_id))
+    .filter((model): model is DataModel => Boolean(model))
+}
+
+export function getModel(projectId: string, modelId: string): DataModel | null {
+  return readJson<DataModel | null>(modelPath(projectId, modelId), null)
+}
+
+export function saveModel(projectId: string, input: DataModel): DataModel {
+  if (input.project_id !== projectId) throw new Error('项目不匹配')
+  const name = String(input.name ?? '').trim()
+  if (!name) throw new Error('模型名称不能为空')
+  if (input.model_type !== 'folder' && input.model_type !== 'model') {
+    throw new Error('模型类型非法')
+  }
+  const index = readModelIndex(projectId)
+  if (input.parent_id !== '0') {
+    const parent = index.items.find((item) => item.model_id === input.parent_id)
+    if (!parent || parent.model_type !== 'folder') throw new Error('父目录不存在')
+  }
+  const now = new Date().toISOString()
+  const existing = index.items.find((item) => item.model_id === input.model_id)
+  if (!existing && getModel(projectId, input.model_id)) {
+    throw new Error('模型已存在')
+  }
+  const model: DataModel = {
+    ...input,
+    name,
+    alias: String(input.alias ?? '').trim(),
+    project_id: projectId,
+    data: {
+      description: String(input.data?.description ?? ''),
+      schema: (input.data?.schema ?? ({} as ModelSchema)) as ModelSchema
+    },
+    version: (existing ? input.version : 1) || 1,
+    status: input.status ?? 1,
+    created_by: existing ? input.created_by : input.created_by ?? '本地',
+    created_time: existing ? input.created_time : input.created_time ?? now,
+    updated_by: input.updated_by ?? '本地',
+    updated_time: now
+  }
+  writeJson(modelPath(projectId, model.model_id), model)
+  const summary = toModelSummary(model)
+  const position = index.items.findIndex((item) => item.model_id === model.model_id)
+  if (position >= 0) index.items[position] = summary
+  else index.items.push(summary)
+  writeModelIndex(projectId, index)
+  return model
+}
+
+export function createModelInProject(
+  projectId: string,
+  parentId: string,
+  kind: ModelType
+): DataModel {
+  const index = readModelIndex(projectId)
+  if (parentId !== '0') {
+    const parent = index.items.find((item) => item.model_id === parentId)
+    if (!parent || parent.model_type !== 'folder') throw new Error('父目录不存在')
+  }
+  const siblings = index.items.filter((item) => item.parent_id === parentId)
+  const maxSort = siblings.reduce((max, item) => Math.max(max, item.sort), 0)
+  const model = createDataModel(projectId, parentId, kind)
+  model.sort = maxSort + 100
+  return saveModel(projectId, model)
+}
+
+export function deleteModel(projectId: string, modelId: string): void {
+  const index = readModelIndex(projectId)
+  if (!index.items.some((item) => item.model_id === modelId)) throw new Error('模型不存在')
+  const toDelete = new Set<string>([modelId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const item of index.items) {
+      if (toDelete.has(item.parent_id) && !toDelete.has(item.model_id)) {
+        toDelete.add(item.model_id)
+        changed = true
+      }
+    }
+  }
+  for (const id of toDelete) fs.rmSync(modelPath(projectId, id), { force: true })
+  index.items = index.items.filter((item) => !toDelete.has(item.model_id))
+  writeModelIndex(projectId, index)
+}
+
+export function deleteModelWithReferences(
+  projectId: string,
+  modelId: string
+): { references: ModelReference[]; deleted: boolean } {
+  const references = findModelReferences(projectId, modelId)
+  deleteModel(projectId, modelId)
+  return { references, deleted: true }
+}
+
+function uniqueModelName(projectId: string, parentId: string, base: string): string {
+  const names = new Set(
+    readModelIndex(projectId)
+      .items.filter((item) => item.parent_id === parentId && item.model_type === 'model')
+      .map((item) => item.name)
+  )
+  if (!names.has(base)) return base
+  let index = 2
+  while (names.has(`${base} (${index})`)) index += 1
+  return `${base} (${index})`
+}
+
+export function copyModel(
+  projectId: string,
+  modelId: string,
+  destParentId = '0'
+): DataModel {
+  const source = getModel(projectId, modelId)
+  if (!source) throw new Error('模型不存在')
+  const index = readModelIndex(projectId)
+  if (destParentId !== '0') {
+    const parent = index.items.find((item) => item.model_id === destParentId)
+    if (!parent || parent.model_type !== 'folder') throw new Error('目标目录不存在')
+  }
+  const siblings = index.items.filter((item) => item.parent_id === destParentId)
+  const maxSort = siblings.reduce((max, item) => Math.max(max, item.sort), 0)
+  const now = new Date().toISOString()
+  const cloned: DataModel = {
+    ...JSON.parse(JSON.stringify(source)),
+    model_id: createDataModel(projectId, destParentId).model_id,
+    parent_id: destParentId,
+    name:
+      source.model_type === 'folder'
+        ? uniqueModelName(projectId, destParentId, `${source.name} 副本`)
+        : uniqueModelName(projectId, destParentId, `${source.name} 副本`),
+    sort: maxSort + 100,
+    created_by: '本地',
+    updated_by: '本地',
+    created_time: now,
+    updated_time: now
+  }
+  return saveModel(projectId, cloned)
+}
+
+function isDescendant(index: ModelIndex, candidateId: string, ancestorId: string): boolean {
+  let current = index.items.find((item) => item.model_id === candidateId)
+  const seen = new Set<string>()
+  while (current && current.parent_id !== '0' && !seen.has(current.parent_id)) {
+    if (current.parent_id === ancestorId) return true
+    seen.add(current.parent_id)
+    current = index.items.find((item) => item.model_id === current!.parent_id)
+  }
+  return false
+}
+
+export function moveModel(
+  projectId: string,
+  modelId: string,
+  destParentId: string,
+  orderedIds?: string[]
+): ModelSummary[] {
+  const index = readModelIndex(projectId)
+  const model = index.items.find((item) => item.model_id === modelId)
+  if (!model) throw new Error('模型不存在')
+  if (destParentId !== '0') {
+    const parent = index.items.find((item) => item.model_id === destParentId)
+    if (!parent || parent.model_type !== 'folder') throw new Error('目标目录不存在')
+    if (destParentId === modelId || isDescendant(index, destParentId, modelId)) {
+      throw new Error('不能移动到自身或其子目录')
+    }
+  }
+  const siblings = index.items.filter(
+    (item) => item.parent_id === destParentId && item.model_id !== modelId
+  )
+  const maxSort = siblings.reduce((max, item) => Math.max(max, item.sort), 0)
+  model.parent_id = destParentId
+  model.sort = maxSort + 100
+  const file = getModel(projectId, modelId)
+  if (file) {
+    file.parent_id = destParentId
+    file.sort = model.sort
+    file.updated_by = '本地'
+    saveModel(projectId, file)
+  }
+  writeModelIndex(projectId, index)
+  if (orderedIds && orderedIds.length > 0) {
+    return reorderModels(projectId, destParentId, orderedIds)
+  }
+  return listModels(projectId)
+}
+
+export function reorderModels(
+  projectId: string,
+  parentId: string,
+  orderedIds: string[]
+): ModelSummary[] {
+  const index = readModelIndex(projectId)
+  if (parentId !== '0') {
+    const parent = index.items.find((item) => item.model_id === parentId)
+    if (!parent || parent.model_type !== 'folder') throw new Error('父目录不存在')
+  }
+  const known = new Set(index.items.map((item) => item.model_id))
+  const ids = orderedIds.filter((id) => known.has(id))
+  ids.forEach((id, position) => {
+    const summary = index.items.find((item) => item.model_id === id)
+    if (!summary) return
+    summary.parent_id = parentId
+    summary.sort = (position + 1) * 100
+    const model = getModel(projectId, id)
+    if (!model) return
+    model.parent_id = parentId
+    model.sort = summary.sort
+    model.updated_by = '本地'
+    model.updated_time = new Date().toISOString()
+    writeJson(modelPath(projectId, id), model)
+  })
+  writeModelIndex(projectId, index)
+  return listModels(projectId)
+}
+
+export function findModelReferences(projectId: string, modelId: string): ModelReference[] {
+  const references: ModelReference[] = []
+  for (const summary of listTargets(projectId)) {
+    if (summary.target_type !== 'api') continue
+    const target = getTarget(projectId, summary.target_id)
+    if (!target) continue
+    if (target.request?.body?.model_id === modelId) {
+      references.push({
+        target_id: target.target_id,
+        target_name: target.name,
+        method: target.method,
+        kind: 'request-body'
+      })
+    }
+    for (const example of target.response?.example ?? []) {
+      if (example.expect?.model_id === modelId) {
+        references.push({
+          target_id: target.target_id,
+          target_name: target.name,
+          method: target.method,
+          kind: 'response-example',
+          example_id: example.example_id
+        })
+      }
+    }
+  }
+  return references
+}
+
+// ---------------------------------------------------------------------------
+// Database connections
+// ---------------------------------------------------------------------------
+
+function dbLinksPath(projectId: string): string {
+  return path.join(projectDir(projectId), 'settings', 'db_links.json')
+}
+
+export function listDbConnections(projectId: string): DbConnection[] {
+  return readJson<DbConnection[]>(dbLinksPath(projectId), []).filter(
+    (connection) => connection && connection.project_id === projectId
+  )
+}
+
+export function getDbConnection(projectId: string, dbId: string): DbConnection | null {
+  return listDbConnections(projectId).find((connection) => connection.db_id === dbId) ?? null
+}
+
+export function saveDbConnection(projectId: string, input: DbConnection): DbConnection {
+  const name = String(input.name ?? '').trim()
+  if (!name) throw new Error('连接名称不能为空')
+  const connections = listDbConnections(projectId)
+  const index = input.db_id
+    ? connections.findIndex((connection) => connection.db_id === input.db_id)
+    : -1
+  const existing = index >= 0 ? connections[index] : null
+  const now = new Date().toISOString()
+  const incomingDefault = input.config?.default
+  const incomingSsh = input.ssh
+  const connection: DbConnection = {
+    db_id: existing ? existing.db_id : input.db_id || createId('db'),
+    project_id: projectId,
+    name,
+    type: 'mysql',
+    remarks: String(input.remarks ?? ''),
+    config: {
+      default: {
+        host: String(incomingDefault?.host ?? ''),
+        port: Number(incomingDefault?.port) || 3306,
+        user: String(incomingDefault?.user ?? ''),
+        password:
+          incomingDefault?.password !== undefined
+            ? String(incomingDefault.password)
+            : existing?.config.default.password ?? '',
+        database: String(incomingDefault?.database ?? ''),
+        charset: incomingDefault?.charset || 'utf8mb4'
+      }
+    },
+    ssh: {
+      enable: incomingSsh?.enable === 1 ? 1 : -1,
+      host: String(incomingSsh?.host ?? ''),
+      port: Number(incomingSsh?.port) || 22,
+      username: String(incomingSsh?.username ?? ''),
+      password:
+        incomingSsh?.password !== undefined
+          ? String(incomingSsh.password)
+          : existing?.ssh.password ?? '',
+      auth_type: incomingSsh?.auth_type === 2 || incomingSsh?.auth_type === 3 ? incomingSsh.auth_type : 1,
+      private_key:
+        incomingSsh?.private_key !== undefined
+          ? String(incomingSsh.private_key)
+          : existing?.ssh.private_key ?? '',
+      passphrase:
+        incomingSsh?.passphrase !== undefined
+          ? String(incomingSsh.passphrase)
+          : existing?.ssh.passphrase ?? ''
+    },
+    created_at: existing ? existing.created_at : input.created_at ?? now,
+    updated_at: now
+  }
+  if (index >= 0) connections[index] = connection
+  else connections.push(connection)
+  writeJson(dbLinksPath(projectId), connections)
+  return connection
+}
+
+export function deleteDbConnection(projectId: string, dbId: string): void {
+  const connections = listDbConnections(projectId)
+  const next = connections.filter((connection) => connection.db_id !== dbId)
+  if (next.length === connections.length) throw new Error('数据库连接不存在')
+  writeJson(dbLinksPath(projectId), next)
+}
+
+export function redactDbConnection(connection: DbConnection): import('@shared/types').DbConnectionView {
+  const { password, ...restDefault } = connection.config.default
+  const { password: sshPassword, private_key, passphrase, ...restSsh } = connection.ssh
+  return {
+    ...connection,
+    config: { default: { ...restDefault, has_password: Boolean(password) } },
+    ssh: {
+      ...restSsh,
+      has_password: Boolean(sshPassword),
+      has_private_key: Boolean(private_key),
+      has_passphrase: Boolean(passphrase)
+    }
+  }
 }

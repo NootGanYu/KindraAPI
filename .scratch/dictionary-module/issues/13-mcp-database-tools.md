@@ -4,15 +4,22 @@
 
 **Blocked by:** 10, 11
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 提供 `list_db_connections`、`create_db_connection`、`update_db_connection`、`delete_db_connection`
-- [ ] 提供 `test_db_connection` 与 `import_db_schema`
-- [ ] 列表与详情响应不包含密码、私钥或 passphrase
-- [ ] 创建与更新接受常规连接参数，并按 ADR-0002 明文保存
-- [ ] 删除连接要求 `confirm: true`，且不删除已导入模型
-- [ ] `test_db_connection` 与 `import_db_schema` 在 `allow_execute` 关闭时被拒绝
-- [ ] SSH 启用的连接在测试/导入时返回明确的后续支持错误
-- [ ] 导入支持选择表、目标目录与同名策略，并返回生成/跳过/更新的模型摘要
-- [ ] smoke 覆盖每个工具的成功路径、权限拒绝、凭据脱敏与导入摘要
-- [ ] typecheck 与 build 通过
+- [x] 提供 `list_db_connections`、`create_db_connection`、`update_db_connection`、`delete_db_connection`
+- [x] 提供 `test_db_connection` 与 `import_db_schema`
+- [x] 列表与详情响应不包含密码、私钥或 passphrase
+- [x] 创建与更新接受常规连接参数，并按 ADR-0002 明文保存
+- [x] 删除连接要求 `confirm: true`，且不删除已导入模型
+- [x] `test_db_connection` 与 `import_db_schema` 在 `allow_execute` 关闭时被拒绝
+- [x] SSH 启用的连接在测试/导入时返回明确的后续支持错误
+- [x] 导入支持选择表、目标目录与同名策略，并返回生成/跳过/更新的模型摘要
+- [x] smoke 覆盖每个工具的成功路径、权限拒绝、凭据脱敏与导入摘要
+- [x] typecheck 与 build 通过
+
+## Comments
+
+2026-10-25 · 实现完成
+
+- 新增数据库连接 4 个 CRUD 工具与 test/import 工具；测试与导入受 `allow_execute` 控制。
+- 所有响应脱敏 password/private_key/passphrase；SSH 启用时测试与导入返回明确错误；导入返回逐表摘要。

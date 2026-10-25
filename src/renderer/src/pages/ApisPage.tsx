@@ -48,6 +48,7 @@ export default function ApisPage(): JSX.Element {
   const tabs = useApp((s) => s.tabs)
   const activeId = useApp((s) => s.activeId)
   const targets = useApp((s) => s.targets)
+  const projectId = useApp((s) => s.project?.project_id)
   const drafts = useApp((s) => s.drafts)
   const records = useApp((s) => s.records)
   const sendingId = useApp((s) => s.sendingId)
@@ -318,6 +319,12 @@ export default function ApisPage(): JSX.Element {
                           record={record}
                           examples={active.response?.example}
                           loading={sendingId === active.target_id}
+                          projectId={projectId}
+                          onChangeExamples={(examples) =>
+                            patchDraft(active.target_id, {
+                              response: { ...(active.response ?? {}), example: examples }
+                            })
+                          }
                         />
                         <Tooltip
                           title={

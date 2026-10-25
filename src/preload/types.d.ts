@@ -1,23 +1,35 @@
 import type {
   AppPaths,
   AppSettings,
+  DataModel,
+  DbConnection,
   DebugConfig,
   DebugState,
+  DictionaryEntry,
+  DictionaryEntryView,
+  DictionarySettings,
   Environment,
   Flow,
   FlowRun,
   FlowRunSummary,
+  GeneratedExampleResult,
   GlobalVars,
+  ImportDbOptions,
+  ImportDbResult,
   McpConfig,
   McpStatus,
   McpToolInfo,
+  ModelReference,
+  ModelSchema,
+  ModelSummary,
   Project,
   RequestModel,
   Result,
   SendRecord,
   SendRecordSummary,
   Target,
-  TargetSummary
+  TargetSummary,
+  DbTable
 } from '@shared/types'
 
 export interface ApiBridge {
@@ -77,6 +89,61 @@ export interface ApiBridge {
     get(projectId: string, recordId: string): Promise<Result<SendRecord | null>>
     delete(projectId: string, recordId: string): Promise<Result<boolean>>
     clear(projectId: string): Promise<Result<boolean>>
+  }
+  dictionary: {
+    list(projectId: string): Promise<Result<DictionaryEntryView[]>>
+    suggestions(projectId: string): Promise<Result<DictionaryEntryView[]>>
+    save(projectId: string, entry: DictionaryEntry): Promise<Result<DictionaryEntry>>
+    delete(projectId: string, id: string): Promise<Result<boolean>>
+    getSettings(projectId: string): Promise<Result<DictionarySettings>>
+    saveSettings(projectId: string, settings: DictionarySettings): Promise<Result<Project>>
+  }
+  models: {
+    list(projectId: string): Promise<Result<ModelSummary[]>>
+    listAll(projectId: string): Promise<Result<DataModel[]>>
+    get(projectId: string, modelId: string): Promise<Result<DataModel | null>>
+    save(projectId: string, model: DataModel): Promise<Result<DataModel>>
+    delete(
+      projectId: string,
+      modelId: string
+    ): Promise<Result<{ references: ModelReference[]; deleted: boolean }>>
+    create(projectId: string, parentId: string, kind: 'model' | 'folder'): Promise<Result<DataModel>>
+    copy(projectId: string, modelId: string, destParentId: string): Promise<Result<DataModel>>
+    move(
+      projectId: string,
+      modelId: string,
+      destParentId: string,
+      orderedIds?: string[]
+    ): Promise<Result<ModelSummary[]>>
+    reorder(projectId: string, parentId: string, orderedIds: string[]): Promise<Result<ModelSummary[]>>
+    references(projectId: string, modelId: string): Promise<Result<ModelReference[]>>
+    generateExample(projectId: string, modelId: string): Promise<Result<GeneratedExampleResult>>
+    generateFromSchema(
+      projectId: string,
+      schema: ModelSchema
+    ): Promise<Result<GeneratedExampleResult>>
+    resolveRefs(
+      projectId: string,
+      schema: ModelSchema
+    ): Promise<Result<{ schema: ModelSchema; warnings: GeneratedExampleResult['warnings'] }>>
+  }
+  db: {
+    list(projectId: string): Promise<Result<DbConnection[]>>
+    save(projectId: string, connection: DbConnection): Promise<Result<DbConnection>>
+    delete(projectId: string, dbId: string): Promise<Result<boolean>>
+    test(
+      config: DbConnection['config']['default'],
+      ssh?: DbConnection['ssh']
+    ): Promise<Result<{ ok: boolean; server_version?: string; message: string }>>
+    tables(
+      config: DbConnection['config']['default'],
+      ssh?: DbConnection['ssh']
+    ): Promise<Result<DbTable[]>>
+    importTables(
+      projectId: string,
+      dbId: string,
+      options: ImportDbOptions
+    ): Promise<Result<ImportDbResult>>
   }
   flows: {
     list(projectId: string): Promise<Result<Flow[]>>

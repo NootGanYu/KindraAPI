@@ -4,12 +4,20 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 主进程提供共享的 schema 示例生成能力，MCP 现有 schema 示例行为不回退
-- [ ] 生成优先级为 `example` → `default` → `enum[0]` → 类型占位
-- [ ] object 按 `x-schema-orders` 顺序生成，array 生成一个元素
-- [ ] `$ref` 递归解析，深度上限 8，循环引用返回 warning 而不是抛错
-- [ ] 失效引用返回 warning，并保留可继续使用的部分结果
-- [ ] smoke 覆盖优先级、嵌套 object/array、循环引用与失效引用
-- [ ] typecheck 与 build 通过
+- [x] 主进程提供共享的 schema 示例生成能力，MCP 现有 schema 示例行为不回退
+- [x] 生成优先级为 `example` → `default` → `enum[0]` → 类型占位
+- [x] object 按 `x-schema-orders` 顺序生成，array 生成一个元素
+- [x] `$ref` 递归解析，深度上限 8，循环引用返回 warning 而不是抛错
+- [x] 失效引用返回 warning，并保留可继续使用的部分结果
+- [x] smoke 覆盖优先级、嵌套 object/array、循环引用与失效引用
+- [x] typecheck 与 build 通过
+
+## Comments
+
+2026-10-25 · 实现完成
+
+- 共享生成能力落在 `src/main/schema/example.ts`，MCP 的 OpenAPI 示例生成已改为复用。
+- 覆盖 example/default/enum/类型占位、x-schema-orders、数组单元素、深度 8、$ref 循环与失效引用 warning。
+- smoke 新增优先级、嵌套、循环与失效引用断言。
