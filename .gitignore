@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+release/
 
 # Generated smoke-test bundle
 scripts/.smoke.cjs

@@ -1,0 +1,45 @@
+appId: local.kindraapi
+productName: KindraAPI
+copyright: Copyright © 2026 KindraAPI
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+  - from: mcp-stdio.cjs
+    to: mcp-stdio.cjs
+
+asar: true
+
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  signExecutable: false
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true

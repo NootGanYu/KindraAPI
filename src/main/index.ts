@@ -30,6 +30,10 @@ app.setPath('userData', process.env.KINDRAAPI_USER_DATA || kindraAPIUserData)
 // 远程调试开关在启动阶段生效，必须在 app ready 之前读取配置。
 applyDebugSwitch()
 
+const appIconPath = app.isPackaged
+  ? path.join(process.resourcesPath, 'icon.png')
+  : appIcon
+
 let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
@@ -42,7 +46,7 @@ function createWindow(): void {
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     backgroundColor: '#FAF5EA',
-    icon: appIcon,
+    icon: appIconPath,
     trafficLightPosition: { x: 12, y: 14 },
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -91,7 +95,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     electronApp.setAppUserModelId('local.kindraapi')
-    if (process.platform === 'darwin') app.dock?.setIcon(appIcon)
+    if (process.platform === 'darwin') app.dock?.setIcon(appIconPath)
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })
