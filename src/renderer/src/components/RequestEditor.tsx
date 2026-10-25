@@ -505,13 +505,18 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
       <div className="url-row">
         <div className="url-capsule">
           <div className="method-select">
-            <Select
-              variant="borderless"
-              value={draft.method || 'GET'}
-              onChange={(method) => onChange({ method })}
-              options={METHODS.map((method) => ({ value: method, label: method }))}
-              popupMatchSelectWidth={false}
-            />
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: METHODS.map((method) => ({ key: method, label: method })),
+                onClick: ({ key }) => onChange({ method: key })
+              }}
+            >
+              <button className="method-btn">
+                <span>{(draft.method || 'GET').toUpperCase()}</span>
+                <DownOutlined style={{ fontSize: 9 }} />
+              </button>
+            </Dropdown>
           </div>
           <div className="url-input">
             <Input

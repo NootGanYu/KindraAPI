@@ -7,9 +7,9 @@ import LeftNav from './components/LeftNav'
 import ApisPage from './pages/ApisPage'
 import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
-import PlaceholderPage from './pages/PlaceholderPage'
 import AutomationPage from './pages/AutomationPage'
 import SchemasPage from './pages/SchemasPage'
+import DocsPage from './pages/DocsPage'
 
 function Shell(): JSX.Element {
   return (
@@ -22,15 +22,7 @@ function Shell(): JSX.Element {
             <Route path="/apis" element={<ApisPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route
-              path="/docs"
-              element={
-                <PlaceholderPage
-                  title="文档"
-                  description="分享文档与只读预览将在后续里程碑接入；接口契约可先在「设计」视图查看。"
-                />
-              }
-            />
+            <Route path="/docs" element={<DocsPage />} />
             <Route path="/schemas" element={<SchemasPage />} />
             <Route path="/automation" element={<AutomationPage />} />
             <Route path="*" element={<Navigate to="/apis" replace />} />

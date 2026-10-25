@@ -560,6 +560,58 @@ export interface DbConnection {
   updated_at: string
 }
 
+// ---------------------------------------------------------------------------
+// Docs · local share
+// ---------------------------------------------------------------------------
+
+export type DocScope = 'project' | 'folder' | 'api' | 'custom'
+
+export interface DocSettings {
+  /** 空字符串表示公开访问 */
+  password: string
+  /** -1 永久有效；正数为有效天数 */
+  expire_days: number
+  show_request: boolean
+  show_body: boolean
+  show_response: boolean
+  show_headers: boolean
+  show_scripts: boolean
+  openapi: boolean
+}
+
+export interface DocTargetSnapshot {
+  target_id: string
+  target_type: TargetType
+  parent_id: string
+  name: string
+  description?: string
+  method?: string
+  url?: string
+  protocol?: string
+  sort: number
+  request?: RequestModel
+  response?: ResponseModel
+}
+
+export interface DocSnapshot {
+  project_name: string
+  project_intro?: string
+  generated_at: string
+  targets: DocTargetSnapshot[]
+}
+
+export interface DocShare {
+  share_id: string
+  project_id: string
+  name: string
+  scope: DocScope
+  target_ids: string[]
+  settings: DocSettings
+  snapshot: DocSnapshot
+  created_at: string
+  updated_at: string
+}
+
 export type DbConnectionView = Omit<DbConnection, 'config' | 'ssh'> & {
   config: { default: Omit<DbDefaultConfig, 'password'> & { has_password: boolean } }
   ssh: Omit<DbSshConfig, 'password' | 'private_key' | 'passphrase'> & {
@@ -609,4 +661,40 @@ export interface ImportDbResult {
   copied: number
   failed: number
   warnings: string[]
+}
+
+export interface DocShareSummary {
+  share_id: string
+  project_id: string
+  name: string
+  scope: DocScope
+  type_label: string
+  visibility: 'public' | 'password'
+  target_count: number
+  expire_at: string | null
+  expire_label: string
+  expired: boolean
+  owner: string
+  created_at: string
+  updated_at: string
+}
+
+export interface DocShareInput {
+  name: string
+  scope: DocScope
+  target_ids: string[]
+  settings: DocSettings
+}
+
+export interface DocServiceConfig {
+  enabled: boolean
+  port: number
+}
+
+export interface DocServiceStatus extends DocServiceConfig {
+  running: boolean
+  host: string
+  base_url: string
+  error?: string
+  share_count: number
 }

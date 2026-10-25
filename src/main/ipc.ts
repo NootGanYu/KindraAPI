@@ -8,6 +8,8 @@ import type {
   DebugConfig,
   DictionaryEntry,
   DictionarySettings,
+  DocServiceConfig,
+  DocShareInput,
   Environment,
   Flow,
   GlobalVars,
@@ -33,6 +35,10 @@ import {
   restartMcpServer
 } from './mcp/server'
 import { listToolInfos } from './mcp/tools'
+import {
+  getDocServiceStatus,
+  restartDocServer
+} from './docs/server'
 
 function handle<T>(channel: string, fn: (...args: any[]) => T | Promise<T>): void {
   ipcMain.handle(channel, async (_event, ...args): Promise<Result<T>> => {
@@ -49,6 +55,14 @@ export function registerIpc(): void {
   handle('app:openPath', (targetPath: string) => shell.openPath(targetPath))
   handle('app:copyText', (text: string) => {
     clipboard.writeText(String(text ?? ''))
+    return true
+  })
+  handle('app:openExternal', async (url: string) => {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('仅支持 http/https 链接')
+    }
+    await shell.openExternal(parsed.toString())
     return true
   })
   handle('app:relaunch', () => {
@@ -227,5 +241,26 @@ export function registerIpc(): void {
       ? [path.join(process.resourcesPath, 'mcp-stdio.cjs'), path.join(app.getAppPath(), 'mcp-stdio.cjs')]
       : [path.join(app.getAppPath(), 'mcp-stdio.cjs')]
     return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]
+  })
+
+  // Docs · local share
+  handle('doc:list', (projectId: string) => store.listDocShareSummaries(projectId))
+  handle('doc:get', (projectId: string, shareId: string) =>
+    store.getDocShare(projectId, shareId)
+  )
+  handle('doc:create', (projectId: string, input: DocShareInput) =>
+    store.createDocShare(projectId, input)
+  )
+  handle('doc:update', (projectId: string, shareId: string, input: DocShareInput) =>
+    store.updateDocShare(projectId, shareId, input)
+  )
+  handle('doc:delete', (projectId: string, shareIds: string[]) => {
+    store.deleteDocShares(projectId, shareIds)
+    return true
+  })
+  handle('doc:service:get', () => getDocServiceStatus())
+  handle('doc:service:save', async (config: DocServiceConfig) => {
+    store.saveDocServiceConfig(config)
+    return restartDocServer()
   })
 }

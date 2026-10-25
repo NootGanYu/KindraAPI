@@ -4,6 +4,7 @@ import type {
   DataModel,
   DbConnection,
   DictionaryEntry,
+  DocSettings,
   Environment,
   Flow,
   FlowAssertion,
@@ -281,6 +282,20 @@ export function createDbConnection(projectId: string, partial: Partial<DbConnect
     },
     created_at: now,
     updated_at: now,
+    ...partial
+  }
+}
+
+export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettings {
+  return {
+    password: '',
+    expire_days: -1,
+    show_request: true,
+    show_body: true,
+    show_response: true,
+    show_headers: true,
+    show_scripts: false,
+    openapi: false,
     ...partial
   }
 }
