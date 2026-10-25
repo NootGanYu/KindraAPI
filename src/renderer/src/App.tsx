@@ -10,6 +10,7 @@ import SettingsPage from './pages/SettingsPage'
 import AutomationPage from './pages/AutomationPage'
 import SchemasPage from './pages/SchemasPage'
 import DocsPage from './pages/DocsPage'
+import GitPage from './pages/GitPage'
 
 function Shell(): JSX.Element {
   return (
@@ -25,6 +26,7 @@ function Shell(): JSX.Element {
             <Route path="/docs" element={<DocsPage />} />
             <Route path="/schemas" element={<SchemasPage />} />
             <Route path="/automation" element={<AutomationPage />} />
+            <Route path="/git" element={<GitPage />} />
             <Route path="*" element={<Navigate to="/apis" replace />} />
           </Routes>
         </div>

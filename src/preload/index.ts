@@ -143,6 +143,39 @@ const api = {
       invoke('doc:delete', projectId, shareIds),
     serviceStatus: () => invoke('doc:service:get'),
     saveService: (config: unknown) => invoke('doc:service:save', config)
+  },
+
+  git: {
+    availability: () => invoke('git:availability'),
+    info: (projectId: string) => invoke('git:info', projectId),
+    init: (projectId: string, branch?: string) => invoke('git:init', projectId, branch),
+    status: (projectId: string) => invoke('git:status', projectId),
+    diff: (projectId: string, request: unknown) => invoke('git:diff', projectId, request),
+    commitDiff: (projectId: string, hash: string) =>
+      invoke('git:commitDiff', projectId, hash),
+    stage: (projectId: string, paths: string[]) => invoke('git:stage', projectId, paths),
+    unstage: (projectId: string, paths: string[]) => invoke('git:unstage', projectId, paths),
+    discard: (projectId: string, targets: unknown) => invoke('git:discard', projectId, targets),
+    commit: (projectId: string, message: string, stageAll: boolean) =>
+      invoke('git:commit', projectId, message, stageAll),
+    log: (projectId: string, limit?: number) => invoke('git:log', projectId, limit),
+    branches: (projectId: string) => invoke('git:branches', projectId),
+    createBranch: (projectId: string, name: string, checkout: boolean) =>
+      invoke('git:branch:create', projectId, name, checkout),
+    checkoutBranch: (projectId: string, name: string) =>
+      invoke('git:branch:checkout', projectId, name),
+    deleteBranch: (projectId: string, name: string) =>
+      invoke('git:branch:delete', projectId, name),
+    addRemote: (projectId: string, name: string, url: string) =>
+      invoke('git:remote:add', projectId, name, url),
+    setRemoteUrl: (projectId: string, name: string, url: string) =>
+      invoke('git:remote:setUrl', projectId, name, url),
+    removeRemote: (projectId: string, name: string) =>
+      invoke('git:remote:remove', projectId, name),
+    fetch: (projectId: string, remote?: string) => invoke('git:fetch', projectId, remote),
+    pull: (projectId: string, options: unknown) => invoke('git:pull', projectId, options),
+    push: (projectId: string, options: unknown) => invoke('git:push', projectId, options),
+    terminal: (projectId: string) => invoke('git:terminal', projectId)
   }
 }
 

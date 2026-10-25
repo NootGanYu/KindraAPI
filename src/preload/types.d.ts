@@ -18,6 +18,17 @@ import type {
   FlowRun,
   FlowRunSummary,
   GeneratedExampleResult,
+  GitAvailability,
+  GitBranch,
+  GitCommit,
+  GitDiffRequest,
+  GitDiffResult,
+  GitDiscardTarget,
+  GitOperationResult,
+  GitPullOptions,
+  GitPushOptions,
+  GitRepoInfo,
+  GitStatus,
   GlobalVars,
   ImportDbOptions,
   ImportDbResult,
@@ -180,6 +191,47 @@ export interface ApiBridge {
     remove(projectId: string, shareIds: string[]): Promise<Result<boolean>>
     serviceStatus(): Promise<Result<DocServiceStatus>>
     saveService(config: DocServiceConfig): Promise<Result<DocServiceStatus>>
+  }
+
+  git: {
+    availability(): Promise<Result<GitAvailability>>
+    info(projectId: string): Promise<Result<GitRepoInfo>>
+    init(projectId: string, branch?: string): Promise<Result<GitOperationResult>>
+    status(projectId: string): Promise<Result<GitStatus>>
+    diff(projectId: string, request: GitDiffRequest): Promise<Result<GitDiffResult>>
+    commitDiff(projectId: string, hash: string): Promise<Result<GitDiffResult>>
+    stage(projectId: string, paths: string[]): Promise<Result<GitOperationResult>>
+    unstage(projectId: string, paths: string[]): Promise<Result<GitOperationResult>>
+    discard(projectId: string, targets: GitDiscardTarget[]): Promise<Result<GitOperationResult>>
+    commit(
+      projectId: string,
+      message: string,
+      stageAll: boolean
+    ): Promise<Result<GitOperationResult>>
+    log(projectId: string, limit?: number): Promise<Result<GitCommit[]>>
+    branches(projectId: string): Promise<Result<GitBranch[]>>
+    createBranch(
+      projectId: string,
+      name: string,
+      checkout: boolean
+    ): Promise<Result<GitOperationResult>>
+    checkoutBranch(projectId: string, name: string): Promise<Result<GitOperationResult>>
+    deleteBranch(projectId: string, name: string): Promise<Result<GitOperationResult>>
+    addRemote(
+      projectId: string,
+      name: string,
+      url: string
+    ): Promise<Result<GitOperationResult>>
+    setRemoteUrl(
+      projectId: string,
+      name: string,
+      url: string
+    ): Promise<Result<GitOperationResult>>
+    removeRemote(projectId: string, name: string): Promise<Result<GitOperationResult>>
+    fetch(projectId: string, remote?: string): Promise<Result<GitOperationResult>>
+    pull(projectId: string, options: GitPullOptions): Promise<Result<GitOperationResult>>
+    push(projectId: string, options: GitPushOptions): Promise<Result<GitOperationResult>>
+    terminal(projectId: string): Promise<Result<{ opened: boolean; output: string }>>
   }
 }
 

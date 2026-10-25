@@ -12,6 +12,10 @@ import type {
   DocShareInput,
   Environment,
   Flow,
+  GitDiffRequest,
+  GitDiscardTarget,
+  GitPullOptions,
+  GitPushOptions,
   GlobalVars,
   ImportDbOptions,
   McpConfig,
@@ -25,6 +29,7 @@ import type {
   Target
 } from '@shared/types'
 import * as store from './storage/store'
+import * as git from './git/git'
 import { sendRequest } from './request/executor'
 import { runFlow } from './flow/engine'
 import { createFlow } from '@shared/factories'
@@ -263,4 +268,63 @@ export function registerIpc(): void {
     store.saveDocServiceConfig(config)
     return restartDocServer()
   })
+
+  // Git · 项目目录的版本管理
+  const projectDirOf = (projectId: string): string => store.resolveProjectDir(projectId)
+  handle('git:availability', () => git.getGitAvailability())
+  handle('git:info', (projectId: string) => git.getGitInfo(projectDirOf(projectId)))
+  handle('git:init', (projectId: string, branch?: string) =>
+    git.initRepo(projectDirOf(projectId), branch)
+  )
+  handle('git:status', (projectId: string) => git.getGitStatus(projectDirOf(projectId)))
+  handle('git:diff', (projectId: string, request: GitDiffRequest) =>
+    git.getGitDiff(projectDirOf(projectId), request)
+  )
+  handle('git:commitDiff', (projectId: string, hash: string) =>
+    git.getCommitDiff(projectDirOf(projectId), hash)
+  )
+  handle('git:stage', (projectId: string, paths: string[]) =>
+    git.stagePaths(projectDirOf(projectId), paths)
+  )
+  handle('git:unstage', (projectId: string, paths: string[]) =>
+    git.unstagePaths(projectDirOf(projectId), paths)
+  )
+  handle('git:discard', (projectId: string, targets: GitDiscardTarget[]) =>
+    git.discardPaths(projectDirOf(projectId), targets)
+  )
+  handle('git:commit', (projectId: string, message: string, stageAll: boolean) =>
+    git.commitChanges(projectDirOf(projectId), message, stageAll)
+  )
+  handle('git:log', (projectId: string, limit?: number) =>
+    git.getGitLog(projectDirOf(projectId), limit)
+  )
+  handle('git:branches', (projectId: string) => git.listBranches(projectDirOf(projectId)))
+  handle('git:branch:create', (projectId: string, name: string, checkout: boolean) =>
+    git.createBranch(projectDirOf(projectId), name, checkout)
+  )
+  handle('git:branch:checkout', (projectId: string, name: string) =>
+    git.checkoutBranch(projectDirOf(projectId), name)
+  )
+  handle('git:branch:delete', (projectId: string, name: string) =>
+    git.deleteBranch(projectDirOf(projectId), name)
+  )
+  handle('git:remote:add', (projectId: string, name: string, url: string) =>
+    git.addRemote(projectDirOf(projectId), name, url)
+  )
+  handle('git:remote:setUrl', (projectId: string, name: string, url: string) =>
+    git.setRemoteUrl(projectDirOf(projectId), name, url)
+  )
+  handle('git:remote:remove', (projectId: string, name: string) =>
+    git.removeRemote(projectDirOf(projectId), name)
+  )
+  handle('git:fetch', (projectId: string, remote?: string) =>
+    git.fetchRepo(projectDirOf(projectId), remote)
+  )
+  handle('git:pull', (projectId: string, options: GitPullOptions) =>
+    git.pullRepo(projectDirOf(projectId), options)
+  )
+  handle('git:push', (projectId: string, options: GitPushOptions) =>
+    git.pushRepo(projectDirOf(projectId), options)
+  )
+  handle('git:terminal', (projectId: string) => git.openInTerminal(projectDirOf(projectId)))
 }

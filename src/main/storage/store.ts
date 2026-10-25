@@ -79,6 +79,11 @@ function projectDir(projectId: string): string {
   return path.join(getPaths().projectRoot, assertId(projectId, 'project_id'))
 }
 
+/** 对外暴露项目目录（Git 模块需要，仍经过 project_id 合法性校验）。 */
+export function resolveProjectDir(projectId: string): string {
+  return projectDir(projectId)
+}
+
 function localProjectDir(projectId: string): string {
   return path.join(getPaths().localRoot, 'projects', assertId(projectId, 'project_id'))
 }
