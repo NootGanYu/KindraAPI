@@ -29,6 +29,10 @@ import { useApp } from '../store'
 import ApiTree from '../components/ApiTree'
 import RequestEditor from '../components/RequestEditor'
 import ResponsePanel from '../components/ResponsePanel'
+import DocShareDialog from '../components/DocShareDialog'
+import DocShareLinkDialog, {
+  type DocShareLinkInfo
+} from '../components/DocShareLinkDialog'
 
 const ENTRIES = [
   { label: 'HTTP', color: '#ff6b6b', icon: <ApiOutlined /> },
@@ -51,6 +55,7 @@ export default function ApisPage(): JSX.Element {
   const activeId = useApp((s) => s.activeId)
   const targets = useApp((s) => s.targets)
   const projectId = useApp((s) => s.project?.project_id)
+  const projectName = useApp((s) => s.project?.name ?? '')
   const drafts = useApp((s) => s.drafts)
   const records = useApp((s) => s.records)
   const sendingId = useApp((s) => s.sendingId)
@@ -71,6 +76,8 @@ export default function ApisPage(): JSX.Element {
   const tabScrollRef = useRef<HTMLDivElement | null>(null)
   const [tabOverflow, setTabOverflow] = useState(false)
   const [tabEdges, setTabEdges] = useState({ left: false, right: false })
+  const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null)
+  const [shareLink, setShareLink] = useState<DocShareLinkInfo | null>(null)
 
   const updateTabScroll = (): void => {
     const el = tabScrollRef.current
@@ -157,6 +164,20 @@ export default function ApisPage(): JSX.Element {
     if (!summary || summary.name === name) return
     try {
       await saveTarget(active.target_id)
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
+
+  const openShare = async (): Promise<void> => {
+    if (!active || active.target_type === 'folder' || !projectId) return
+    const tab = tabs.find((item) => item.id === active.target_id)
+    try {
+      // 有未保存修改时先落盘，保证分享快照与当前界面一致。
+      if (tab?.dirty) await saveTarget(active.target_id)
+      const freshName =
+        useApp.getState().drafts[active.target_id]?.name ?? active.name
+      setShareTarget({ id: active.target_id, name: freshName })
     } catch (error) {
       message.error((error as Error).message)
     }
@@ -336,10 +357,7 @@ export default function ApisPage(): JSX.Element {
                         <FilterOutlined style={{ fontSize: 14 }} />
                       </button>
                     </Tooltip>
-                    <button
-                      className="share-btn"
-                      onClick={() => message.info('分享将在后续里程碑支持')}
-                    >
+                    <button className="share-btn" onClick={() => void openShare()}>
                       <ShareAltOutlined style={{ fontSize: 13 }} /> 分享
                     </button>
                     <Dropdown
@@ -422,6 +440,35 @@ export default function ApisPage(): JSX.Element {
           </div>
         </Panel>
       </PanelGroup>
+
+      <DocShareDialog
+        open={Boolean(shareTarget)}
+        projectId={projectId ?? ''}
+        projectName={projectName}
+        targets={targets}
+        initial={
+          shareTarget
+            ? {
+                name: shareTarget.name,
+                scope: 'api',
+                targetIds: [shareTarget.id]
+              }
+            : undefined
+        }
+        lockScope="api"
+        lockTarget={shareTarget?.id}
+        lockTargetName={shareTarget?.name}
+        onClose={() => setShareTarget(null)}
+        onSaved={(share) => {
+          setShareTarget(null)
+          setShareLink({
+            shareId: share.share_id,
+            name: share.name,
+            openapi: share.settings.openapi
+          })
+        }}
+      />
+      <DocShareLinkDialog share={shareLink} onClose={() => setShareLink(null)} />
     </div>
   )
 }

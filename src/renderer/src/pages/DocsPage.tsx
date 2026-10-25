@@ -8,18 +8,12 @@ import {
   Input,
   InputNumber,
   Modal,
-  Radio,
-  Select,
   Switch,
-  Tooltip,
-  Tree,
-  TreeSelect
+  Tooltip
 } from 'antd'
-import type { DataNode } from 'antd/es/tree'
 import {
   CopyOutlined,
   DeleteOutlined,
-  DownloadOutlined,
   EditOutlined,
   FileTextOutlined,
   LinkOutlined,
@@ -29,16 +23,10 @@ import {
   SettingOutlined,
   UserOutlined
 } from '@ant-design/icons'
-import type {
-  DocScope,
-  DocServiceStatus,
-  DocSettings,
-  DocShareInput,
-  DocShareSummary,
-  TargetSummary
-} from '@shared/types'
-import { createDocSettings } from '@shared/factories'
+import type { DocServiceStatus, DocShare, DocShareSummary } from '@shared/types'
 import { useApp } from '../store'
+import DocShareDialog, { type DocShareInitial } from '../components/DocShareDialog'
+import DocShareLinkDialog, { type DocShareLinkInfo } from '../components/DocShareLinkDialog'
 
 const FILTERS = [
   '全部',
@@ -55,105 +43,6 @@ const FILTERS = [
 ] as const
 
 type Filter = (typeof FILTERS)[number]
-type ExpireMode = 'permanent' | '7' | '30' | 'custom'
-
-interface EditorState {
-  open: boolean
-  shareId?: string
-  saving: boolean
-  name: string
-  scope: DocScope
-  targetIds: string[]
-  passwordEnabled: boolean
-  password: string
-  expireMode: ExpireMode
-  customDays: number
-  showRequest: boolean
-  showBody: boolean
-  showResponse: boolean
-  showHeaders: boolean
-  showScripts: boolean
-  openapi: boolean
-}
-
-interface DocTreeNode {
-  key: string
-  title: string
-  targetType: 'folder' | 'api'
-  method?: string
-  children: DocTreeNode[]
-}
-
-interface LinkState {
-  shareId: string
-  name: string
-  openapi: boolean
-}
-
-function defaultEditor(): EditorState {
-  return {
-    open: false,
-    saving: false,
-    name: '',
-    scope: 'project',
-    targetIds: [],
-    passwordEnabled: false,
-    password: '',
-    expireMode: 'permanent',
-    customDays: 7,
-    showRequest: true,
-    showBody: true,
-    showResponse: true,
-    showHeaders: true,
-    showScripts: false,
-    openapi: false
-  }
-}
-
-function buildTree(targets: TargetSummary[]): DocTreeNode[] {
-  const byParent = new Map<string, TargetSummary[]>()
-  for (const target of targets) {
-    const list = byParent.get(target.parent_id) ?? []
-    list.push(target)
-    byParent.set(target.parent_id, list)
-  }
-  const walk = (parentId: string): DocTreeNode[] =>
-    (byParent.get(parentId) ?? [])
-      .slice()
-      .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-Hans-CN'))
-      .map((target) => ({
-        key: target.target_id,
-        title: target.name,
-        targetType: target.target_type,
-        method: target.method,
-        children: target.target_type === 'folder' ? walk(target.target_id) : []
-      }))
-  return walk('0')
-}
-
-interface SelectNode {
-  value: string
-  title: string
-  disabled?: boolean
-  children?: SelectNode[]
-}
-
-function toSelectData(nodes: DocTreeNode[], selectable: 'folder' | 'api'): SelectNode[] {
-  return nodes.map((node) => ({
-    value: node.key,
-    title: node.title,
-    disabled: node.targetType !== selectable,
-    children: node.children.length ? toSelectData(node.children, selectable) : undefined
-  }))
-}
-
-function toCheckData(nodes: DocTreeNode[]): DataNode[] {
-  return nodes.map((node) => ({
-    key: node.key,
-    title: node.title,
-    children: node.children.length ? toCheckData(node.children) : undefined
-  }))
-}
 
 function formatTime(value: string): string {
   const date = new Date(value)
@@ -162,20 +51,6 @@ function formatTime(value: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours()
   )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function expireModeOf(days: number): ExpireMode {
-  if (days === -1) return 'permanent'
-  if (days === 7) return '7'
-  if (days === 30) return '30'
-  return 'custom'
-}
-
-function expireDaysOf(editor: EditorState): number {
-  if (editor.expireMode === 'permanent') return -1
-  if (editor.expireMode === '7') return 7
-  if (editor.expireMode === '30') return 30
-  return Math.max(1, Math.min(3650, Math.round(editor.customDays || 1)))
 }
 
 export default function DocsPage(): JSX.Element {
@@ -189,17 +64,13 @@ export default function DocsPage(): JSX.Element {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('全部')
   const [selected, setSelected] = useState<string[]>([])
-  const [editor, setEditor] = useState<EditorState>(defaultEditor)
-  const [link, setLink] = useState<LinkState | null>(null)
+  const [editor, setEditor] = useState<{ open: boolean; initial?: DocShareInitial }>({
+    open: false
+  })
+  const [link, setLink] = useState<DocShareLinkInfo | null>(null)
   const [serviceOpen, setServiceOpen] = useState(false)
   const [serviceForm, setServiceForm] = useState({ enabled: true, port: 30999 })
   const [serviceSaving, setServiceSaving] = useState(false)
-
-  const tree = useMemo(() => buildTree(targets), [targets])
-  const apiCount = useMemo(
-    () => targets.filter((target) => target.target_type === 'api').length,
-    [targets]
-  )
 
   const reload = useCallback(async (): Promise<void> => {
     if (!project) return
@@ -226,7 +97,7 @@ export default function DocsPage(): JSX.Element {
   useEffect(() => {
     setSelected([])
     setLink(null)
-    setEditor(defaultEditor())
+    setEditor({ open: false })
     if (project) void reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.project_id])
@@ -273,7 +144,10 @@ export default function DocsPage(): JSX.Element {
 
   const openCreate = (): void => {
     const fallbackName = project ? `${project.name} 接口文档` : '接口文档'
-    setEditor({ ...defaultEditor(), open: true, name: fallbackName })
+    setEditor({
+      open: true,
+      initial: { name: fallbackName, scope: 'project', targetIds: [] }
+    })
   }
 
   const openEdit = async (shareId: string): Promise<void> => {
@@ -288,94 +162,27 @@ export default function DocsPage(): JSX.Element {
       message.error('分享不存在')
       return
     }
-    const settings = createDocSettings(share.settings)
     setEditor({
       open: true,
-      shareId: share.share_id,
-      saving: false,
-      name: share.name,
-      scope: share.scope,
-      targetIds: share.target_ids,
-      passwordEnabled: Boolean(settings.password),
-      password: settings.password,
-      expireMode: expireModeOf(settings.expire_days),
-      customDays: settings.expire_days > 0 ? settings.expire_days : 7,
-      showRequest: settings.show_request,
-      showBody: settings.show_body,
-      showResponse: settings.show_response,
-      showHeaders: settings.show_headers,
-      showScripts: settings.show_scripts,
-      openapi: settings.openapi
+      initial: {
+        shareId: share.share_id,
+        name: share.name,
+        scope: share.scope,
+        targetIds: share.target_ids,
+        settings: share.settings
+      }
     })
   }
 
-  const patchEditor = (patch: Partial<EditorState>): void => {
-    setEditor((current) => ({ ...current, ...patch }))
-  }
-
-  const changeScope = (scope: DocScope): void => {
-    const fallbackName =
-      scope === 'folder' || scope === 'api'
-        ? editor.name
-        : project
-          ? `${project.name} 接口文档`
-          : editor.name
-    patchEditor({ scope, targetIds: [], name: editor.name.trim() ? editor.name : fallbackName })
-  }
-
-  const saveShare = async (): Promise<void> => {
-    if (!project) return
-    const name = editor.name.trim()
-    if (!name) {
-      message.warning('请输入分享名称')
-      return
-    }
-    if (editor.scope !== 'project' && editor.targetIds.length === 0) {
-      message.warning(editor.scope === 'folder' ? '请选择要分享的目录' : '请选择要分享的接口')
-      return
-    }
-    if (editor.passwordEnabled && !editor.password) {
-      message.warning('请输入访问密码')
-      return
-    }
-
-    const settings: DocSettings = {
-      password: editor.passwordEnabled ? editor.password : '',
-      expire_days: expireDaysOf(editor),
-      show_request: editor.showRequest,
-      show_body: editor.showBody,
-      show_response: editor.showResponse,
-      show_headers: editor.showHeaders,
-      show_scripts: editor.showScripts,
-      openapi: editor.openapi
-    }
-    const input: DocShareInput = {
-      name,
-      scope: editor.scope,
-      target_ids: editor.scope === 'project' ? [] : editor.targetIds,
-      settings
-    }
-
-    patchEditor({ saving: true })
-    try {
-      const result = editor.shareId
-        ? await window.api.docs.update(project.project_id, editor.shareId, input)
-        : await window.api.docs.create(project.project_id, input)
-      if (!result.ok) {
-        message.error(result.error)
-        return
-      }
-      setEditor(defaultEditor())
-      setLink({
-        shareId: result.data.share_id,
-        name: result.data.name,
-        openapi: result.data.settings.openapi
-      })
-      await reload()
-      message.success(editor.shareId ? '分享已更新' : '分享已创建')
-    } finally {
-      setEditor((current) => ({ ...current, saving: false }))
-    }
+  const handleSaved = async (share: DocShare): Promise<void> => {
+    setEditor({ open: false })
+    setLink({
+      shareId: share.share_id,
+      name: share.name,
+      openapi: share.settings.openapi
+    })
+    await reload()
+    message.success('分享已保存')
   }
 
   const deleteShares = (ids: string[]): void => {
@@ -416,7 +223,8 @@ export default function DocsPage(): JSX.Element {
     }
   }
 
-  const selectedAllVisible = filtered.length > 0 && filtered.every((s) => selected.includes(s.share_id))
+  const selectedAllVisible =
+    filtered.length > 0 && filtered.every((s) => selected.includes(s.share_id))
 
   const toggleAll = (checked: boolean): void => {
     if (checked) setSelected(filtered.map((item) => item.share_id))
@@ -583,252 +391,17 @@ export default function DocsPage(): JSX.Element {
         )}
       </div>
 
-      <Modal
-        title={editor.shareId ? '编辑分享' : '新建分享'}
+      <DocShareDialog
         open={editor.open}
-        width={600}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={editor.saving}
-        onOk={() => void saveShare()}
-        onCancel={() => setEditor(defaultEditor())}
-        destroyOnClose
-      >
-        <div className="docs-form">
-          <div className="docs-field">
-            <label>分享名称</label>
-            <Input
-              value={editor.name}
-              placeholder="请输入分享名称"
-              onChange={(event) => patchEditor({ name: event.target.value })}
-            />
-          </div>
+        projectId={project?.project_id ?? ''}
+        projectName={project?.name ?? ''}
+        targets={targets}
+        initial={editor.initial}
+        onClose={() => setEditor({ open: false })}
+        onSaved={(share) => void handleSaved(share)}
+      />
 
-          <div className="docs-field">
-            <label>分享范围</label>
-            <Radio.Group
-              value={editor.scope}
-              size="small"
-              optionType="button"
-              buttonStyle="solid"
-              onChange={(event) => changeScope(event.target.value as DocScope)}
-            >
-              <Radio.Button value="project">项目</Radio.Button>
-              <Radio.Button value="folder">目录</Radio.Button>
-              <Radio.Button value="api">接口</Radio.Button>
-              <Radio.Button value="custom">自定义</Radio.Button>
-            </Radio.Group>
-          </div>
-
-          <div className="docs-field docs-target-picker">
-            {editor.scope === 'project' ? (
-              <div className="docs-hint">
-                将分享「{project?.name ?? '当前项目'}」内全部接口，共 {apiCount} 个。
-              </div>
-            ) : editor.scope === 'custom' ? (
-              <>
-                <Tree
-                  checkable
-                  selectable={false}
-                  defaultExpandAll
-                  treeData={toCheckData(tree)}
-                  checkedKeys={editor.targetIds}
-                  onCheck={(keys) => {
-                    const list = Array.isArray(keys) ? keys : keys.checked
-                    patchEditor({ targetIds: list.map(String) })
-                  }}
-                />
-                <div className="docs-hint">勾选目录会包含其下全部接口。</div>
-              </>
-            ) : (
-              <TreeSelect
-                style={{ width: '100%' }}
-                placeholder={editor.scope === 'folder' ? '请选择目录' : '请选择接口'}
-                value={editor.targetIds[0]}
-                treeData={toSelectData(tree, editor.scope === 'folder' ? 'folder' : 'api')}
-                treeDefaultExpandAll
-                showSearch
-                treeNodeFilterProp="title"
-                onChange={(value) =>
-                  patchEditor({ targetIds: value ? [String(value)] : [] })
-                }
-              />
-            )}
-          </div>
-
-          <div className="docs-field-row">
-            <div className="docs-field">
-              <label>访问方式</label>
-              <Radio.Group
-                value={editor.passwordEnabled ? 'password' : 'public'}
-                size="small"
-                onChange={(event) =>
-                  patchEditor({ passwordEnabled: event.target.value === 'password' })
-                }
-              >
-                <Radio value="public">公开访问</Radio>
-                <Radio value="password">密码访问</Radio>
-              </Radio.Group>
-            </div>
-            <div className="docs-field">
-              <label>有效期</label>
-              <div className="docs-inline">
-                <Select
-                  value={editor.expireMode}
-                  style={{ width: 126 }}
-                  onChange={(value) => patchEditor({ expireMode: value as ExpireMode })}
-                  options={[
-                    { value: 'permanent', label: '永久有效' },
-                    { value: '7', label: '7 天' },
-                    { value: '30', label: '30 天' },
-                    { value: 'custom', label: '自定义' }
-                  ]}
-                />
-                {editor.expireMode === 'custom' ? (
-                  <InputNumber
-                    min={1}
-                    max={3650}
-                    value={editor.customDays}
-                    addonAfter="天"
-                    onChange={(value) =>
-                      patchEditor({ customDays: Number(value ?? 1) })
-                    }
-                  />
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          {editor.passwordEnabled ? (
-            <div className="docs-field">
-              <label>访问密码</label>
-              <Input.Password
-                value={editor.password}
-                placeholder="访问者需要输入此密码"
-                onChange={(event) => patchEditor({ password: event.target.value })}
-              />
-            </div>
-          ) : null}
-
-          <div className="docs-field">
-            <label>字段展示</label>
-            <div className="docs-checks">
-              <Checkbox
-                checked={editor.showRequest}
-                onChange={(event) => patchEditor({ showRequest: event.target.checked })}
-              >
-                请求参数
-              </Checkbox>
-              <Checkbox
-                checked={editor.showBody}
-                onChange={(event) => patchEditor({ showBody: event.target.checked })}
-              >
-                请求体
-              </Checkbox>
-              <Checkbox
-                checked={editor.showResponse}
-                onChange={(event) => patchEditor({ showResponse: event.target.checked })}
-              >
-                响应示例
-              </Checkbox>
-              <Checkbox
-                checked={editor.showHeaders}
-                onChange={(event) => patchEditor({ showHeaders: event.target.checked })}
-              >
-                响应头 / Cookie
-              </Checkbox>
-              <Checkbox
-                checked={editor.showScripts}
-                onChange={(event) => patchEditor({ showScripts: event.target.checked })}
-              >
-                前后脚本
-              </Checkbox>
-            </div>
-          </div>
-
-          <div className="docs-field docs-switch-row">
-            <div>
-              <label style={{ margin: 0 }}>允许 OpenAPI 导出</label>
-              <div className="docs-hint">开启后访问者可下载 OpenAPI 3.0 文档。</div>
-            </div>
-            <Switch
-              checked={editor.openapi}
-              onChange={(checked) => patchEditor({ openapi: checked })}
-            />
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        title="分享链接"
-        open={Boolean(link)}
-        onCancel={() => setLink(null)}
-        footer={
-          <Button onClick={() => setLink(null)}>关闭</Button>
-        }
-        destroyOnClose
-      >
-        {link ? (
-          <div className="docs-link-box">
-            <div className="docs-link-name">{link.name}</div>
-            {!status?.running ? (
-              <Alert
-                type="warning"
-                showIcon
-                message="分享服务未启动，链接暂时无法访问"
-                style={{ marginBottom: 12 }}
-              />
-            ) : null}
-            <Input
-              readOnly
-              value={shareUrl(link.shareId)}
-              addonAfter={
-                <button
-                  className="docs-link-copy"
-                  onClick={() => void copyUrl(link.shareId)}
-                >
-                  <CopyOutlined /> 复制
-                </button>
-              }
-            />
-            <div className="docs-link-actions">
-              <Button
-                type="primary"
-                icon={<LinkOutlined />}
-                onClick={() => void openUrl(shareUrl(link.shareId))}
-              >
-                打开链接
-              </Button>
-              <Button
-                icon={<DownloadOutlined />}
-                onClick={() =>
-                  void openUrl(`${shareUrl(link.shareId)}/download?format=md`)
-                }
-              >
-                Markdown
-              </Button>
-              <Button
-                icon={<DownloadOutlined />}
-                onClick={() =>
-                  void openUrl(`${shareUrl(link.shareId)}/download?format=html`)
-                }
-              >
-                HTML
-              </Button>
-              {link.openapi ? (
-                <Button
-                  icon={<DownloadOutlined />}
-                  onClick={() =>
-                    void openUrl(`${shareUrl(link.shareId)}/download?format=openapi`)
-                  }
-                >
-                  OpenAPI
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-      </Modal>
+      <DocShareLinkDialog share={link} onClose={() => setLink(null)} />
 
       <Modal
         title="分享服务"

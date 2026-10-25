@@ -40,12 +40,21 @@ const authAttempts = new Map<string, { count: number; reset: number }>()
 
 function lanAddress(): string {
   try {
-    for (const entries of Object.values(os.networkInterfaces())) {
+    const candidates: Array<{ name: string; address: string }> = []
+    for (const [name, entries] of Object.entries(os.networkInterfaces())) {
       for (const entry of entries ?? []) {
         const family = String(entry.family)
-        if ((family === 'IPv4' || family === '4') && !entry.internal) return entry.address
+        if ((family === 'IPv4' || family === '4') && !entry.internal) {
+          candidates.push({ name, address: entry.address })
+        }
       }
     }
+    // 优先物理网卡（en0/en1…），避免选到 VPN / 虚拟网卡地址。
+    const physical = candidates.find((item) => /^en\d+$/i.test(item.name))
+    if (physical) return physical.address
+    const virtual = /^(utun|tun|tap|awdl|llw|bridge|gif|stf|lo|docker|veth|vmnet)/i
+    const fallback = candidates.find((item) => !virtual.test(item.name))
+    return (fallback ?? candidates[0])?.address ?? '127.0.0.1'
   } catch {
     // fall through
   }
