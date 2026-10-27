@@ -76,20 +76,6 @@ npx electron-builder --mac dmg zip --arm64
 npx electron-builder --win nsis zip --x64
 ```
 
-## 发布到 GitHub Release
-
-构建完成后，使用 GitHub CLI 创建 Release 并上传产物：
-
-```bash
-gh release create v0.1.1 \
-  release/KindraAPI-0.1.1-mac-arm64.dmg \
-  release/KindraAPI-0.1.1-mac-arm64.zip \
-  release/KindraAPI-0.1.1-win-x64.exe \
-  release/KindraAPI-0.1.1-win-x64.zip \
-  --title "KindraAPI v0.1.1" \
-  --notes "首个公开版本"
-```
-
 ## 数据目录
 
 - macOS：`~/Library/Application Support/KindraAPI`
