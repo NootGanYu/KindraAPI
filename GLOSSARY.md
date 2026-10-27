@@ -112,6 +112,56 @@ _Avoid_: 数据源、DB 配置
 把 MySQL 表的列与类型转换为一个数据模型的动作。
 _Avoid_: 反向生成、同步表
 
+## MQTT
+
+**MQTT Module（MQTT 模块）**
+与 API 页面平行的项目级模块，管理 MQTT 连接、订阅、消息与运行记录；它不是 Target，也不参与接口树、环境变量、文档分享与 OpenAPI。
+_Avoid_: MQTT 接口、MQTT Target、MQTT 目标
+
+**Connection Profile（连接配置）**
+一份持久化的 broker 连接参数：地址、端口、传输、协议版本、clientId、凭据、TLS、keepalive、clean session 与遗嘱。
+_Avoid_: 连接、连接信息、MQTT 配置
+
+**Connection Session（连接会话）**
+由某个 Connection Profile 建立的一次运行时连接，具有连接中 / 已连接 / 重连中 / 已关闭状态。
+_Avoid_: 连接、通道
+
+**Connection Attempt（连接尝试）**
+一次“连接 → 出结果 → 断开”的探针记录，含是否成功、CONNACK 码与各阶段耗时；「测试连接」与持久「连接」各产生一条。
+_Avoid_: MQTT Run、发送记录、历史记录
+
+**Round-trip Check（往返验证）**
+Connection Attempt 内可选的一步：向唯一测试主题发布后订阅回收，用于验证发布、订阅与 ACL。
+_Avoid_: 回声测试、发布测试
+
+**Subscription（订阅）**
+Connection Profile 上保存的一组 Topic Filter 与各自 QoS；会话重连后自动重新订阅。
+_Avoid_: 订阅项、主题订阅
+
+**Topic Filter（主题过滤器）**
+MQTT 的主题匹配表达式，可包含 `+` 与 `#` 通配符。
+_Avoid_: 主题、topic 规则
+
+**Message Inbox（消息收件箱）**
+展示当前会话消息的界面与数据视图，支持过滤、暂停、搜索、导出与重发。
+_Avoid_: 消息列表、日志
+
+**Message Record（消息记录）**
+一条已落盘的收 / 发消息，含主题、载荷、QoS、retain 与时间戳。
+_Avoid_: 消息、报文
+
+**Profile Version（配置版本）**
+MQTT 模块内的轻量快照，仅覆盖 Connection Profile；与 Target 的版本机制无关。
+_Avoid_: 版本快照、接口版本
+
+**Will（遗嘱消息）**
+broker 在客户端异常断开时代为发布的消息；含主题、载荷、QoS、retain，MQTT 5 下还含延迟与 User Properties。
+_Avoid_: 遗言、最后消息
+
+**Shared Subscription（共享订阅）**
+多个客户端分摊同一订阅的 MQTT 特性，主题以 `$share/<group>/` 开头；本期只做识别与展示。
+_Avoid_: 集群订阅
+
 ## 两个系统
 
 **Original App（原应用）**
