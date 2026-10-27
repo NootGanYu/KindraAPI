@@ -36,18 +36,32 @@ const appIconPath = app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
 
+// macOS 用内嵌红绿灯；Windows 交给 Window Controls Overlay 绘制原生按钮；
+// 其余平台保持原来的无边框窗口。
+const windowChrome: Electron.BrowserWindowConstructorOptions =
+  process.platform === 'darwin'
+    ? {
+        frame: false,
+        titleBarStyle: 'hiddenInset',
+        trafficLightPosition: { x: 12, y: 14 }
+      }
+    : process.platform === 'win32'
+      ? {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: { color: '#F4EDDF', symbolColor: '#2C2214', height: 44 }
+        }
+      : { frame: false, titleBarStyle: 'hidden' }
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
+    ...windowChrome,
     width: 1180,
     height: 760,
     minWidth: 960,
     minHeight: 640,
     show: false,
-    frame: false,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     backgroundColor: '#FAF5EA',
     icon: appIconPath,
-    trafficLightPosition: { x: 12, y: 14 },
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: true,
