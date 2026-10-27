@@ -307,6 +307,9 @@ interface MqttSessionState {
 新增工具（名称不带前缀，与现有工具一致）：
 
 - `mqtt_list_profiles`（读取）
+- `mqtt_create_profile`（写入）
+- `mqtt_update_profile`（写入）
+- `mqtt_delete_profile`（写入）
 - `mqtt_test_connection`（执行）
 - `mqtt_connect`（执行）
 - `mqtt_subscribe`（执行）
@@ -316,7 +319,7 @@ interface MqttSessionState {
 - `mqtt_list_sessions`（读取）
 - `mqtt_disconnect`（执行）
 
-权限沿用现有模型：连接/测试/订阅/发布/断开要求 `allow_execute`；列表与拉取不受限。一期不提供 Profile 写工具。`mqtt_drain_messages(session_id, cursor, limit)` 返回 `{ messages, nextCursor }`。
+权限沿用现有模型：连接/测试/订阅/发布/断开要求 `allow_execute`；Profile 创建/更新/删除要求 `allow_write`；列表与拉取不受限。`mqtt_drain_messages(session_id, cursor, limit)` 返回 `{ messages, nextCursor }`。
 
 按 ADR-0004，`mqtt_list_profiles` 返回完整配置（含明文凭据）。
 

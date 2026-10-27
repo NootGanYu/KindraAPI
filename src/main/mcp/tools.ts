@@ -28,12 +28,20 @@ import { importDbTables, testDbConnection } from '../db/mysql'
 import * as mqttStore from '../mqtt/store'
 import * as mqttSessions from '../mqtt/sessionManager'
 import type {
+  MqttConnectionProfile,
+  MqttMqtt5Config,
   MqttPayloadView,
+  MqttProtocolVersion,
   MqttPublishInput,
   MqttQos,
+  MqttRetention,
   MqttSubscription,
-  MqttUserProperty
+  MqttTlsConfig,
+  MqttTransport,
+  MqttUserProperty,
+  MqttWill
 } from '@shared/mqtt'
+import { createDefaultMqttProfile } from '@shared/mqtt'
 
 type Args = Record<string, unknown>
 
@@ -100,6 +108,59 @@ function currentEnv(projectId: string, envId?: string): Environment {
     environments[0]
   if (!env) throw new Error('项目还没有环境')
   return env
+}
+
+function mqttProfilePatch(args: Args): Partial<MqttConnectionProfile> {
+  const source =
+    args.profile && typeof args.profile === 'object' && !Array.isArray(args.profile)
+      ? (args.profile as Record<string, unknown>)
+      : args
+  const patch: Partial<MqttConnectionProfile> = {}
+  if (typeof source.name === 'string') patch.name = source.name
+  if (typeof source.group === 'string') patch.group = source.group
+  if (typeof source.host === 'string') patch.host = source.host
+  if (typeof source.ws_path === 'string') patch.ws_path = source.ws_path
+  if (typeof source.client_id === 'string') patch.client_id = source.client_id
+  if (typeof source.username === 'string') patch.username = source.username
+  if (typeof source.password === 'string') patch.password = source.password
+  if (typeof source.transport === 'string') {
+    const transport = source.transport
+    if (transport === 'tcp' || transport === 'tls' || transport === 'ws' || transport === 'wss') {
+      patch.transport = transport as MqttTransport
+    }
+  }
+  for (const key of ['port', 'keepalive', 'connect_timeout_ms'] as const) {
+    const value = source[key]
+    if (value !== undefined && value !== null && !Number.isNaN(Number(value))) {
+      patch[key] = Number(value)
+    }
+  }
+  if (source.protocol_version !== undefined) {
+    const version = Number(source.protocol_version)
+    if (version === 4 || version === 5) {
+      patch.protocol_version = version as MqttProtocolVersion
+    }
+  }
+  if (typeof source.clean_session === 'boolean') patch.clean_session = source.clean_session
+  if (Array.isArray(source.subscriptions)) {
+    patch.subscriptions = (source.subscriptions as unknown[])
+      .map((item) => item as Record<string, unknown>)
+      .filter((item) => item && typeof item.filter === 'string')
+      .map((item) => ({ filter: String(item.filter), qos: mqttQosArg(item.qos) }))
+  }
+  if (source.tls && typeof source.tls === 'object' && !Array.isArray(source.tls)) {
+    patch.tls = source.tls as MqttTlsConfig
+  }
+  if (source.will && typeof source.will === 'object' && !Array.isArray(source.will)) {
+    patch.will = source.will as MqttWill
+  }
+  if (source.mqtt5 && typeof source.mqtt5 === 'object' && !Array.isArray(source.mqtt5)) {
+    patch.mqtt5 = source.mqtt5 as MqttMqtt5Config
+  }
+  if (source.retention && typeof source.retention === 'object' && !Array.isArray(source.retention)) {
+    patch.retention = source.retention as MqttRetention
+  }
+  return patch
 }
 
 function mqttQosArg(value: unknown): MqttQos {
@@ -1954,6 +2015,125 @@ const TOOLS: ToolDefinition[] = [
       }
       mqttSessions.disconnect(projectId, connectionId, 'mcp')
       return { disconnected: true }
+    }
+  },
+  {
+    name: 'mqtt_create_profile',
+    description:
+      '创建 MQTT Connection Profile（需要 allow_write）。可传顶层字段或 profile 对象；缺省字段使用默认值。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        profile: { type: 'object', description: '可选：完整或部分 Connection Profile' },
+        name: { type: 'string' },
+        group: { type: 'string' },
+        host: { type: 'string' },
+        port: { type: 'number' },
+        transport: { type: 'string', enum: ['tcp', 'tls', 'ws', 'wss'] },
+        ws_path: { type: 'string' },
+        protocol_version: { type: 'number', enum: [4, 5] },
+        client_id: { type: 'string' },
+        username: { type: 'string' },
+        password: { type: 'string' },
+        keepalive: { type: 'number' },
+        clean_session: { type: 'boolean' },
+        connect_timeout_ms: { type: 'number' },
+        subscriptions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { filter: { type: 'string' }, qos: { type: 'number', enum: [0, 1, 2] } }
+          }
+        },
+        tls: { type: 'object' },
+        will: { type: 'object' },
+        mqtt5: { type: 'object' },
+        retention: { type: 'object' }
+      },
+      ['project_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const profile = createDefaultMqttProfile(projectId, mqttProfilePatch(args))
+      return { profile: mqttStore.createProfile(projectId, profile) }
+    }
+  },
+  {
+    name: 'mqtt_update_profile',
+    description:
+      '更新 MQTT Connection Profile（需要 allow_write）。只修改传入字段，不可修改 connection_id/project_id。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string', description: 'Connection Profile ID' },
+        profile: { type: 'object', description: '可选：要合并的部分字段' },
+        name: { type: 'string' },
+        group: { type: 'string' },
+        host: { type: 'string' },
+        port: { type: 'number' },
+        transport: { type: 'string', enum: ['tcp', 'tls', 'ws', 'wss'] },
+        ws_path: { type: 'string' },
+        protocol_version: { type: 'number', enum: [4, 5] },
+        client_id: { type: 'string' },
+        username: { type: 'string' },
+        password: { type: 'string' },
+        keepalive: { type: 'number' },
+        clean_session: { type: 'boolean' },
+        connect_timeout_ms: { type: 'number' },
+        subscriptions: { type: 'array' },
+        tls: { type: 'object' },
+        will: { type: 'object' },
+        mqtt5: { type: 'object' },
+        retention: { type: 'object' }
+      },
+      ['project_id', 'connection_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const connectionId = requiredStr(args, 'connection_id')
+      const existing = mqttStore.getProfile(projectId, connectionId)
+      if (!existing) throw new Error('Connection Profile 不存在')
+      const next: MqttConnectionProfile = {
+        ...existing,
+        ...mqttProfilePatch(args),
+        connection_id: existing.connection_id,
+        project_id: existing.project_id,
+        created_at: existing.created_at
+      }
+      return { profile: mqttStore.saveProfile(projectId, next) }
+    }
+  },
+  {
+    name: 'mqtt_delete_profile',
+    description: '删除 MQTT Connection Profile 及其版本与本地消息/Attempt（需要 allow_write）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string' },
+        confirm: S.confirm
+      },
+      ['project_id', 'connection_id']
+    ),
+    handler: (args) => {
+      if (!boolArg(args, 'confirm')) throw new Error('删除操作需要 confirm: true')
+      const projectId = projectIdOf(args)
+      const connectionId = requiredStr(args, 'connection_id')
+      if (!mqttStore.getProfile(projectId, connectionId)) {
+        throw new Error('Connection Profile 不存在')
+      }
+      try {
+        mqttSessions.disconnect(projectId, connectionId)
+      } catch {
+        // 强制结束会话失败不阻塞配置删除。
+      }
+      mqttStore.deleteProfile(projectId, connectionId)
+      return { deleted: true, connection_id: connectionId }
     }
   }
 ]
