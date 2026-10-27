@@ -13,7 +13,8 @@ KindraAPI 是一个本地优先的 API 调试与协作工具：接口调试、�
 - **代码生成**：基于解析后的真实请求生成 curl
 - **流程自动化**：请求、脚本、断言、条件、循环、等待等事件
 - **字典与数据模型**：数据字典、模型可视化、MySQL 表结构导入
-- **MCP**：通过 stdio / TCP 向 AI Agent 暴露项目、接口、执行与字典能力
+- **MQTT**：独立连接配置、连接测试、持久会话、多订阅、消息收件箱、发布面板、MQTT 5 常用属性与三类导出
+- **MCP**：通过 stdio / TCP 向 AI Agent 暴露项目、接口、执行、字典与 MQTT 会话能力
 
 ## 技术栈
 
@@ -96,9 +97,34 @@ gh release create v0.1.1 \
 
 项目数据、发送历史、分享文档与 MCP 配置均保存在该目录下。
 
+## MQTT
+
+左侧导航的「MQTT」是独立于 API 页面的项目级模块（ADR-0003）：它不使用 Target 树、Environment 变量、DocShare、OpenAPI 或 Send Record。
+
+支持范围：
+
+- Connection Profile：TCP/TLS/WS/WSS、MQTT 3.1.1 与 5.0、认证、TLS、Will、MQTT 5 连接属性、保留策略
+- 连接：测试连接（可选往返验证）、持久会话、指数退避重连、自动重订阅、同一配置全局单会话
+- 消息：多订阅、收件箱、JSON/Plain/Hex/Base64 视图、1MB 限制、分片 JSONL 落盘与轮转、搜索、清空、导出
+- 发布：QoS 0/1/2、retain、MQTT 5 User Properties、最近历史、有护栏的定时/循环发布
+- 配置：轻量版本快照（最近 20 个）、克隆、Profile JSON / 消息 JSONL·CSV / Attempt JSONL 导出
+
+边界：一期不包含 payload 脚本变换、压测、CLI、HTTP/SOCKS 代理、MQTT 3.1、Flow 自动化节点与配置导入。
+
+数据归属：
+
+- Connection Profile 与版本位于 `offline-data/<project_id>/mqtt/`，随项目 Git 版本管理。
+- 消息、Connection Attempt 与发布历史位于 `offline-data-local/projects/<project_id>/mqtt/`，**不随项目 Git 版本管理**。
+
+已知限制：消息搜索只作用于当前已加载的消息；Connection Profile 导出包含明文凭据（ADR-0004），导出前会提示风险。
+
+术语见 `GLOSSARY.md` 的 MQTT 分组，决策见 `docs/adr/0003-mqtt-as-independent-module.md` 与 `docs/adr/0004-mqtt-plaintext-credentials-in-exports.md`。
+
 ## MCP
 
 在应用「配置 → MCP」中开启服务后，可让 AI Agent 通过本地 MCP 访问 KindraAPI。仓库根目录提供 `mcp-stdio.cjs` 作为 stdio 桥接器，打包后的应用也会在资源目录中附带该文件。
+
+MQTT 工具：`mqtt_list_profiles`、`mqtt_test_connection`、`mqtt_connect`、`mqtt_subscribe`、`mqtt_unsubscribe`、`mqtt_publish`、`mqtt_drain_messages`、`mqtt_list_sessions`、`mqtt_disconnect`。连接/测试/订阅/发布/断开受 `allow_execute` 控制；消息使用游标拉取；MCP 会话空闲 5 分钟自动回收。
 
 ## 许可
 

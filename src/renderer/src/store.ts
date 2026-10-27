@@ -174,6 +174,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   selectProject: async (projectId) => {
+    const previous = get().project
+    if (previous && previous.project_id !== projectId) {
+      try {
+        await window.api.mqtt.disconnectAll(previous.project_id)
+      } catch {
+        // 会话清理失败不应阻止项目切换。
+      }
+    }
     const projects = get().projects.length
       ? get().projects
       : unwrap(await window.api.projects.list())

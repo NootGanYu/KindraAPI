@@ -25,6 +25,15 @@ import { sendRequest } from '../request/executor'
 import { applyRequestInput, runFlow } from '../flow/engine'
 import { generateSchemaExample } from '../schema/example'
 import { importDbTables, testDbConnection } from '../db/mysql'
+import * as mqttStore from '../mqtt/store'
+import * as mqttSessions from '../mqtt/sessionManager'
+import type {
+  MqttPayloadView,
+  MqttPublishInput,
+  MqttQos,
+  MqttSubscription,
+  MqttUserProperty
+} from '@shared/mqtt'
 
 type Args = Record<string, unknown>
 
@@ -91,6 +100,50 @@ function currentEnv(projectId: string, envId?: string): Environment {
     environments[0]
   if (!env) throw new Error('项目还没有环境')
   return env
+}
+
+function mqttQosArg(value: unknown): MqttQos {
+  const qos = Number(value ?? 0)
+  if (qos !== 0 && qos !== 1 && qos !== 2) throw new Error('QoS 必须是 0、1 或 2')
+  return qos
+}
+
+function mqttSubscriptionsArg(args: Args): MqttSubscription[] {
+  const raw = args.filters
+  if (Array.isArray(raw)) {
+    return raw.map((item) => {
+      if (typeof item === 'string') return { filter: item, qos: 0 }
+      const value = item as Record<string, unknown>
+      const filter = String(value.filter ?? value.topic ?? '')
+      if (!filter) throw new Error('Topic Filter 不能为空')
+      return { filter, qos: mqttQosArg(value.qos) }
+    })
+  }
+  const single = str(args, 'filter') || str(args, 'topic')
+  if (!single) throw new Error('缺少参数 filters')
+  return [{ filter: single, qos: mqttQosArg(args.qos) }]
+}
+
+function mqttPayloadArg(args: Args): string {
+  if (typeof args.payload === 'string') return args.payload
+  if (args.payload === undefined || args.payload === null) return ''
+  return String(args.payload)
+}
+
+function mqttPayloadViewArg(args: Args): MqttPayloadView {
+  const view = str(args, 'payload_view') || 'plain'
+  if (view !== 'json' && view !== 'plain' && view !== 'hex' && view !== 'base64') {
+    throw new Error('payload_view 必须是 json、plain、hex 或 base64')
+  }
+  return view
+}
+
+function mqttUserPropertiesArg(args: Args): MqttUserProperty[] | undefined {
+  if (!Array.isArray(args.user_properties)) return undefined
+  return (args.user_properties as unknown[])
+    .map((item) => item as Record<string, unknown>)
+    .filter((item) => item && typeof item.key === 'string' && item.key)
+    .map((item) => ({ key: String(item.key), value: String(item.value ?? '') }))
 }
 
 function exampleFromSchema(value: unknown): unknown {
@@ -1678,6 +1731,229 @@ const TOOLS: ToolDefinition[] = [
         target_parent_id: str(args, 'target_parent_id') || '0',
         conflict: conflict || 'update'
       })
+    }
+  },
+  {
+    name: 'mqtt_list_profiles',
+    description:
+      '列出项目内的 MQTT Connection Profile 与当前会话。返回值包含明文凭据（ADR-0004），请谨慎处理。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project }, ['project_id']),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const profiles = mqttStore
+        .listProfiles(projectId)
+        .map((summary) => mqttStore.getProfile(projectId, summary.connection_id))
+        .filter((profile) => Boolean(profile))
+      return { profiles, sessions: mqttSessions.listSessions(projectId) }
+    }
+  },
+  {
+    name: 'mqtt_test_connection',
+    description: '使用已保存的 Connection Profile 测试连接，可选往返验证；不会留下持久会话。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string', description: 'Connection Profile ID' },
+        round_trip: { type: 'boolean', description: '是否执行往返验证' }
+      },
+      ['project_id', 'connection_id']
+    ),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const profile = mqttStore.getProfile(projectId, requiredStr(args, 'connection_id'))
+      if (!profile) throw new Error('Connection Profile 不存在')
+      return mqttSessions.testConnection(projectId, profile, {
+        round_trip: boolArg(args, 'round_trip')
+      })
+    }
+  },
+  {
+    name: 'mqtt_connect',
+    description: '为指定 Connection Profile 建立 MCP 持有的持久会话，成功后自动订阅已保存的 Topic Filter。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string', description: 'Connection Profile ID' }
+      },
+      ['project_id', 'connection_id']
+    ),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const connectionId = requiredStr(args, 'connection_id')
+      const state = await mqttSessions.connectSession(projectId, connectionId, 'mcp')
+      mqttSessions.touchSession(connectionId)
+      return state
+    }
+  },
+  {
+    name: 'mqtt_subscribe',
+    description: '在已连接的 MQTT 会话上订阅一个或多个 Topic Filter，返回 SUBACK 结果。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string' },
+        filters: {
+          type: 'array',
+          description: 'Topic Filter 列表；元素可为字符串或 { filter, qos }',
+          items: { type: ['string', 'object'] }
+        },
+        filter: { type: 'string', description: '单个 Topic Filter（与 filters 二选一）' },
+        qos: { type: 'number', enum: [0, 1, 2] }
+      },
+      ['project_id', 'connection_id']
+    ),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const connectionId = requiredStr(args, 'connection_id')
+      const results = await mqttSessions.subscribe(
+        projectId,
+        connectionId,
+        mqttSubscriptionsArg(args)
+      )
+      mqttSessions.touchSession(connectionId)
+      return { results }
+    }
+  },
+  {
+    name: 'mqtt_unsubscribe',
+    description: '取消一个或多个 Topic Filter 的订阅。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string' },
+        filters: { type: 'array', items: { type: 'string' } },
+        filter: { type: 'string' }
+      },
+      ['project_id', 'connection_id']
+    ),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const connectionId = requiredStr(args, 'connection_id')
+      const filters = Array.isArray(args.filters)
+        ? (args.filters as unknown[]).map((item) => String(item)).filter(Boolean)
+        : str(args, 'filter')
+          ? [str(args, 'filter')]
+          : []
+      if (!filters.length) throw new Error('缺少参数 filters')
+      await mqttSessions.unsubscribe(projectId, connectionId, filters)
+      mqttSessions.touchSession(connectionId)
+      return { unsubscribed: filters }
+    }
+  },
+  {
+    name: 'mqtt_publish',
+    description: '向 MQTT 会话发布消息，支持 QoS、retain 与 MQTT 5 User Properties。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        connection_id: { type: 'string' },
+        topic: { type: 'string' },
+        payload: { type: 'string' },
+        payload_view: { type: 'string', enum: ['json', 'plain', 'hex', 'base64'] },
+        qos: { type: 'number', enum: [0, 1, 2] },
+        retain: { type: 'boolean' },
+        user_properties: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { key: { type: 'string' }, value: { type: 'string' } }
+          }
+        }
+      },
+      ['project_id', 'connection_id', 'topic']
+    ),
+    handler: async (args) => {
+      const projectId = projectIdOf(args)
+      const connectionId = requiredStr(args, 'connection_id')
+      const input: MqttPublishInput = {
+        topic: requiredStr(args, 'topic'),
+        payload: mqttPayloadArg(args),
+        payload_view: mqttPayloadViewArg(args),
+        qos: mqttQosArg(args.qos),
+        retain: boolArg(args, 'retain'),
+        user_properties: mqttUserPropertiesArg(args)
+      }
+      const result = await mqttSessions.publish(projectId, connectionId, input)
+      mqttSessions.touchSession(connectionId)
+      if (!result.ok) throw new Error(result.error || '发布失败')
+      return result
+    }
+  },
+  {
+    name: 'mqtt_drain_messages',
+    description:
+      '用游标拉取 MQTT 会话收到/发出的消息，不阻塞等待。无新消息时返回空数组与相同 cursor。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        session_id: { type: 'string', description: 'mqtt_connect 返回的 session_id' },
+        cursor: { type: 'number', description: '上次返回的 nextCursor，默认 0' },
+        limit: { type: 'number', description: '本次最多返回条数，默认 100' }
+      },
+      ['project_id', 'session_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const cursor = Number.isFinite(Number(args.cursor))
+        ? Math.max(0, Math.floor(Number(args.cursor)))
+        : 0
+      const limit = Number.isFinite(Number(args.limit))
+        ? Math.floor(Number(args.limit))
+        : 100
+      return mqttSessions.drainMessages(
+        projectId,
+        requiredStr(args, 'session_id'),
+        cursor,
+        limit
+      )
+    }
+  },
+  {
+    name: 'mqtt_list_sessions',
+    description: '列出项目内当前 MQTT 会话及连接状态。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project }, ['project_id']),
+    handler: (args) => ({ sessions: mqttSessions.listSessions(projectIdOf(args)) })
+  },
+  {
+    name: 'mqtt_disconnect',
+    description: '断开指定 MQTT 会话。可用 session_id 或 connection_id 指定。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        session_id: { type: 'string' },
+        connection_id: { type: 'string' }
+      },
+      ['project_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      let connectionId = str(args, 'connection_id')
+      if (!connectionId) {
+        const sessionId = requiredStr(args, 'session_id')
+        const found = mqttSessions.findSessionBySessionId(sessionId)
+        if (!found) throw new Error('会话不存在或已关闭')
+        connectionId = found.session.connectionId
+      }
+      mqttSessions.disconnect(projectId, connectionId, 'mcp')
+      return { disconnected: true }
     }
   }
 ]

@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   ApiOutlined,
   BranchesOutlined,
+  CloudServerOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   FileTextOutlined,
@@ -14,7 +15,8 @@ const items = [
   { to: '/history', icon: <HistoryOutlined />, label: '最近' },
   { to: '/apis', icon: <ApiOutlined />, label: 'APIs' },
   { to: '/docs', icon: <FileTextOutlined />, label: '文档' },
-  { to: '/schemas', icon: <DatabaseOutlined />, label: '字典' }
+  { to: '/schemas', icon: <DatabaseOutlined />, label: '字典' },
+  { to: '/mqtt', icon: <CloudServerOutlined />, label: 'MQTT' }
 ]
 
 export default function LeftNav(): JSX.Element {

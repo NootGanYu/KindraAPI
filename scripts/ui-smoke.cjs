@@ -4,8 +4,10 @@
  * isolated temporary userData directory.
  */
 const fs = require('node:fs')
+const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
+const createAedes = require('aedes')
 const { _electron: electron } = require('playwright-core')
 
 const ARTIFACTS = path.join(__dirname, '.ui-artifacts')
@@ -13,6 +15,7 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindraapi-ui-'))
 const logs = []
 let app = null
 let page = null
+let mqttBroker = null
 
 function log(message) {
   const line = `${new Date().toISOString()} ${message}`
@@ -34,6 +37,36 @@ function visibleModal(text) {
 
 function btn(scope, name) {
   return scope.getByRole('button', { name: new RegExp([...name].join('\\s*')) })
+}
+
+function btnExact(name) {
+  // antd 图标会为按钮贡献 aria-label，例如 "save 保存"；用末尾匹配避免误伤
+  // "测试连接" 与 "连接"。
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return page.getByRole('button', { name: new RegExp(`(^|\\s)${escaped}$`) })
+}
+
+function startMqttBroker() {
+  const broker = createAedes()
+  broker.authenticate = (_client, username, password, done) => {
+    if (username === 'tester' && password?.toString() === 'secret') {
+      done(null, true)
+      return
+    }
+    done(Object.assign(new Error('bad credentials'), { returnCode: 4 }), false)
+  }
+  const server = net.createServer(broker.handle)
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        port: server.address().port,
+        close: () =>
+          new Promise((done) => {
+            broker.close(() => server.close(() => done()))
+          })
+      })
+    })
+  })
 }
 
 async function clickText(text, options = {}) {
@@ -568,6 +601,136 @@ async function main() {
     }
   })
 
+  await step('MQTT 新建配置、测试连接与持久连接', async () => {
+    mqttBroker = await startMqttBroker()
+    await page.locator('.rail-btn').filter({ hasText: 'MQTT' }).click()
+    await waitText('新建一个 MQTT 连接开始调试')
+    await page
+      .locator('.mqtt-side-empty')
+      .getByRole('button', { name: /(^|\s)新建连接$/ })
+      .click()
+    await page.waitForTimeout(400)
+
+    const field = (label) =>
+      page.locator('label.mqtt-field').filter({ hasText: label }).first()
+    await field('名称').locator('input').fill('UI MQTT')
+    await field('主机').locator('input').fill('127.0.0.1')
+    await field('端口').locator('input').fill(String(mqttBroker.port))
+    await field('用户名').locator('input').fill('tester')
+    await field('密码').locator('input').fill('secret')
+
+    // 默认 MQTT 5.0；aedes 仅支持 3.1.1，切到 v4。
+    await field('协议版本').locator('.ant-select').click()
+    await page
+      .locator('.ant-select-dropdown:visible')
+      .getByText('MQTT 3.1.1 (v4)', { exact: true })
+      .click()
+
+    if (!(await page.getByRole('button', { name: /添加订阅/ }).count())) {
+      await page
+        .locator('.mqtt-collapse-label')
+        .filter({ hasText: '订阅' })
+        .first()
+        .click()
+    }
+    await page.getByRole('button', { name: /添加订阅/ }).click()
+    await page.locator('.mqtt-sub-row input.ant-input').first().fill('ui/topic')
+
+    await btnExact('保存').click()
+    await waitText('已保存')
+
+    await page.getByText('往返验证', { exact: true }).click()
+    await btnExact('测试连接').click()
+    await page.locator('.mqtt-test-result.ok').waitFor({ timeout: 15000 })
+    await page
+      .locator('.mqtt-test-result.ok')
+      .getByText('成功', { exact: true })
+      .first()
+      .waitFor({ timeout: 5000 })
+
+    await btnExact('连接').click()
+    await page
+      .locator('.mqtt-status')
+      .filter({ hasText: '已连接' })
+      .waitFor({ timeout: 15000 })
+  })
+
+  await step('MQTT 发布、收件箱、视图切换与重发预填', async () => {
+    await page.locator('.mqtt-tabs .ant-tabs-tab').filter({ hasText: '发布' }).click()
+    await page
+      .locator('.mqtt-publish label.mqtt-field')
+      .filter({ hasText: 'Topic' })
+      .first()
+      .locator('input')
+      .fill('ui/topic')
+    await page
+      .locator('.mqtt-publish label.mqtt-field')
+      .filter({ hasText: '视图' })
+      .first()
+      .locator('.ant-select')
+      .click()
+    await page
+      .locator('.ant-select-dropdown:visible')
+      .getByText('Plain', { exact: true })
+      .click()
+    await page.locator('.mqtt-payload-input').fill('hello ui')
+    await btnExact('发送').click()
+    await waitText('发布成功')
+
+    // 周期发布：启动后手动停止，覆盖护栏与停止路径。
+    await page.locator('.mqtt-loop-row input.ant-input-number-input').nth(0).fill('300')
+    await page.locator('.mqtt-loop-row input.ant-input-number-input').nth(1).fill('20')
+    await btnExact('启动循环').click()
+    await confirmModal()
+      .getByRole('button', { name: /启\s*动/ })
+      .click()
+    await waitText('循环发布已启动')
+    await page.locator('.mqtt-loop-status').waitFor({ timeout: 8000 })
+    await page
+      .locator('.mqtt-loop-row')
+      .getByRole('button', { name: /(^|\s)停止$/ })
+      .click()
+    await waitText('已停止循环发布')
+
+    await page.locator('.mqtt-tabs .ant-tabs-tab').filter({ hasText: '消息' }).click()
+    const row = page.locator('.mqtt-msg-row').filter({ hasText: 'hello ui' }).first()
+    await row.waitFor({ timeout: 10000 })
+
+    await row.click()
+    await waitText('消息详情')
+    await page.locator('.mqtt-payload').filter({ hasText: 'hello ui' }).waitFor()
+    await visibleModal('消息详情')
+      .getByRole('button', { name: /重\s*发/ })
+      .click()
+    await waitText('已填入发布面板')
+    await page
+      .locator('.mqtt-publish label.mqtt-field')
+      .filter({ hasText: 'Topic' })
+      .first()
+      .locator('input')
+      .waitFor()
+
+    // 回到消息页，切换 Hex 视图并搜索。
+    await page.locator('.mqtt-tabs .ant-tabs-tab').filter({ hasText: '消息' }).click()
+    await page.locator('.mqtt-panel-toolbar .ant-select').first().click()
+    await page
+      .locator('.ant-select-dropdown:visible')
+      .getByText('Hex', { exact: true })
+      .click()
+    await waitText('68656c6c6f207569')
+    await page.getByPlaceholder('搜索 topic / 内容').fill('not-found-payload')
+    await page.waitForTimeout(300)
+    if (await page.locator('.mqtt-msg-row').count()) {
+      throw new Error('搜索未过滤消息')
+    }
+    await page.getByPlaceholder('搜索 topic / 内容').fill('')
+    await page.waitForTimeout(300)
+    await page.locator('.mqtt-msg-row').first().waitFor()
+
+    await page.getByText('暂停自动滚动', { exact: true }).click()
+    await page.locator('.mqtt-panel-toolbar').getByRole('button', { name: /导出/ }).first().hover()
+  })
+
   await page.screenshot({ path: path.join(ARTIFACTS, 'final.png'), fullPage: true })
   fs.writeFileSync(path.join(ARTIFACTS, 'ui-smoke.log'), logs.join('\n'))
   process.stdout.write(
@@ -598,6 +761,7 @@ main()
     process.exitCode = 1
   })
   .finally(async () => {
+    if (mqttBroker) await mqttBroker.close().catch(() => undefined)
     if (app) await app.close().catch(() => undefined)
     fs.rmSync(userData, { recursive: true, force: true })
   })

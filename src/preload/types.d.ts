@@ -51,6 +51,29 @@ import type {
   TargetVersionSummary,
   DbTable
 } from '@shared/types'
+import type {
+  MqttAttempt,
+  MqttConnectionProfile,
+  MqttEvent,
+  MqttExportResult,
+  MqttLoopOptions,
+  MqttLoopState,
+  MqttMessageExportOptions,
+  MqttMessageRecord,
+  MqttMessageSummary,
+  MqttProfileExportOptions,
+  MqttProfileSummary,
+  MqttProfileVersion,
+  MqttProfileVersionSummary,
+  MqttPublishHistoryEntry,
+  MqttPublishInput,
+  MqttPublishResult,
+  MqttSessionState,
+  MqttSessionSubscription,
+  MqttSubscribeResult,
+  MqttSubscription,
+  MqttTestOptions
+} from '@shared/mqtt'
 
 export interface ApiBridge {
   paths(): Promise<Result<AppPaths>>
@@ -262,6 +285,112 @@ export interface ApiBridge {
     pull(projectId: string, options: GitPullOptions): Promise<Result<GitOperationResult>>
     push(projectId: string, options: GitPushOptions): Promise<Result<GitOperationResult>>
     terminal(projectId: string): Promise<Result<{ opened: boolean; output: string }>>
+  }
+
+  mqtt: {
+    profiles: {
+      list(projectId: string): Promise<Result<MqttProfileSummary[]>>
+      get(projectId: string, connectionId: string): Promise<Result<MqttConnectionProfile | null>>
+      create(
+        projectId: string,
+        partial?: Partial<MqttConnectionProfile>
+      ): Promise<Result<MqttConnectionProfile>>
+      save(projectId: string, profile: MqttConnectionProfile): Promise<Result<MqttConnectionProfile>>
+      remove(projectId: string, connectionId: string): Promise<Result<boolean>>
+      clone(projectId: string, connectionId: string): Promise<Result<MqttConnectionProfile>>
+      versions: {
+        list(
+          projectId: string,
+          connectionId: string
+        ): Promise<Result<MqttProfileVersionSummary[]>>
+        get(
+          projectId: string,
+          connectionId: string,
+          versionId: string
+        ): Promise<Result<MqttProfileVersion | null>>
+        restore(
+          projectId: string,
+          connectionId: string,
+          versionId: string
+        ): Promise<Result<MqttConnectionProfile>>
+      }
+      export(
+        projectId: string,
+        options?: MqttProfileExportOptions
+      ): Promise<Result<MqttExportResult>>
+    }
+    test(
+      projectId: string,
+      profile: MqttConnectionProfile,
+      options?: MqttTestOptions
+    ): Promise<Result<MqttAttempt>>
+    connect(projectId: string, connectionId: string): Promise<Result<MqttSessionState>>
+    disconnect(projectId: string, connectionId: string): Promise<Result<boolean>>
+    disconnectAll(projectId: string): Promise<Result<boolean>>
+    sessions: {
+      list(projectId?: string): Promise<Result<MqttSessionState[]>>
+    }
+    onEvent(callback: (event: MqttEvent) => void): () => void
+    replay(connectionId: string, afterSeq: number): Promise<Result<MqttEvent[]>>
+    subscribe(
+      projectId: string,
+      connectionId: string,
+      subscriptions: MqttSubscription[]
+    ): Promise<Result<MqttSubscribeResult[]>>
+    unsubscribe(
+      projectId: string,
+      connectionId: string,
+      filters: string[]
+    ): Promise<Result<boolean>>
+    subscriptions: {
+      list(projectId: string, connectionId: string): Promise<Result<MqttSessionSubscription[]>>
+    }
+    messages: {
+      list(
+        projectId: string,
+        connectionId: string,
+        options?: { limit?: number; topic?: string; search?: string; afterSeq?: number }
+      ): Promise<Result<MqttMessageSummary[]>>
+      get(
+        projectId: string,
+        connectionId: string,
+        seq: number
+      ): Promise<Result<MqttMessageRecord | null>>
+      stats(
+        projectId: string,
+        connectionId: string
+      ): Promise<Result<{ count: number; bytes: number; shards: number }>>
+      clear(projectId: string, connectionId?: string): Promise<Result<boolean>>
+      export(
+        projectId: string,
+        options: MqttMessageExportOptions
+      ): Promise<Result<MqttExportResult>>
+    }
+    publish: {
+      send(
+        projectId: string,
+        connectionId: string,
+        input: MqttPublishInput
+      ): Promise<Result<MqttPublishResult>>
+      history(projectId: string): Promise<Result<MqttPublishHistoryEntry[]>>
+      startLoop(
+        projectId: string,
+        connectionId: string,
+        input: MqttPublishInput,
+        options: MqttLoopOptions
+      ): Promise<Result<MqttLoopState>>
+      stopLoop(projectId: string, connectionId: string): Promise<Result<MqttLoopState>>
+      loopState(projectId: string, connectionId: string): Promise<Result<MqttLoopState>>
+    }
+    attempts: {
+      list(
+        projectId: string,
+        connectionId?: string,
+        limit?: number
+      ): Promise<Result<MqttAttempt[]>>
+      clear(projectId: string, connectionId?: string): Promise<Result<boolean>>
+      export(projectId: string, connectionId?: string): Promise<Result<MqttExportResult>>
+    }
   }
 }
 

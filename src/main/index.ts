@@ -7,6 +7,7 @@ import { registerIpc } from './ipc'
 import { applyDebugSwitch, ensureDefaultProject } from './storage/store'
 import { shutdownMcp, startMcpServer } from './mcp/server'
 import { shutdownDocs, startDocServer } from './docs/server'
+import { shutdownMqtt } from './mqtt/sessionManager'
 
 const appData = app.getPath('appData')
 const legacyUserDataDirs = ['JinLoomAPI', 'openPost', 'api-workbench'].map((name) =>
@@ -132,5 +133,6 @@ if (!gotLock) {
   app.on('before-quit', () => {
     void shutdownMcp()
     void shutdownDocs()
+    shutdownMqtt()
   })
 }

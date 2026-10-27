@@ -3,6 +3,19 @@ import { contextBridge, ipcRenderer } from 'electron'
 const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>
 
+const subscribe = (
+  channel: string,
+  callback: (payload: unknown) => void
+): (() => void) => {
+  const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+    callback(payload)
+  }
+  ipcRenderer.on(channel, listener)
+  return () => {
+    ipcRenderer.removeListener(channel, listener)
+  }
+}
+
 const api = {
   paths: () => invoke('app:paths'),
   app: {
@@ -196,6 +209,88 @@ const api = {
     pull: (projectId: string, options: unknown) => invoke('git:pull', projectId, options),
     push: (projectId: string, options: unknown) => invoke('git:push', projectId, options),
     terminal: (projectId: string) => invoke('git:terminal', projectId)
+  },
+
+  mqtt: {
+    profiles: {
+      list: (projectId: string) => invoke('mqtt:profiles:list', projectId),
+      get: (projectId: string, connectionId: string) =>
+        invoke('mqtt:profiles:get', projectId, connectionId),
+      create: (projectId: string, partial?: unknown) =>
+        invoke('mqtt:profiles:create', projectId, partial),
+      save: (projectId: string, profile: unknown) =>
+        invoke('mqtt:profiles:save', projectId, profile),
+      remove: (projectId: string, connectionId: string) =>
+        invoke('mqtt:profiles:delete', projectId, connectionId),
+      clone: (projectId: string, connectionId: string) =>
+        invoke('mqtt:profiles:clone', projectId, connectionId),
+      versions: {
+        list: (projectId: string, connectionId: string) =>
+          invoke('mqtt:profiles:versions:list', projectId, connectionId),
+        get: (projectId: string, connectionId: string, versionId: string) =>
+          invoke('mqtt:profiles:versions:get', projectId, connectionId, versionId),
+        restore: (projectId: string, connectionId: string, versionId: string) =>
+          invoke('mqtt:profiles:versions:restore', projectId, connectionId, versionId)
+      },
+      export: (projectId: string, options?: unknown) =>
+        invoke('mqtt:profiles:export', projectId, options)
+    },
+    test: (projectId: string, profile: unknown, options?: unknown) =>
+      invoke('mqtt:test', projectId, profile, options),
+    connect: (projectId: string, connectionId: string) =>
+      invoke('mqtt:connect', projectId, connectionId, 'ui'),
+    disconnect: (projectId: string, connectionId: string) =>
+      invoke('mqtt:disconnect', projectId, connectionId, 'ui'),
+    disconnectAll: (projectId: string) => invoke('mqtt:disconnectAll', projectId),
+    sessions: {
+      list: (projectId?: string) => invoke('mqtt:sessions:list', projectId)
+    },
+    onEvent: (callback: (event: unknown) => void) => subscribe('mqtt:event', callback),
+    replay: (connectionId: string, afterSeq: number) =>
+      invoke('mqtt:replay', connectionId, afterSeq),
+    subscribe: (projectId: string, connectionId: string, subscriptions: unknown) =>
+      invoke('mqtt:subscribe', projectId, connectionId, subscriptions),
+    unsubscribe: (projectId: string, connectionId: string, filters: string[]) =>
+      invoke('mqtt:unsubscribe', projectId, connectionId, filters),
+    subscriptions: {
+      list: (projectId: string, connectionId: string) =>
+        invoke('mqtt:subscriptions:list', projectId, connectionId)
+    },
+    messages: {
+      list: (projectId: string, connectionId: string, options?: unknown) =>
+        invoke('mqtt:messages:list', projectId, connectionId, options),
+      get: (projectId: string, connectionId: string, seq: number) =>
+        invoke('mqtt:messages:get', projectId, connectionId, seq),
+      stats: (projectId: string, connectionId: string) =>
+        invoke('mqtt:messages:stats', projectId, connectionId),
+      clear: (projectId: string, connectionId?: string) =>
+        invoke('mqtt:messages:clear', projectId, connectionId),
+      export: (projectId: string, options: unknown) =>
+        invoke('mqtt:messages:export', projectId, options)
+    },
+    publish: {
+      send: (projectId: string, connectionId: string, input: unknown) =>
+        invoke('mqtt:publish', projectId, connectionId, input),
+      history: (projectId: string) => invoke('mqtt:publish:history', projectId),
+      startLoop: (
+        projectId: string,
+        connectionId: string,
+        input: unknown,
+        options: unknown
+      ) => invoke('mqtt:publish:startLoop', projectId, connectionId, input, options),
+      stopLoop: (projectId: string, connectionId: string) =>
+        invoke('mqtt:publish:stopLoop', projectId, connectionId),
+      loopState: (projectId: string, connectionId: string) =>
+        invoke('mqtt:publish:loopState', projectId, connectionId)
+    },
+    attempts: {
+      list: (projectId: string, connectionId?: string, limit?: number) =>
+        invoke('mqtt:attempts:list', projectId, connectionId, limit),
+      clear: (projectId: string, connectionId?: string) =>
+        invoke('mqtt:attempts:clear', projectId, connectionId),
+      export: (projectId: string, connectionId?: string) =>
+        invoke('mqtt:attempts:export', projectId, connectionId)
+    }
   }
 }
 

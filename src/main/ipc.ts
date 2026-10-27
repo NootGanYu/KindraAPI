@@ -1,4 +1,4 @@
-import { app, clipboard, ipcMain, shell } from 'electron'
+import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import type {
@@ -46,6 +46,45 @@ import {
   getDocServiceStatus,
   restartDocServer
 } from './docs/server'
+import * as mqttStore from './mqtt/store'
+import * as mqtt from './mqtt/sessionManager'
+import {
+  buildAttemptExport,
+  buildMessageExport,
+  buildProfileExport,
+  resultForWrite,
+  type ExportPayload
+} from './mqtt/export'
+import type {
+  MqttConnectionProfile,
+  MqttLoopOptions,
+  MqttMessageExportOptions,
+  MqttProfileExportOptions,
+  MqttPublishInput,
+  MqttSessionOwner,
+  MqttSubscription,
+  MqttTestOptions
+} from '@shared/mqtt'
+import { createDefaultMqttProfile } from '@shared/mqtt'
+
+async function saveExport(
+  defaultName: string,
+  payload: ExportPayload,
+  filters: Electron.FileFilter[]
+): Promise<import('@shared/mqtt').MqttExportResult> {
+  const picked = await dialog.showSaveDialog({
+    defaultPath: defaultName,
+    filters
+  })
+  if (picked.canceled || !picked.filePath) return { canceled: true }
+  try {
+    return resultForWrite(picked.filePath, payload)
+  } catch (error) {
+    throw new Error(
+      `写入文件失败：${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
 
 function handle<T>(channel: string, fn: (...args: any[]) => T | Promise<T>): void {
   ipcMain.handle(channel, async (_event, ...args): Promise<Result<T>> => {
@@ -360,4 +399,175 @@ export function registerIpc(): void {
     git.pushRepo(projectDirOf(projectId), options)
   )
   handle('git:terminal', (projectId: string) => git.openInTerminal(projectDirOf(projectId)))
+
+  // MQTT · 独立模块（ADR-0003）
+  handle('mqtt:profiles:list', (projectId: string) => mqttStore.listProfiles(projectId))
+  handle('mqtt:profiles:get', (projectId: string, connectionId: string) =>
+    mqttStore.getProfile(projectId, connectionId)
+  )
+  handle(
+    'mqtt:profiles:create',
+    (projectId: string, partial?: Partial<MqttConnectionProfile>) =>
+      mqttStore.createProfile(
+        projectId,
+        createDefaultMqttProfile(projectId, partial ?? {})
+      )
+  )
+  handle('mqtt:profiles:save', (projectId: string, profile: MqttConnectionProfile) =>
+    mqttStore.saveProfile(projectId, profile)
+  )
+  handle('mqtt:profiles:delete', (projectId: string, connectionId: string) => {
+    // 删除配置时强制结束该 Profile 的会话（包括 MCP 会话），避免留下幽灵连接。
+    try {
+      mqtt.disconnect(projectId, connectionId)
+    } catch {
+      // 会话不存在或项目不匹配时继续删除配置。
+    }
+    mqttStore.deleteProfile(projectId, connectionId)
+    return true
+  })
+  handle('mqtt:profiles:clone', (projectId: string, connectionId: string) =>
+    mqttStore.cloneProfile(projectId, connectionId)
+  )
+  handle('mqtt:profiles:versions:list', (projectId: string, connectionId: string) =>
+    mqttStore.listProfileVersions(projectId, connectionId)
+  )
+  handle(
+    'mqtt:profiles:versions:get',
+    (projectId: string, connectionId: string, versionId: string) =>
+      mqttStore.getProfileVersion(projectId, connectionId, versionId)
+  )
+  handle(
+    'mqtt:profiles:versions:restore',
+    (projectId: string, connectionId: string, versionId: string) =>
+      mqttStore.restoreProfileVersion(projectId, connectionId, versionId)
+  )
+  handle(
+    'mqtt:profiles:export',
+    (projectId: string, options?: MqttProfileExportOptions) => {
+      const payload = buildProfileExport(projectId, options ?? {})
+      return saveExport(payload.defaultName, payload, [
+        { name: 'JSON', extensions: ['json'] }
+      ])
+    }
+  )
+
+  handle(
+    'mqtt:test',
+    (projectId: string, profile: MqttConnectionProfile, options?: MqttTestOptions) =>
+      mqtt.testConnection(projectId, profile, options ?? {})
+  )
+
+  handle(
+    'mqtt:connect',
+    (projectId: string, connectionId: string, owner?: MqttSessionOwner) =>
+      mqtt.startSession(projectId, connectionId, owner ?? 'ui').state
+  )
+  handle(
+    'mqtt:disconnect',
+    (projectId: string, connectionId: string, owner?: MqttSessionOwner) => {
+      mqtt.disconnect(projectId, connectionId, owner)
+      return true
+    }
+  )
+  handle('mqtt:disconnectAll', (projectId: string) => {
+    mqtt.disconnectAll(projectId)
+    return true
+  })
+  handle('mqtt:sessions:list', (projectId?: string) => mqtt.listSessions(projectId))
+  handle('mqtt:replay', (connectionId: string, afterSeq: number) =>
+    mqtt.replay(connectionId, afterSeq)
+  )
+
+  handle(
+    'mqtt:subscribe',
+    (projectId: string, connectionId: string, subscriptions: MqttSubscription[]) =>
+      mqtt.subscribe(projectId, connectionId, subscriptions)
+  )
+  handle(
+    'mqtt:unsubscribe',
+    (projectId: string, connectionId: string, filters: string[]) =>
+      mqtt.unsubscribe(projectId, connectionId, filters)
+  )
+  handle('mqtt:subscriptions:list', (projectId: string, connectionId: string) => {
+    const live = mqtt
+      .listSessions(projectId)
+      .find((session) => session.connection_id === connectionId)
+    if (live) return live.subscriptions
+    const profile = mqttStore.getProfile(projectId, connectionId)
+    return (profile?.subscriptions ?? []).map((sub) => ({
+      ...sub,
+      state: 'pending' as const
+    }))
+  })
+
+  handle(
+    'mqtt:messages:list',
+    (
+      projectId: string,
+      connectionId: string,
+      options?: import('./mqtt/store').ListMessagesOptions
+    ) => mqttStore.listMessages(projectId, connectionId, options ?? {})
+  )
+  handle('mqtt:messages:get', (projectId: string, connectionId: string, seq: number) =>
+    mqttStore.getMessage(projectId, connectionId, seq)
+  )
+  handle('mqtt:messages:stats', (projectId: string, connectionId: string) =>
+    mqttStore.messageStats(projectId, connectionId)
+  )
+  handle('mqtt:messages:clear', (projectId: string, connectionId?: string) => {
+    mqttStore.clearMessages(projectId, connectionId)
+    return true
+  })
+  handle(
+    'mqtt:messages:export',
+    (projectId: string, options: MqttMessageExportOptions) => {
+      const payload = buildMessageExport(projectId, options)
+      return saveExport(payload.defaultName, payload, [
+        options.format === 'csv'
+          ? { name: 'CSV', extensions: ['csv'] }
+          : { name: 'JSONL', extensions: ['jsonl'] }
+      ])
+    }
+  )
+
+  handle(
+    'mqtt:publish',
+    (projectId: string, connectionId: string, input: MqttPublishInput) =>
+      mqtt.publish(projectId, connectionId, input)
+  )
+  handle('mqtt:publish:history', (projectId: string) =>
+    mqttStore.listPublishHistory(projectId)
+  )
+  handle(
+    'mqtt:publish:startLoop',
+    (
+      projectId: string,
+      connectionId: string,
+      input: MqttPublishInput,
+      options: MqttLoopOptions
+    ) => mqtt.startLoop(projectId, connectionId, input, options)
+  )
+  handle('mqtt:publish:stopLoop', (projectId: string, connectionId: string) =>
+    mqtt.stopLoop(projectId, connectionId)
+  )
+  handle('mqtt:publish:loopState', (projectId: string, connectionId: string) =>
+    mqtt.getLoopState(projectId, connectionId)
+  )
+
+  handle(
+    'mqtt:attempts:list',
+    (projectId: string, connectionId?: string, limit?: number) =>
+      mqttStore.listAttempts(projectId, connectionId, limit)
+  )
+  handle('mqtt:attempts:clear', (projectId: string, connectionId?: string) => {
+    mqttStore.clearAttempts(projectId, connectionId)
+    return true
+  })
+  handle('mqtt:attempts:export', (projectId: string, connectionId?: string) => {
+    const payload = buildAttemptExport(projectId, connectionId)
+    return saveExport(payload.defaultName, payload, [
+      { name: 'JSONL', extensions: ['jsonl'] }
+    ])
+  })
 }

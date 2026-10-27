@@ -16,6 +16,7 @@ import {
   copyModel,
   createDocShare,
   createModelInProject,
+  createProjectWithDefaults,
   createTargetInProject,
   deleteDbConnection,
   deleteDictionaryEntry,
@@ -26,6 +27,7 @@ import {
   getDocServiceConfig,
   getMcpConfig,
   getModel,
+  getPaths,
   getSettings,
   listDbConnections,
   listDictionaryEntries,
@@ -62,6 +64,22 @@ import {
 } from '../src/main/schema/example'
 import { importDbTables, listDbTables, mapMysqlType, testDbConnection } from '../src/main/db/mysql'
 import { startDocServer, stopDocServer } from '../src/main/docs/server'
+import * as mqttStore from '../src/main/mqtt/store'
+import * as mqttSessions from '../src/main/mqtt/sessionManager'
+import {
+  buildAttemptExport,
+  buildMessageExport,
+  buildProfileExport
+} from '../src/main/mqtt/export'
+import {
+  createDefaultMqttProfile,
+  isValidTopicFilter,
+  mqttReasonText
+} from '../src/shared/mqtt'
+
+// aedes 是纯 JS devDependency，通过外部依赖在运行时加载。
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const createAedes = require('aedes') as () => any
 
 function assert(condition: unknown, label: string): void {
   if (!condition) throw new Error(`断言失败：${label}`)
@@ -398,7 +416,7 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 46, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 55, 'mcp tool list')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -738,7 +756,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 46, 'stdio tools/list')
+  assert(stdioTools.result?.tools?.length === 55, 'stdio tools/list')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}
@@ -746,6 +764,9 @@ async function main(): Promise<void> {
   const parsed = JSON.parse(stdioCall.result.content[0].text)
   assert(parsed.projects.length === 1, 'stdio tools/call')
   child.kill()
+
+  // MQTT · 独立模块
+  const mqttSummary = await runMqttSmoke(pid, port, 'smoke-token-123')
 
   // Docs · local share service
   const docPort = await new Promise<number>((resolve) => {
@@ -841,13 +862,746 @@ async function main(): Promise<void> {
         stdio_call_projects: parsed.projects.length,
         doc_status: docStatus,
         doc_markdown_bytes: mdText.length,
-        doc_openapi_paths: Object.keys(spec.paths ?? {}).length
+        doc_openapi_paths: Object.keys(spec.paths ?? {}).length,
+        mqtt: mqttSummary
       },
       null,
       2
     ) + '\n'
   )
   app.exit(0)
+}
+
+function mqttMark(label: string): void {
+  process.stderr.write(`[mqtt-smoke] ${label}\n`)
+}
+
+async function waitUntil<T>(
+  probe: () => T | undefined | null | false,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  const started = Date.now()
+  for (;;) {
+    const value = probe()
+    if (value) return value as T
+    if (Date.now() - started > timeoutMs) throw new Error(`等待超时：${label}`)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+}
+
+async function startMqttBroker(port = 0): Promise<{
+  broker: any
+  server: net.Server
+  port: number
+}> {
+  const broker = createAedes()
+  broker.authenticate = (
+    _client: unknown,
+    username: string,
+    password: Buffer,
+    done: (error: Error | null, success?: boolean) => void
+  ): void => {
+    if (username === 'tester' && password?.toString() === 'secret') {
+      done(null, true)
+      return
+    }
+    const error = Object.assign(new Error('bad username or password'), { returnCode: 4 })
+    done(error, false)
+  }
+  broker.authorizePublish = (
+    _client: unknown,
+    packet: { topic: string },
+    done: (error?: Error | null) => void
+  ): void => {
+    if (packet.topic.startsWith('denied/')) {
+      done(Object.assign(new Error('not authorized'), { returnCode: 5 }))
+      return
+    }
+    done(null)
+  }
+  broker.authorizeSubscribe = (
+    _client: unknown,
+    subscription: { topic: string },
+    done: (error: Error | null, granted?: unknown) => void
+  ): void => {
+    if (subscription.topic.startsWith('denied/')) {
+      done(Object.assign(new Error('not authorized'), { returnCode: 5 }), null)
+      return
+    }
+    done(null, subscription)
+  }
+  const server = net.createServer(broker.handle)
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', () => resolve()))
+  return {
+    broker,
+    server,
+    port: (server.address() as net.AddressInfo).port
+  }
+}
+
+function closeMqttBroker(handle: { broker: any; server: net.Server }): Promise<void> {
+  return new Promise<void>((resolve) => {
+    // 先断开会话，让 net.Server 的 close 回调不被既有连接阻塞。
+    handle.broker.close(() => handle.server.close(() => resolve()))
+  })
+}
+
+async function runMqttSmoke(
+  pid: string,
+  mcpPort: number,
+  token: string
+): Promise<Record<string, unknown>> {
+  let brokerHandle = await startMqttBroker()
+  const mqttPort = brokerHandle.port
+  const summary: Record<string, unknown> = { port: mqttPort }
+
+  // --- Connection Profile 存储 / 版本 / 克隆 / 导出 ---
+  const profile = createDefaultMqttProfile(pid, {
+    name: 'smoke-mqtt',
+    host: '127.0.0.1',
+    port: mqttPort,
+    username: 'tester',
+    password: 'secret',
+    // aedes 0.51 不支持 MQTT 5；v5 的协议拒绝另做负向用例。
+    protocol_version: 4,
+    subscriptions: [{ filter: 'smoke/in', qos: 1 }]
+  })
+  const saved = mqttStore.createProfile(pid, profile)
+  assert(mqttStore.listProfiles(pid).length === 1, 'mqtt profile create/list')
+  assert(mqttStore.listProfiles('missing_project_id').length === 0, 'mqtt profile missing project empty')
+  assert(mqttStore.listProfileVersions(pid, saved.connection_id).length === 1, 'mqtt auto version')
+  const edited = mqttStore.saveProfile(pid, { ...saved, name: 'smoke-mqtt-edited' })
+  assert(mqttStore.listProfileVersions(pid, saved.connection_id).length === 2, 'mqtt second version')
+  const firstVersion = mqttStore
+    .listProfileVersions(pid, saved.connection_id)
+    .find((version) => version.name === 'smoke-mqtt')!
+  const restored = mqttStore.restoreProfileVersion(pid, saved.connection_id, firstVersion.version_id)
+  assert(restored.name === 'smoke-mqtt', 'mqtt version restore')
+  assert(mqttStore.listProfileVersions(pid, saved.connection_id).length === 3, 'mqtt restore adds version')
+  const cloned = mqttStore.cloneProfile(pid, saved.connection_id)
+  assert(
+    cloned.connection_id !== saved.connection_id && cloned.subscriptions.length === 1,
+    'mqtt clone'
+  )
+  mqttStore.deleteProfile(pid, cloned.connection_id)
+  assert(mqttStore.listProfiles(pid).length === 1, 'mqtt clone delete')
+  // 版本上限：连续保存只保留最近 20 个。
+  const versionProbe = mqttStore.createProfile(
+    pid,
+    createDefaultMqttProfile(pid, { name: 'version-probe' })
+  )
+  for (let index = 0; index < 24; index += 1) {
+    mqttStore.saveProfile(pid, { ...versionProbe, name: `version-probe-${index}` })
+  }
+  assert(
+    mqttStore.listProfileVersions(pid, versionProbe.connection_id).length === 20,
+    'mqtt version limit'
+  )
+  mqttStore.deleteProfile(pid, versionProbe.connection_id)
+
+  const profileExport = buildProfileExport(pid, { connection_ids: [saved.connection_id] })
+  assert(profileExport.content.includes('"password": "secret"'), 'mqtt export credentials')
+  assert(profileExport.content.includes('contains_plaintext_credentials'), 'mqtt export warning')
+  const caFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mqtt-ca-')), 'ca.pem')
+  fs.writeFileSync(caFile, '-----BEGIN CERTIFICATE-----\nSMOKE\n-----END CERTIFICATE-----\n')
+  mqttStore.saveProfile(pid, {
+    ...restored,
+    tls: { reject_unauthorized: true, ca_path: caFile }
+  })
+  const embedded = buildProfileExport(pid, {
+    connection_ids: [saved.connection_id],
+    embed_pem: true
+  })
+  assert(embedded.content.includes('SMOKE'), 'mqtt export embedded pem')
+  mqttStore.saveProfile(pid, { ...restored, tls: { reject_unauthorized: true } })
+
+  mqttMark('storage done')
+  // --- 测试连接 / 错误分类 ---
+  const working = mqttStore.getProfile(pid, saved.connection_id)!
+  const okAttempt = await mqttSessions.testConnection(pid, working, { round_trip: true })
+  assert(okAttempt.success, `mqtt test success: ${JSON.stringify(okAttempt)}`)
+  assert(
+    (okAttempt.connack?.return_code ?? okAttempt.connack?.reason_code) === 0,
+    `mqtt connack reason: ${JSON.stringify(okAttempt.connack)}`
+  )
+  const v5Attempt = await mqttSessions.testConnection(pid, {
+    ...working,
+    protocol_version: 5
+  })
+  assert(
+    !v5Attempt.success && v5Attempt.error?.category === 'protocol',
+    `mqtt v5 protocol rejection: ${JSON.stringify(v5Attempt.error)}`
+  )
+  assert(okAttempt.round_trip?.success === true, 'mqtt round trip success')
+  const badAuth = await mqttSessions.testConnection(pid, { ...working, password: 'wrong' })
+  assert(!badAuth.success && badAuth.error?.category === 'auth', 'mqtt auth classification')
+  const badDns = await mqttSessions.testConnection(pid, {
+    ...working,
+    host: 'kindraapi-does-not-exist.invalid',
+    connect_timeout_ms: 1500
+  })
+  assert(!badDns.success, 'mqtt dns attempt failed')
+  assert(
+    ['dns', 'timeout'].includes(badDns.error?.category ?? ''),
+    `mqtt dns/timeout classification: ${JSON.stringify(badDns.error)}`
+  )
+  assert(
+    mqttSessions.classifyError(
+      Object.assign(new Error('getaddrinfo ENOTFOUND host'), { code: 'ENOTFOUND' }),
+      5
+    ).category === 'dns',
+    'mqtt dns classification'
+  )
+
+  const refusedPort = await new Promise<number>((resolve) => {
+    const probe = net.createServer()
+    probe.listen(0, '127.0.0.1', () => {
+      const port = (probe.address() as net.AddressInfo).port
+      probe.close(() => resolve(port))
+    })
+  })
+  const refused = await mqttSessions.testConnection(pid, {
+    ...working,
+    port: refusedPort,
+    connect_timeout_ms: 1500
+  })
+  assert(!refused.success && refused.error?.category === 'tcp', 'mqtt tcp classification')
+
+  const blackhole = net.createServer(() => undefined)
+  await new Promise<void>((resolve) => blackhole.listen(0, '127.0.0.1', () => resolve()))
+  const blackholePort = (blackhole.address() as net.AddressInfo).port
+  const timedOut = await mqttSessions.testConnection(pid, {
+    ...working,
+    port: blackholePort,
+    connect_timeout_ms: 600
+  })
+  blackhole.close()
+  assert(!timedOut.success && timedOut.error?.category === 'timeout', 'mqtt timeout classification')
+
+  mqttMark('test connections done')
+  // --- 会话 / 自动重订阅 / 冲突 ---
+  const connected = await mqttSessions.connectSession(pid, saved.connection_id, 'ui')
+  assert(connected.state === 'connected', 'mqtt connect')
+  const liveAfterConnect = await waitUntil(
+    () =>
+      mqttSessions
+        .listSessions(pid)
+        .find(
+          (session) =>
+            session.connection_id === saved.connection_id &&
+            session.subscriptions.some(
+              (sub) => sub.filter === 'smoke/in' && sub.state === 'subscribed'
+            )
+        ),
+    5000,
+    'mqtt auto subscribe'
+  )
+  assert(Boolean(liveAfterConnect), 'mqtt auto subscribe')
+  let conflict = ''
+  try {
+    mqttSessions.startSession(pid, saved.connection_id, 'mcp')
+  } catch (error) {
+    conflict = (error as Error).message
+  }
+  assert(conflict.includes('已存在会话'), 'mqtt profile conflict')
+
+  const pub = await mqttSessions.publish(pid, saved.connection_id, {
+    topic: 'smoke/in',
+    payload: 'hello mqtt',
+    payload_view: 'plain',
+    qos: 1,
+    retain: false
+  })
+  assert(pub.ok, 'mqtt publish qos1')
+  await waitUntil(
+    () =>
+      mqttStore
+        .listMessages(pid, saved.connection_id, { limit: 100 })
+        .some((message) => message.direction === 'in' && message.topic === 'smoke/in'),
+    5000,
+    'mqtt inbound message'
+  )
+
+  const subscribed = await mqttSessions.subscribe(pid, saved.connection_id, [
+    { filter: 'smoke/bin', qos: 0 },
+    { filter: 'smoke/big', qos: 0 },
+    { filter: 'smoke/manual', qos: 2 }
+  ])
+  assert(
+    subscribed.every((result) => result.ok) &&
+      subscribed.find((result) => result.filter === 'smoke/manual')?.granted_qos === 2,
+    'mqtt subscribe qos'
+  )
+  mqttMark('basic publish/subscribe done')
+  const deniedSub = await mqttSessions.subscribe(pid, saved.connection_id, [
+    { filter: 'denied/topic', qos: 1 }
+  ])
+  assert(deniedSub[0].ok === false, 'mqtt acl subscribe denied')
+  const waitConnected = (): Promise<unknown> =>
+    waitUntil(
+      () =>
+        mqttSessions
+          .listSessions(pid)
+          .some(
+            (session) =>
+              session.connection_id === saved.connection_id &&
+              session.state === 'connected'
+          ),
+      10000,
+      'mqtt connected again'
+    )
+  await waitConnected()
+  let deniedPub: { ok: boolean; error?: string } = { ok: true }
+  try {
+    deniedPub = await mqttSessions.publish(pid, saved.connection_id, {
+      topic: 'denied/publish',
+      payload: 'x',
+      payload_view: 'plain',
+      qos: 1,
+      retain: false
+    })
+  } catch (error) {
+    deniedPub = { ok: false, error: (error as Error).message }
+  }
+  assert(deniedPub.ok === false, 'mqtt acl publish denied')
+  assert(
+    mqttSessions.classifyError(
+      Object.assign(new Error('Not authorized'), { code: 0x87 }),
+      5,
+      undefined,
+      'publish'
+    ).category === 'acl',
+    'mqtt acl classification'
+  )
+  await waitConnected()
+  try {
+    await mqttSessions.unsubscribe(pid, saved.connection_id, ['smoke/manual'])
+  } catch {
+    // ACL 拒绝可能触发 broker 断开，取消订阅失败不阻塞后续用例。
+  }
+
+  mqttMark('acl checks done')
+  // 等会话从可能的 ACL 断线中恢复
+  await waitUntil(
+    () =>
+      mqttSessions
+        .listSessions(pid)
+        .some(
+          (session) =>
+            session.connection_id === saved.connection_id && session.state === 'connected'
+        ),
+    10000,
+    'mqtt acl recovery'
+  )
+
+  // 二进制与超大 payload
+  brokerHandle.broker.publish(
+    {
+      cmd: 'publish',
+      topic: 'smoke/bin',
+      payload: Buffer.from([0xff, 0x00, 0xfe]),
+      qos: 0,
+      retain: false
+    },
+    () => undefined
+  )
+  const binary = await waitUntil(
+    () =>
+      mqttStore
+        .listMessages(pid, saved.connection_id, { limit: 100 })
+        .find((message) => message.topic === 'smoke/bin'),
+    5000,
+    'mqtt binary message'
+  )
+  assert(binary.payload_encoding === 'base64', 'mqtt binary base64')
+  const binaryRecord = mqttStore.getMessage(pid, saved.connection_id, binary.seq)!
+  assert(Buffer.from(binaryRecord.payload, 'base64').length === 3, 'mqtt binary bytes')
+
+  brokerHandle.broker.publish(
+    {
+      cmd: 'publish',
+      topic: 'smoke/big',
+      payload: Buffer.alloc(1024 * 1024 + 16, 1),
+      qos: 0,
+      retain: false
+    },
+    () => undefined
+  )
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert(
+    !mqttStore
+      .listMessages(pid, saved.connection_id, { limit: 500 })
+      .some((message) => message.topic === 'smoke/big'),
+    'mqtt 1mb rejected'
+  )
+  const replayEvents = mqttSessions.replay(saved.connection_id, 0)
+  assert(
+    replayEvents.some(
+      (event) =>
+        event.type === 'error' && (event.payload as { truncated?: boolean }).truncated
+    ),
+    'mqtt 1mb error event'
+  )
+  assert(
+    replayEvents.every((event, index) => index === 0 || event.seq > replayEvents[index - 1].seq),
+    'mqtt event seq monotonic'
+  )
+  assert(
+    mqttSessions.replay(saved.connection_id, replayEvents[replayEvents.length - 1].seq).length ===
+      0,
+    'mqtt replay after seq'
+  )
+
+  mqttMark('binary/oversize done')
+  // 分片轮转与保留策略（直接写存储，避免刷屏 broker）
+  const rotationId = 'mcrotationsmoke'
+  for (let index = 1; index <= 2005; index += 1) {
+    mqttStore.appendMessage(
+      pid,
+      {
+        seq: index,
+        connection_id: rotationId,
+        session_id: 'msrotationsmoke',
+        direction: 'in',
+        topic: 'rotation/topic',
+        payload_encoding: 'utf8',
+        payload: 'x',
+        payload_bytes: 1,
+        qos: 0,
+        retain: false,
+        received_at: new Date().toISOString()
+      },
+      { max_messages: 100000, max_bytes: 100 * 1024 * 1024 }
+    )
+  }
+  const rotatedStats = mqttStore.messageStats(pid, rotationId)
+  assert(rotatedStats.shards >= 2, 'mqtt shard rotation')
+  for (let index = 2006; index <= 2010; index += 1) {
+    mqttStore.appendMessage(
+      pid,
+      {
+        seq: index,
+        connection_id: rotationId,
+        session_id: 'msrotationsmoke',
+        direction: 'in',
+        topic: 'rotation/topic',
+        payload_encoding: 'utf8',
+        payload: 'x',
+        payload_bytes: 1,
+        qos: 0,
+        retain: false,
+        received_at: new Date().toISOString()
+      },
+      { max_messages: 500, max_bytes: 100 * 1024 * 1024 }
+    )
+  }
+  assert(
+    mqttStore.messageStats(pid, rotationId).count <= 500,
+    'mqtt retention max messages'
+  )
+  mqttStore.clearMessages(pid, rotationId)
+
+  mqttMark('rotation done')
+  // 发布历史与循环发布
+  const loopState = mqttSessions.startLoop(
+    pid,
+    saved.connection_id,
+    {
+      topic: 'smoke/in',
+      payload: 'loop',
+      payload_view: 'plain',
+      qos: 0,
+      retain: false
+    },
+    { interval_ms: 100, count: 3 }
+  )
+  assert(loopState.running, 'mqtt loop start')
+  await waitUntil(
+    () => mqttSessions.getLoopState(pid, saved.connection_id).sent >= 3,
+    4000,
+    'mqtt loop count'
+  )
+  await waitUntil(
+    () => !mqttSessions.getLoopState(pid, saved.connection_id).running,
+    2000,
+    'mqtt loop auto stop'
+  )
+  let loopError = ''
+  try {
+    mqttSessions.startLoop(
+      pid,
+      saved.connection_id,
+      { topic: 'smoke/in', payload: 'x', payload_view: 'plain', qos: 0, retain: false },
+      { interval_ms: 50, count: 1 }
+    )
+  } catch (error) {
+    loopError = (error as Error).message
+  }
+  assert(loopError.includes('100ms'), 'mqtt loop interval guard')
+
+  // Attempt 持久化 / 导出 / 轮转
+  const attempts = mqttStore.listAttempts(pid, saved.connection_id)
+  assert(
+    attempts.some((attempt) => attempt.success) &&
+      attempts.some((attempt) => !attempt.success),
+    'mqtt attempts'
+  )
+  assert(buildAttemptExport(pid, saved.connection_id).count >= 2, 'mqtt attempt export')
+  const attemptsDir = path.join(
+    getPaths().localRoot,
+    'projects',
+    pid,
+    'mqtt',
+    'attempts'
+  )
+  const activeAttemptLog = path.join(attemptsDir, `${saved.connection_id}.jsonl`)
+  fs.mkdirSync(attemptsDir, { recursive: true })
+  fs.writeFileSync(
+    activeAttemptLog,
+    Array.from({ length: 2005 }, () => JSON.stringify(attempts[0])).join('\n') + '\n'
+  )
+  mqttStore.appendAttempt(pid, attempts[0])
+  assert(
+    fs
+      .readdirSync(attemptsDir)
+      .filter((name) => name.startsWith(`${saved.connection_id}.`)).length >= 2,
+    'mqtt attempt rotation'
+  )
+
+  // 消息导出
+  const messageExport = buildMessageExport(pid, {
+    connection_ids: [saved.connection_id],
+    format: 'jsonl'
+  })
+  assert(messageExport.content.includes('smoke/in'), 'mqtt message jsonl export')
+  const csvExport = buildMessageExport(pid, {
+    connection_ids: [saved.connection_id],
+    format: 'csv'
+  })
+  assert(csvExport.content.startsWith('seq,'), 'mqtt message csv export')
+
+  mqttMark('loop/attempts done')
+  // --- 断线重连与自动重订阅 ---
+  await closeMqttBroker(brokerHandle)
+  await waitUntil(
+    () =>
+      mqttSessions
+        .listSessions(pid)
+        .some(
+          (session) =>
+            session.connection_id === saved.connection_id && session.state === 'reconnecting'
+        ),
+    6000,
+    'mqtt reconnecting'
+  )
+  brokerHandle = await startMqttBroker(mqttPort)
+  await waitUntil(
+    () =>
+      mqttSessions
+        .listSessions(pid)
+        .some(
+          (session) =>
+            session.connection_id === saved.connection_id && session.state === 'connected'
+        ),
+    10000,
+    'mqtt reconnected'
+  )
+  const reconnected = mqttSessions
+    .listSessions(pid)
+    .find((session) => session.connection_id === saved.connection_id)!
+  assert(
+    reconnected.subscriptions.some(
+      (sub) => sub.filter === 'smoke/in' && sub.state === 'subscribed'
+    ),
+    'mqtt resubscribe after reconnect'
+  )
+
+  mqttMark('reconnect done')
+  // --- 并发上限 ---
+  const extraIds: string[] = []
+  for (let index = 0; index < 7; index += 1) {
+    const extra = mqttStore.createProfile(
+      pid,
+      createDefaultMqttProfile(pid, {
+        name: `smoke-conc-${index}`,
+        host: '127.0.0.1',
+        port: mqttPort,
+        username: 'tester',
+        password: 'secret',
+        protocol_version: 4
+      })
+    )
+    extraIds.push(extra.connection_id)
+    await mqttSessions.connectSession(pid, extra.connection_id, 'ui')
+  }
+  const ninth = mqttStore.createProfile(
+    pid,
+    createDefaultMqttProfile(pid, {
+      name: 'smoke-conc-9',
+      host: '127.0.0.1',
+      port: mqttPort,
+      username: 'tester',
+      password: 'secret',
+      protocol_version: 4
+    })
+  )
+  let limitError = ''
+  try {
+    await mqttSessions.connectSession(pid, ninth.connection_id, 'ui')
+  } catch (error) {
+    limitError = (error as Error).message
+  }
+  assert(limitError.includes('最多连接 8'), 'mqtt concurrency limit')
+  mqttSessions.disconnectAll(pid)
+  assert(mqttSessions.listSessions(pid).length === 0, 'mqtt disconnectAll')
+  for (const connectionId of [...extraIds, ninth.connection_id]) {
+    mqttStore.deleteProfile(pid, connectionId)
+  }
+
+  mqttMark('concurrency done')
+  // --- MCP 全量会话工具 ---
+  saveMcpConfig({
+    ...getMcpConfig(),
+    enabled: true,
+    allow_write: false,
+    allow_execute: true,
+    allowed_project_ids: [pid],
+    port: mcpPort,
+    token
+  })
+  await startMcpServer()
+
+  const mcpProfiles = await bridgeCall(mcpPort, token, 'mqtt_list_profiles', {
+    project_id: pid
+  })
+  assert(
+    mcpProfiles.ok &&
+      mcpProfiles.result.profiles.some(
+        (item: { password?: string }) => item.password === 'secret'
+      ),
+    'mcp mqtt list profiles plaintext'
+  )
+
+  const mcpTest = await bridgeCall(mcpPort, token, 'mqtt_test_connection', {
+    project_id: pid,
+    connection_id: saved.connection_id
+  })
+  assert(mcpTest.ok && mcpTest.result.success, 'mcp mqtt test')
+
+  const mcpConnect = await bridgeCall(mcpPort, token, 'mqtt_connect', {
+    project_id: pid,
+    connection_id: saved.connection_id
+  })
+  assert(mcpConnect.ok && mcpConnect.result.state === 'connected', 'mcp mqtt connect')
+  const mcpSessionId = mcpConnect.result.session_id as string
+
+  const mcpSubscribe = await bridgeCall(mcpPort, token, 'mqtt_subscribe', {
+    project_id: pid,
+    connection_id: saved.connection_id,
+    filters: [{ filter: 'smoke/mcp', qos: 1 }]
+  })
+  assert(mcpSubscribe.ok && mcpSubscribe.result.results[0].ok, 'mcp mqtt subscribe')
+
+  const mcpPublish = await bridgeCall(mcpPort, token, 'mqtt_publish', {
+    project_id: pid,
+    connection_id: saved.connection_id,
+    topic: 'smoke/mcp',
+    payload: 'mcp payload',
+    qos: 1
+  })
+  assert(mcpPublish.ok && mcpPublish.result.ok, 'mcp mqtt publish')
+
+  const drained = await bridgeCall(mcpPort, token, 'mqtt_drain_messages', {
+    project_id: pid,
+    session_id: mcpSessionId,
+    cursor: 0,
+    limit: 50
+  })
+  assert(
+    drained.ok && drained.result.messages.length >= 1 && drained.result.nextCursor > 0,
+    'mcp mqtt drain'
+  )
+  const drainedAgain = await bridgeCall(mcpPort, token, 'mqtt_drain_messages', {
+    project_id: pid,
+    session_id: mcpSessionId,
+    cursor: drained.result.nextCursor
+  })
+  assert(
+    drainedAgain.ok &&
+      drainedAgain.result.messages.length === 0 &&
+      drainedAgain.result.nextCursor === drained.result.nextCursor,
+    'mcp mqtt drain empty'
+  )
+
+  const mcpUnsubscribe = await bridgeCall(mcpPort, token, 'mqtt_unsubscribe', {
+    project_id: pid,
+    connection_id: saved.connection_id,
+    filters: ['smoke/mcp']
+  })
+  assert(mcpUnsubscribe.ok, 'mcp mqtt unsubscribe')
+
+  const mcpSessions = await bridgeCall(mcpPort, token, 'mqtt_list_sessions', {
+    project_id: pid
+  })
+  assert(mcpSessions.ok && mcpSessions.result.sessions.length >= 1, 'mcp mqtt list sessions')
+
+  const mcpDisconnect = await bridgeCall(mcpPort, token, 'mqtt_disconnect', {
+    project_id: pid,
+    session_id: mcpSessionId
+  })
+  assert(mcpDisconnect.ok, 'mcp mqtt disconnect')
+  const drainAfterClose = await bridgeCall(mcpPort, token, 'mqtt_drain_messages', {
+    project_id: pid,
+    session_id: mcpSessionId
+  })
+  assert(drainAfterClose.ok === false, 'mcp mqtt drain after close errors')
+
+  saveMcpConfig({ ...getMcpConfig(), allow_execute: false })
+  await startMcpServer()
+  const mcpDenied = await bridgeCall(mcpPort, token, 'mqtt_connect', {
+    project_id: pid,
+    connection_id: saved.connection_id
+  })
+  assert(
+    mcpDenied.ok === false && String(mcpDenied.error).includes('allow_execute'),
+    'mcp mqtt allow_execute'
+  )
+  saveMcpConfig({ ...getMcpConfig(), allow_execute: true })
+  await startMcpServer()
+
+  mqttMark('mcp done')
+  // --- 项目生命周期 / 级联删除 ---
+  const other = createProjectWithDefaults('mqtt-other')
+  assert(mqttStore.listProfiles(other.project_id).length === 0, 'mqtt project isolation')
+  assert(
+    mqttStore.listMessages(other.project_id, saved.connection_id, { limit: 10 }).length === 0,
+    'mqtt missing local data empty'
+  )
+  const messagesDir = path.join(
+    getPaths().localRoot,
+    'projects',
+    pid,
+    'mqtt',
+    'messages',
+    saved.connection_id
+  )
+  mqttStore.deleteProfile(pid, saved.connection_id)
+  assert(mqttStore.listProfiles(pid).length === 0, 'mqtt profile delete')
+  assert(!fs.existsSync(messagesDir), 'mqtt delete cascades messages')
+  assert(
+    mqttStore.listProfileVersions(pid, saved.connection_id).length === 0,
+    'mqtt delete cascades versions'
+  )
+
+  await closeMqttBroker(brokerHandle)
+
+  summary.attempts = attempts.length
+  summary.rotated_shards = rotatedStats.shards
+  summary.export_bytes = messageExport.count
+  summary.reason_text = mqttReasonText(0x87, 'connack', 5)
+  summary.topic_filter_valid = isValidTopicFilter('$share/group/topic/+')
+  return summary
 }
 
 main().catch((error) => {
