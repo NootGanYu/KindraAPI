@@ -416,7 +416,7 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 55, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 58, 'mcp tool list')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -756,7 +756,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 55, 'stdio tools/list')
+  assert(stdioTools.result?.tools?.length === 58, 'stdio tools/list')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}
@@ -1464,13 +1464,50 @@ async function runMqttSmoke(
   saveMcpConfig({
     ...getMcpConfig(),
     enabled: true,
-    allow_write: false,
+    allow_write: true,
     allow_execute: true,
     allowed_project_ids: [pid],
     port: mcpPort,
     token
   })
   await startMcpServer()
+
+  const mcpCreated = await bridgeCall(mcpPort, token, 'mqtt_create_profile', {
+    project_id: pid,
+    name: 'mcp-created',
+    host: '127.0.0.1',
+    port: mqttPort,
+    protocol_version: 4,
+    username: 'tester',
+    password: 'secret'
+  })
+  assert(mcpCreated.ok, `mcp mqtt create profile: ${JSON.stringify(mcpCreated)}`)
+  const mcpCreatedId = mcpCreated.result.profile.connection_id as string
+  const mcpUpdated = await bridgeCall(mcpPort, token, 'mqtt_update_profile', {
+    project_id: pid,
+    connection_id: mcpCreatedId,
+    name: 'mcp-updated',
+    subscriptions: [{ filter: 'smoke/mcp', qos: 1 }]
+  })
+  assert(
+    mcpUpdated.ok && mcpUpdated.result.profile.name === 'mcp-updated',
+    'mcp mqtt update profile'
+  )
+  const mcpTestCreated = await bridgeCall(mcpPort, token, 'mqtt_test_connection', {
+    project_id: pid,
+    connection_id: mcpCreatedId
+  })
+  assert(mcpTestCreated.ok && mcpTestCreated.result.success, 'mcp mqtt test created profile')
+  const mcpDeleted = await bridgeCall(mcpPort, token, 'mqtt_delete_profile', {
+    project_id: pid,
+    connection_id: mcpCreatedId,
+    confirm: true
+  })
+  assert(mcpDeleted.ok, 'mcp mqtt delete profile')
+  assert(
+    !mqttStore.listProfiles(pid).some((item) => item.connection_id === mcpCreatedId),
+    'mcp mqtt delete verified'
+  )
 
   const mcpProfiles = await bridgeCall(mcpPort, token, 'mqtt_list_profiles', {
     project_id: pid
@@ -1556,6 +1593,17 @@ async function runMqttSmoke(
     session_id: mcpSessionId
   })
   assert(drainAfterClose.ok === false, 'mcp mqtt drain after close errors')
+
+  saveMcpConfig({ ...getMcpConfig(), allow_write: false })
+  await startMcpServer()
+  const mcpWriteDenied = await bridgeCall(mcpPort, token, 'mqtt_create_profile', {
+    project_id: pid,
+    name: 'denied'
+  })
+  assert(
+    mcpWriteDenied.ok === false && String(mcpWriteDenied.error).includes('allow_write'),
+    'mcp mqtt allow_write'
+  )
 
   saveMcpConfig({ ...getMcpConfig(), allow_execute: false })
   await startMcpServer()

@@ -124,7 +124,7 @@ gh release create v0.1.1 \
 
 在应用「配置 → MCP」中开启服务后，可让 AI Agent 通过本地 MCP 访问 KindraAPI。仓库根目录提供 `mcp-stdio.cjs` 作为 stdio 桥接器，打包后的应用也会在资源目录中附带该文件。
 
-MQTT 工具：`mqtt_list_profiles`、`mqtt_test_connection`、`mqtt_connect`、`mqtt_subscribe`、`mqtt_unsubscribe`、`mqtt_publish`、`mqtt_drain_messages`、`mqtt_list_sessions`、`mqtt_disconnect`。连接/测试/订阅/发布/断开受 `allow_execute` 控制；消息使用游标拉取；MCP 会话空闲 5 分钟自动回收。
+MQTT 工具：`mqtt_list_profiles`、`mqtt_create_profile`、`mqtt_update_profile`、`mqtt_delete_profile`、`mqtt_test_connection`、`mqtt_connect`、`mqtt_subscribe`、`mqtt_unsubscribe`、`mqtt_publish`、`mqtt_drain_messages`、`mqtt_list_sessions`、`mqtt_disconnect`。Profile 写工具受 `allow_write` 控制；连接/测试/订阅/发布/断开受 `allow_execute` 控制；消息使用游标拉取；MCP 会话空闲 5 分钟自动回收。
 
 ## 许可
 
