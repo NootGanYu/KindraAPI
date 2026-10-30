@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -22,7 +22,18 @@ const api = {
     openPath: (targetPath: string) => invoke('app:openPath', targetPath),
     copyText: (text: string) => invoke('app:copyText', text),
     openExternal: (url: string) => invoke('app:openExternal', url),
-    relaunch: () => invoke('app:relaunch')
+    relaunch: () => invoke('app:relaunch'),
+    onRequestClose: (callback: () => void) => subscribe('app:request-close', callback),
+    onCloseTabShortcut: (callback: () => void) => subscribe('app:close-tab', callback),
+    confirmClose: () => invoke('app:confirm-close')
+  },
+
+  dialog: {
+    openFiles: () => invoke('dialog:open-files')
+  },
+
+  files: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file)
   },
 
   debug: {
@@ -48,6 +59,12 @@ const api = {
       invoke('target:reorder', projectId, parentId, orderedIds),
     clone: (projectId: string, targetId: string) =>
       invoke('target:clone', projectId, targetId),
+    cases: {
+      run: (projectId: string, target: unknown, caseId: string, environmentId?: string) =>
+        invoke('target:case:run', projectId, target, caseId, environmentId),
+      runAll: (projectId: string, target: unknown, environmentId?: string) =>
+        invoke('target:case:runAll', projectId, target, environmentId)
+    },
     versions: {
       list: (projectId: string, targetId: string) =>
         invoke('target:versions:list', projectId, targetId),

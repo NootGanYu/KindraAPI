@@ -50,6 +50,7 @@ interface AppState {
   addEnvironment: (name?: string) => Promise<Environment>
   saveTarget: (id: string) => Promise<void>
   renameTarget: (id: string, name: string) => Promise<void>
+  describeTarget: (id: string, description: string) => Promise<void>
   reorderTargets: (parentId: string, orderedIds: string[]) => Promise<void>
   deleteTarget: (id: string) => Promise<void>
   deleteTargets: (ids: string[]) => Promise<void>
@@ -337,6 +338,25 @@ export const useApp = create<AppState>((set, get) => ({
       drafts: state.drafts[id] ? { ...state.drafts, [id]: saved } : state.drafts,
       tabs: state.tabs.map((t) => (t.id === id ? { ...t, name: saved.name, dirty: false } : t))
     }))
+    await get().reloadTargets()
+  },
+
+  describeTarget: async (id, description) => {
+    const project = get().project
+    if (!project) return
+    const draft = get().drafts[id]
+    if (draft) {
+      set((state) => ({
+        drafts: { ...state.drafts, [id]: { ...draft, description } }
+      }))
+      await get().saveTarget(id)
+      return
+    }
+    const target = unwrap(await window.api.targets.get(project.project_id, id))
+    if (!target) return
+    unwrap(
+      await window.api.targets.save(project.project_id, { ...target, description })
+    )
     await get().reloadTargets()
   },
 

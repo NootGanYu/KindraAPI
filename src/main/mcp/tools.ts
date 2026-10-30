@@ -1,4 +1,6 @@
 import type {
+  ApiCase,
+  CaseAssertion,
   DbConnection,
   DbSshConfig,
   DictionaryEntry,
@@ -9,9 +11,12 @@ import type {
   McpConfig,
   McpToolInfo,
   ModelReference,
-  ModelSchema
+  ModelSchema,
+  Target
 } from '@shared/types'
 import {
+  createApiCase,
+  createCaseAssertion,
   createDbConnection,
   createEnvironment,
   createFlow,
@@ -22,6 +27,7 @@ import {
 } from '@shared/factories'
 import * as store from '../storage/store'
 import { sendRequest } from '../request/executor'
+import { runApiCase, runApiCases } from '../request/cases'
 import { applyRequestInput, runFlow } from '../flow/engine'
 import { generateSchemaExample } from '../schema/example'
 import { importDbTables, testDbConnection } from '../db/mysql'
@@ -71,6 +77,48 @@ function projectIdOf(args: Args): string {
 
 function boolArg(args: Args, key: string): boolean {
   return args[key] === true
+}
+
+function apiTargetOf(args: Args): Target {
+  const target = store.getTarget(projectIdOf(args), requiredStr(args, 'target_id'))
+  if (!target || target.target_type !== 'api') throw new Error('接口不存在')
+  return target
+}
+
+function caseOf(target: Target, caseId: string): ApiCase {
+  const apiCase = (target.cases ?? []).find((item) => item.case_id === caseId)
+  if (!apiCase) throw new Error('用例不存在')
+  return apiCase
+}
+
+function normalizeAssertions(raw: unknown): CaseAssertion[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((item) => {
+    const source = (item ?? {}) as Record<string, unknown>
+    const assertion = createCaseAssertion({
+      kind: (typeof source.kind === 'string' ? source.kind : 'status') as CaseAssertion['kind'],
+      op: (typeof source.op === 'string' ? source.op : 'equals') as CaseAssertion['op'],
+      path: typeof source.path === 'string' ? source.path : '',
+      expected: typeof source.expected === 'string' ? source.expected : '',
+      is_enabled: source.is_enabled === 0 || source.enabled === false ? 0 : 1
+    })
+    if (typeof source.assertion_id === 'string' && source.assertion_id) {
+      assertion.assertion_id = source.assertion_id
+    }
+    return assertion
+  })
+}
+
+function casePatchOf(args: Args): Partial<ApiCase> {
+  const patch: Partial<ApiCase> = {}
+  if (typeof args.name === 'string') patch.name = args.name
+  if (typeof args.description === 'string') patch.description = args.description
+  if (typeof args.is_enabled === 'boolean') patch.is_enabled = args.is_enabled ? 1 : 0
+  if (args.override && typeof args.override === 'object') {
+    patch.override = args.override as ApiCase['override']
+  }
+  if (args.assertions !== undefined) patch.assertions = normalizeAssertions(args.assertions)
+  return patch
 }
 
 function schema(
@@ -2135,6 +2183,240 @@ const TOOLS: ToolDefinition[] = [
       mqttStore.deleteProfile(projectId, connectionId)
       return { deleted: true, connection_id: connectionId }
     }
+  },
+  {
+    name: 'get_api_design',
+    description: '读取接口设计与契约：说明、错误码表、请求与响应定义。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project, target_id: S.target }, [
+      'project_id',
+      'target_id'
+    ]),
+    handler: (args) => {
+      const target = apiTargetOf(args)
+      return {
+        target_id: target.target_id,
+        name: target.name,
+        description: target.description ?? '',
+        design: target.design ?? { errors: [] },
+        request: target.request ?? null,
+        response: target.response ?? null
+      }
+    }
+  },
+  {
+    name: 'update_api_design',
+    description: '更新接口设计：说明、错误码表、请求或响应定义（需要 allow_write）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: S.target,
+        description: { type: 'string' },
+        errors: {
+          type: 'array',
+          description: '错误码表；传入空数组表示清空',
+          items: {
+            type: 'object',
+            properties: {
+              code: { type: 'string' },
+              message: { type: 'string' },
+              description: { type: 'string' }
+            }
+          }
+        },
+        request: { type: 'object', description: '完整 RequestModel，传入即替换' },
+        response: { type: 'object', description: '完整 ResponseModel，传入即替换' }
+      },
+      ['project_id', 'target_id']
+    ),
+    handler: (args) => {
+      const target = apiTargetOf(args)
+      const next: Target = { ...target }
+      if (typeof args.description === 'string') next.description = args.description
+      if (args.errors !== undefined) {
+        const errors = Array.isArray(args.errors) ? args.errors : []
+        next.design = {
+          ...(next.design ?? {}),
+          errors: errors.map((item) => {
+            const source = (item ?? {}) as Record<string, unknown>
+            return {
+              code: typeof source.code === 'string' ? source.code : String(source.code ?? ''),
+              message:
+                typeof source.message === 'string' ? source.message : String(source.message ?? ''),
+              description:
+                typeof source.description === 'string' ? source.description : undefined
+            }
+          })
+        }
+      }
+      if (args.request && typeof args.request === 'object') {
+        next.request = args.request as Target['request']
+      }
+      if (args.response && typeof args.response === 'object') {
+        next.response = args.response as Target['response']
+      }
+      store.saveTarget(projectIdOf(args), next)
+      return {
+        target_id: next.target_id,
+        description: next.description ?? '',
+        design: next.design ?? { errors: [] }
+      }
+    }
+  },
+  {
+    name: 'list_api_cases',
+    description: '列出接口下的全部用例。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project, target_id: S.target }, [
+      'project_id',
+      'target_id'
+    ]),
+    handler: (args) => ({ cases: apiTargetOf(args).cases ?? [] })
+  },
+  {
+    name: 'get_api_case',
+    description: '读取单个接口用例。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema(
+      { project_id: S.project, target_id: S.target, case_id: { type: 'string' } },
+      ['project_id', 'target_id', 'case_id']
+    ),
+    handler: (args) => ({
+      case: caseOf(apiTargetOf(args), requiredStr(args, 'case_id'))
+    })
+  },
+  {
+    name: 'create_api_case',
+    description: '为接口创建用例（需要 allow_write）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: S.target,
+        name: { type: 'string' },
+        description: { type: 'string' },
+        is_enabled: { type: 'boolean' },
+        override: { type: 'object', description: '请求覆盖' },
+        assertions: { type: 'array', description: '断言列表' }
+      },
+      ['project_id', 'target_id']
+    ),
+    handler: (args) => {
+      const target = apiTargetOf(args)
+      const apiCase = createApiCase({
+        name: str(args, 'name') || '新用例',
+        ...casePatchOf(args)
+      })
+      target.cases = [...(target.cases ?? []), apiCase]
+      store.saveTarget(projectIdOf(args), target)
+      return { case: apiCase }
+    }
+  },
+  {
+    name: 'update_api_case',
+    description: '更新接口用例；只修改传入字段（需要 allow_write）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: S.target,
+        case_id: { type: 'string' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        is_enabled: { type: 'boolean' },
+        override: { type: 'object' },
+        assertions: { type: 'array' }
+      },
+      ['project_id', 'target_id', 'case_id']
+    ),
+    handler: (args) => {
+      const target = apiTargetOf(args)
+      const caseId = requiredStr(args, 'case_id')
+      const existing = caseOf(target, caseId)
+      const next: ApiCase = { ...existing, ...casePatchOf(args), case_id: existing.case_id }
+      target.cases = (target.cases ?? []).map((item) =>
+        item.case_id === caseId ? next : item
+      )
+      store.saveTarget(projectIdOf(args), target)
+      return { case: next }
+    }
+  },
+  {
+    name: 'delete_api_case',
+    description: '删除接口用例（需要 allow_write）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: S.target,
+        case_id: { type: 'string' },
+        confirm: S.confirm
+      },
+      ['project_id', 'target_id', 'case_id']
+    ),
+    handler: (args) => {
+      if (!boolArg(args, 'confirm')) throw new Error('删除操作需要 confirm: true')
+      const target = apiTargetOf(args)
+      const caseId = requiredStr(args, 'case_id')
+      caseOf(target, caseId)
+      target.cases = (target.cases ?? []).filter((item) => item.case_id !== caseId)
+      store.saveTarget(projectIdOf(args), target)
+      return { deleted: true, case_id: caseId }
+    }
+  },
+  {
+    name: 'run_api_case',
+    description: '运行单个接口用例并返回断言结果（需要 allow_execute）。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: S.target,
+        case_id: { type: 'string' },
+        environment_id: { type: 'string' }
+      },
+      ['project_id', 'target_id', 'case_id']
+    ),
+    handler: async (args) => {
+      const target = apiTargetOf(args)
+      const apiCase = caseOf(target, requiredStr(args, 'case_id'))
+      const result = await runApiCase(
+        projectIdOf(args),
+        target,
+        apiCase,
+        str(args, 'environment_id') || undefined
+      )
+      return { case_id: apiCase.case_id, result }
+    }
+  },
+  {
+    name: 'run_api_cases',
+    description: '顺序运行接口下全部启用用例并返回汇总（需要 allow_execute）。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: S.target,
+        environment_id: { type: 'string' }
+      },
+      ['project_id', 'target_id']
+    ),
+    handler: async (args) =>
+      runApiCases(
+        projectIdOf(args),
+        apiTargetOf(args),
+        str(args, 'environment_id') || undefined
+      )
   }
 ]
 

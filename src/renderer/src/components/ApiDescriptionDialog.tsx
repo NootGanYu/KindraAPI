@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent } from 'react'
-import { Checkbox, Dropdown, Modal, Tooltip } from 'antd'
+import { Dropdown, Modal, Tooltip } from 'antd'
 import {
   AlignCenterOutlined,
   AlignLeftOutlined,
@@ -39,10 +39,8 @@ export default function ApiDescriptionDialog({
   onCommit
 }: Props): JSX.Element {
   const editorRef = useRef<HTMLDivElement | null>(null)
-  const previewRef = useRef<HTMLDivElement | null>(null)
   const [html, setHtml] = useState('')
   const [initialHtml, setInitialHtml] = useState('')
-  const [syncScroll, setSyncScroll] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
@@ -53,7 +51,6 @@ export default function ApiDescriptionDialog({
     setFullscreen(false)
   }, [open, value])
 
-  const previewHtml = useMemo(() => sanitizeRichHtml(html), [html])
   const count = useMemo(() => countRichText(html), [html])
 
   const syncFromEditor = (): void => {
@@ -96,19 +93,8 @@ export default function ApiDescriptionDialog({
     syncFromEditor()
   }
 
-  const handleEditorScroll = (): void => {
-    if (!syncScroll) return
-    const editor = editorRef.current
-    const preview = previewRef.current
-    if (!editor || !preview) return
-    const range = editor.scrollHeight - editor.clientHeight
-    const ratio = range > 0 ? editor.scrollTop / range : 0
-    preview.scrollTop = ratio * Math.max(0, preview.scrollHeight - preview.clientHeight)
-  }
-
   const backToTop = (): void => {
     if (editorRef.current) editorRef.current.scrollTop = 0
-    if (previewRef.current) previewRef.current.scrollTop = 0
   }
 
   const handleClose = (): void => {
@@ -212,12 +198,6 @@ export default function ApiDescriptionDialog({
             onInput={syncFromEditor}
             onBlur={syncFromEditor}
             onPaste={handlePaste}
-            onScroll={handleEditorScroll}
-          />
-          <div
-            ref={previewRef}
-            className="api-desc-preview"
-            dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
         </div>
 
@@ -226,9 +206,6 @@ export default function ApiDescriptionDialog({
             字数: {count.chars} 行数: {count.lines}
           </span>
           <span style={{ flex: 1 }} />
-          <Checkbox checked={syncScroll} onChange={(event) => setSyncScroll(event.target.checked)}>
-            同步滚动
-          </Checkbox>
           <button type="button" className="api-desc-link" onClick={backToTop}>
             回到顶部
           </button>

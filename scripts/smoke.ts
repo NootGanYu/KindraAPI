@@ -6,7 +6,7 @@
  *   node_modules/.bin/electron scripts/.smoke.cjs
  */
 import { app } from 'electron'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
@@ -22,6 +22,7 @@ import {
   deleteDictionaryEntry,
   deleteDocShares,
   deleteModel,
+  deleteTarget,
   ensureDefaultProject,
   findModelReferences,
   getDocServiceConfig,
@@ -48,6 +49,7 @@ import {
   saveTarget
 } from '../src/main/storage/store'
 import {
+  createCaseAssertion,
   createDbConnection,
   createDocSettings,
   createEnvironment,
@@ -55,6 +57,7 @@ import {
   createFlowEvent,
   createParam
 } from '../src/shared/factories'
+import { evaluateCaseAssertions, getJsonPath, parseJsonPath } from '../src/shared/cases'
 import { runFlow } from '../src/main/flow/engine'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
 import {
@@ -171,6 +174,28 @@ async function main(): Promise<void> {
     createParam({ key: 'Authorization', value: 'Bearer {{token}}' })
   ]
   saveTarget(project.project_id, orders)
+
+  // Cases · JSONPath 子集与断言求值
+  assert(parseJsonPath('$.data.items[0].id') !== null, 'jsonpath parse')
+  assert(parseJsonPath('data.items') === null, 'jsonpath rejects loose path')
+  const sampleJson = { data: { items: [{ id: 7 }] }, ok: true, name: '订单' }
+  assert(getJsonPath(sampleJson, '$.data.items[0].id').value === 7, 'jsonpath resolve')
+  const assertionResults = evaluateCaseAssertions(
+    [
+      createCaseAssertion({ kind: 'status', op: 'equals', expected: '200' }),
+      createCaseAssertion({ kind: 'duration', op: 'lt', expected: '500' }),
+      createCaseAssertion({ kind: 'json', op: 'equals', path: '$.data.items[0].id', expected: '7' }),
+      createCaseAssertion({ kind: 'json', op: 'contains', path: '$.name', expected: '订' }),
+      createCaseAssertion({ kind: 'json', op: 'exists', path: '$.ok' })
+    ],
+    { status: 200, body: JSON.stringify(sampleJson), durationMs: 12 }
+  )
+  assert(assertionResults.every((item) => item.passed), 'assertion engine passes')
+  const failing = evaluateCaseAssertions(
+    [createCaseAssertion({ kind: 'json', op: 'equals', path: '$.missing', expected: '1' })],
+    { status: 200, body: JSON.stringify(sampleJson) }
+  )
+  assert(failing.length === 1 && !failing[0].passed, 'assertion engine fails missing path')
 
   const flow = createFlow(project.project_id, 'smoke flow', env.env_id)
   flow.events = [
@@ -416,7 +441,7 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 58, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 67, 'mcp tool list')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -426,6 +451,77 @@ async function main(): Promise<void> {
     target_id: login.target_id
   })
   assert(exec.ok && exec.result.status === 'passed', 'mcp execute api')
+
+  const designUpdate = await bridgeCall(port, 'smoke-token-123', 'update_api_design', {
+    project_id: project.project_id,
+    target_id: orders.target_id,
+    description: '订单接口说明',
+    errors: [{ code: '401', message: '未授权', description: '缺少 token' }]
+  })
+  assert(designUpdate.ok, 'mcp update design')
+  const designGet = await bridgeCall(port, 'smoke-token-123', 'get_api_design', {
+    project_id: project.project_id,
+    target_id: orders.target_id
+  })
+  assert(
+    designGet.ok &&
+      designGet.result.description === '订单接口说明' &&
+      designGet.result.design.errors.length === 1,
+    'mcp get design'
+  )
+
+  const createdCase = await bridgeCall(port, 'smoke-token-123', 'create_api_case', {
+    project_id: project.project_id,
+    target_id: login.target_id,
+    name: '登录成功',
+    description: '应返回 200',
+    assertions: [{ kind: 'status', op: 'equals', expected: '200' }]
+  })
+  assert(createdCase.ok, 'mcp create case')
+  const loginCaseId = createdCase.result.case.case_id
+
+  const caseList = await bridgeCall(port, 'smoke-token-123', 'list_api_cases', {
+    project_id: project.project_id,
+    target_id: login.target_id
+  })
+  assert(caseList.ok && caseList.result.cases.length === 1, 'mcp list cases')
+
+  const caseGet = await bridgeCall(port, 'smoke-token-123', 'get_api_case', {
+    project_id: project.project_id,
+    target_id: login.target_id,
+    case_id: loginCaseId
+  })
+  assert(caseGet.ok && caseGet.result.case.name === '登录成功', 'mcp get case')
+
+  const caseRun = await bridgeCall(port, 'smoke-token-123', 'run_api_case', {
+    project_id: project.project_id,
+    target_id: login.target_id,
+    case_id: loginCaseId
+  })
+  assert(
+    caseRun.ok && caseRun.result.result.status === 'passed',
+    'mcp run case'
+  )
+
+  const caseRunAll = await bridgeCall(port, 'smoke-token-123', 'run_api_cases', {
+    project_id: project.project_id,
+    target_id: login.target_id
+  })
+  assert(
+    caseRunAll.ok && caseRunAll.result.total === 1 && caseRunAll.result.passed === 1,
+    'mcp run all cases'
+  )
+
+  const caseUpdate = await bridgeCall(port, 'smoke-token-123', 'update_api_case', {
+    project_id: project.project_id,
+    target_id: login.target_id,
+    case_id: loginCaseId,
+    name: '登录成功（改名）'
+  })
+  assert(
+    caseUpdate.ok && caseUpdate.result.case.name === '登录成功（改名）',
+    'mcp update case'
+  )
 
   const servers = await bridgeCall(port, 'smoke-token-123', 'list_environment_servers', {
     project_id: project.project_id
@@ -756,7 +852,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 58, 'stdio tools/list')
+  assert(stdioTools.result?.tools?.length === 67, 'stdio tools/list')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}
@@ -793,6 +889,8 @@ async function main(): Promise<void> {
   const docHtml = await docPage.text()
   assert(docHtml.includes('smoke 文档'), 'doc page contains name')
   assert(docHtml.includes('查询订单'), 'doc page contains api')
+  assert(docHtml.includes('未授权'), 'doc page contains design errors')
+  assert(docHtml.includes('登录成功（改名）'), 'doc page contains cases')
 
   const md = await fetch(`${docBase}/share/${publicShare.share_id}/download?format=md`)
   assert(md.status === 200, 'doc markdown 200')
@@ -835,7 +933,106 @@ async function main(): Promise<void> {
   })
   assert(unlocked.status === 200, 'doc password accepted')
 
-  deleteDocShares(project.project_id, [publicShare.share_id, passwordShare.share_id])
+  // Docs · 实时渲染、分页与下载
+  const liveFolder = createTargetInProject(project.project_id, '0', 'folder')
+  liveFolder.name = '订单目录'
+  liveFolder.description = '<p>目录说明文本</p>'
+  saveTarget(project.project_id, liveFolder)
+
+  const initialApi = createTargetInProject(project.project_id, liveFolder.target_id, 'api')
+  initialApi.name = '初始接口'
+  saveTarget(project.project_id, initialApi)
+
+  const liveShare = createDocShare(project.project_id, {
+    name: 'live 文档',
+    scope: 'folder',
+    target_ids: [liveFolder.target_id],
+    settings: createDocSettings()
+  })
+  const folderRes = await fetch(`${docBase}/share/${liveShare.share_id}`)
+  assert(folderRes.status === 200, 'live folder page 200')
+  const folderHtml = await folderRes.text()
+  assert(folderHtml.includes('目录说明文本'), 'folder description rendered')
+  assert(folderHtml.includes('下载全部'), 'download all button')
+  assert(folderHtml.includes('下载当前文件夹'), 'download folder button')
+  assert(folderHtml.includes('dl-btn disabled'), 'api download disabled on folder page')
+
+  const liveApi = createTargetInProject(project.project_id, liveFolder.target_id, 'api')
+  liveApi.name = '新建接口'
+  liveApi.method = 'POST'
+  liveApi.url = '{{baseUrl}}/new'
+  saveTarget(project.project_id, liveApi)
+  const afterAdd = await (await fetch(`${docBase}/share/${liveShare.share_id}`)).text()
+  assert(afterAdd.includes('新建接口'), 'live share includes newly added api')
+
+  liveApi.name = '改名接口'
+  saveTarget(project.project_id, liveApi)
+  const afterRename = await (await fetch(`${docBase}/share/${liveShare.share_id}`)).text()
+  assert(
+    afterRename.includes('改名接口') && !afterRename.includes('新建接口'),
+    'live share reflects rename'
+  )
+
+  const folderPage = await fetch(
+    `${docBase}/share/${liveShare.share_id}/f/${liveFolder.target_id}`
+  )
+  assert(
+    folderPage.status === 200 && (await folderPage.text()).includes('改名接口'),
+    'paged folder route'
+  )
+  const apiPage = await fetch(
+    `${docBase}/share/${liveShare.share_id}/a/${liveApi.target_id}`
+  )
+  assert(
+    apiPage.status === 200 && (await apiPage.text()).includes('改名接口'),
+    'paged api route'
+  )
+
+  const zipRes = await fetch(
+    `${docBase}/share/${liveShare.share_id}/download?scope=all&format=zip`
+  )
+  const zipBuf = Buffer.from(await zipRes.arrayBuffer())
+  assert(
+    zipRes.status === 200 && zipBuf.subarray(0, 2).toString() === 'PK',
+    'zip download bytes'
+  )
+  const zipPath = path.join(tmp, 'share.zip')
+  fs.writeFileSync(zipPath, zipBuf)
+  const unzipTest = execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' })
+  assert(unzipTest.includes('No errors detected'), 'zip integrity')
+  assert(zipBuf.includes(Buffer.from('index.html', 'utf8')), 'zip index entry')
+  assert(
+    zipBuf.includes(Buffer.from('改名接口.html', 'utf8')),
+    'zip keeps directory tree and api page'
+  )
+
+  const folderZip = await fetch(
+    `${docBase}/share/${liveShare.share_id}/f/${liveFolder.target_id}/download?format=zip`
+  )
+  assert(folderZip.status === 200, 'folder zip 200')
+
+  const singleRes = await fetch(
+    `${docBase}/share/${liveShare.share_id}/a/${liveApi.target_id}/download?format=html`
+  )
+  const singleHtml = await singleRes.text()
+  assert(
+    singleRes.status === 200 &&
+      singleHtml.includes('改名接口') &&
+      !singleHtml.includes('下载全部'),
+    'single api offline html'
+  )
+
+  deleteTarget(project.project_id, liveApi.target_id)
+  const goneRes = await fetch(
+    `${docBase}/share/${liveShare.share_id}/a/${liveApi.target_id}`
+  )
+  assert(goneRes.status === 404, 'deleted api returns 404')
+
+  deleteDocShares(project.project_id, [
+    publicShare.share_id,
+    passwordShare.share_id,
+    liveShare.share_id
+  ])
   saveDocServiceConfig(getDocServiceConfig())
   await stopDocServer()
   await stopMcpServer()

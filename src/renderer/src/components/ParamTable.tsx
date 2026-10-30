@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Checkbox, Input, Tooltip } from 'antd'
+import type { DragEvent } from 'react'
+import { App as AntApp, Button, Checkbox, Input, Select, Tooltip } from 'antd'
 import {
   DeleteOutlined,
   DownOutlined,
@@ -18,6 +19,20 @@ interface Props {
   keyPlaceholder?: string
   valuePlaceholder?: string
   showDescription?: boolean
+  /** form-data 模式：允许把某行切换为本地文件 */
+  allowFile?: boolean
+}
+
+function fileNameOf(filePath: string): string {
+  const parts = filePath.split(/[\\/]/)
+  return parts[parts.length - 1] || filePath
+}
+
+function formatSize(size?: number): string {
+  if (!size || size <= 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(2)} MB`
 }
 
 export default function ParamTable({
@@ -26,8 +41,10 @@ export default function ParamTable({
   title = '公共参数',
   keyPlaceholder = '参数名',
   valuePlaceholder = '参数值',
-  showDescription = true
+  showDescription = true,
+  allowFile = false
 }: Props): JSX.Element {
+  const { message } = AntApp.useApp()
   const [collapsed, setCollapsed] = useState(false)
   const projectId = useApp((state) => state.project?.project_id ?? '')
 
@@ -37,6 +54,54 @@ export default function ParamTable({
 
   const add = (): void => {
     onChange([...params, createParam()])
+  }
+
+  const applyFiles = (
+    index: number,
+    files: Array<{ path: string; name?: string; size: number }>
+  ): void => {
+    if (files.length === 0) return
+    const next = params.slice()
+    const first = files[0]
+    next[index] = {
+      ...next[index],
+      value: first.path,
+      field_type: 'file',
+      file_size: first.size
+    }
+    for (const file of files.slice(1)) {
+      next.push(
+        createParam({
+          key: params[index].key,
+          value: file.path,
+          field_type: 'file',
+          file_size: file.size,
+          is_checked: 1
+        })
+      )
+    }
+    onChange(next)
+  }
+
+  const pickFiles = async (index: number): Promise<void> => {
+    const result = await window.api.dialog.openFiles()
+    if (!result.ok) {
+      message.error(result.error)
+      return
+    }
+    applyFiles(index, result.data)
+  }
+
+  const dropFiles = (event: DragEvent, index: number): void => {
+    event.preventDefault()
+    const files = Array.from(event.dataTransfer.files).map((file) => ({
+      path: window.api.files.getPathForFile(file),
+      size: file.size
+    }))
+    applyFiles(
+      index,
+      files.filter((file) => Boolean(file.path))
+    )
   }
 
   const allChecked = params.length > 0 && params.every((param) => param.is_checked > 0)
@@ -93,7 +158,25 @@ export default function ParamTable({
                   }
                 />
               </div>
-              <div className="param-td param-name">
+              <div className="param-td param-name" style={{ display: 'flex', gap: 4 }}>
+                {allowFile ? (
+                  <Select
+                    size="small"
+                    variant="borderless"
+                    style={{ width: 62, flex: 'none' }}
+                    value={param.field_type === 'file' ? 'file' : 'text'}
+                    options={[
+                      { value: 'text', label: '文本' },
+                      { value: 'file', label: '文件' }
+                    ]}
+                    onChange={(value) =>
+                      update(index, {
+                        field_type: value === 'file' ? 'file' : 'string',
+                        file_size: value === 'file' ? param.file_size : undefined
+                      })
+                    }
+                  />
+                ) : null}
                 <Input
                   variant="borderless"
                   value={param.key}
@@ -104,16 +187,56 @@ export default function ParamTable({
                   }}
                 />
               </div>
-              <div className="param-td param-value">
-                <Input
-                  variant="borderless"
-                  value={param.value}
-                  placeholder={valuePlaceholder}
-                  onChange={(event) => update(index, { value: event.target.value })}
-                  onPressEnter={() => {
-                    if (index === params.length - 1) add()
-                  }}
-                />
+              <div
+                className="param-td param-value"
+                onDragOver={(event) => {
+                  if (allowFile) event.preventDefault()
+                }}
+                onDrop={(event) => {
+                  if (allowFile) dropFiles(event, index)
+                }}
+              >
+                {allowFile && param.field_type === 'file' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                    <span
+                      style={{
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontSize: 12
+                      }}
+                      title={param.value}
+                    >
+                      {param.value ? fileNameOf(param.value) : '未选择文件'}
+                    </span>
+                    <span className="muted" style={{ fontSize: 11, flex: 'none' }}>
+                      {formatSize(param.file_size)}
+                    </span>
+                    <Button size="small" type="link" onClick={() => void pickFiles(index)}>
+                      选择
+                    </Button>
+                    {param.value ? (
+                      <Button
+                        size="small"
+                        type="text"
+                        onClick={() => update(index, { value: '', file_size: undefined })}
+                      >
+                        清除
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <Input
+                    variant="borderless"
+                    value={param.value}
+                    placeholder={valuePlaceholder}
+                    onChange={(event) => update(index, { value: event.target.value })}
+                    onPressEnter={() => {
+                      if (index === params.length - 1) add()
+                    }}
+                  />
+                )}
               </div>
               {showDescription ? (
                 <div className="param-td param-desc">

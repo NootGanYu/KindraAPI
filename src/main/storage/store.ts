@@ -16,6 +16,7 @@ import type {
   DocScope,
   DocServiceConfig,
   DocSettings,
+  CaseRunResult,
   DocShare,
   DocShareInput,
   DocShareSummary,
@@ -208,6 +209,7 @@ function toSummary(t: Target): TargetSummary {
     target_type: t.target_type,
     parent_id: t.parent_id,
     name: t.name,
+    description: t.description,
     method: t.method,
     url: t.url,
     sort: t.sort,
@@ -546,6 +548,28 @@ export function saveTarget(projectId: string, target: Target): Target {
   if (idx >= 0) index.items[idx] = summary
   else index.items.push(summary)
   writeTargetIndex(projectId, index)
+  return target
+}
+
+/**
+ * 只更新用例的 last_run，不修改 updated_at、不记录版本、不刷新索引。
+ * 用例运行结果不应让标签变脏，也不应产生版本噪声。
+ */
+export function saveCaseRun(
+  projectId: string,
+  targetId: string,
+  caseId: string,
+  result: CaseRunResult
+): Target | null {
+  const target = getTarget(projectId, targetId)
+  if (!target) return null
+  const apiCase = (target.cases ?? []).find((item) => item.case_id === caseId)
+  if (!apiCase) return null
+  apiCase.last_run = result
+  writeJson(
+    path.join(projectDir(projectId), 'apis', `${assertId(targetId, 'target_id')}.json`),
+    target
+  )
   return target
 }
 
@@ -1558,6 +1582,8 @@ function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
     show_response: input?.show_response !== false,
     show_headers: input?.show_headers !== false,
     show_scripts: input?.show_scripts === true,
+    show_design: input?.show_design !== false,
+    show_cases: input?.show_cases !== false,
     openapi: input?.openapi === true
   }
 }
@@ -1570,7 +1596,7 @@ function normalizeDocTargetIds(scope: DocScope, ids: unknown): string[] {
   return Array.from(new Set(ids.map((id) => assertId(String(id), 'target_id'))))
 }
 
-function docProtocolLabel(target: DocTargetSnapshot): string {
+function docProtocolLabel(target: Pick<DocTargetSnapshot, 'protocol' | 'method'>): string {
   const raw = `${target.protocol ?? ''} ${target.method ?? ''}`.toLowerCase()
   if (raw.includes('socket.io') || raw.includes('socketio')) return 'Socket.IO'
   if (raw.includes('graphql')) return 'GraphQL'
@@ -1694,17 +1720,88 @@ function buildDocSnapshot(
   }
 }
 
+export interface ResolvedDocShare {
+  project: Project | null
+  targets: Target[]
+  /** 分享页的根节点：folder / api 范围分别指向该目录或接口 */
+  rootId: string | null
+  /** 根目标或项目已不存在 */
+  notFound: boolean
+}
+
+/**
+ * 实时解析分享范围。与 collectDocTargets 不同，这里不抛错：
+ * 缺失的目标会被剔除，根目标缺失时标记 notFound，由渲染层返回 404。
+ */
+export function resolveDocShareTargets(projectId: string, share: DocShare): ResolvedDocShare {
+  const project = getProject(projectId)
+  if (!project) return { project: null, targets: [], rootId: null, notFound: true }
+
+  const index = readTargetIndex(projectId)
+  const byId = new Map(index.items.map((item) => [item.target_id, item]))
+  const ids = new Set<string>()
+  const rootId = share.scope === 'project' ? null : share.target_ids[0] ?? null
+
+  const addWithDescendants = (id: string, seen = new Set<string>()): void => {
+    if (seen.has(id) || !byId.has(id)) return
+    seen.add(id)
+    ids.add(id)
+    for (const child of index.items) {
+      if (child.parent_id === id) addWithDescendants(child.target_id, seen)
+    }
+  }
+
+  if (share.scope === 'project') {
+    for (const item of index.items) ids.add(item.target_id)
+  } else if (share.scope === 'folder') {
+    const root = rootId ? byId.get(rootId) : undefined
+    if (!root || root.target_type !== 'folder') {
+      return { project, targets: [], rootId: null, notFound: true }
+    }
+    addWithDescendants(root.target_id)
+  } else if (share.scope === 'api') {
+    const root = rootId ? byId.get(rootId) : undefined
+    if (!root || root.target_type !== 'api') {
+      return { project, targets: [], rootId: null, notFound: true }
+    }
+    ids.add(root.target_id)
+  } else {
+    // custom：固定成员，剔除已删除项，并保留祖先目录以便呈现完整树。
+    for (const id of share.target_ids) {
+      if (byId.has(id)) ids.add(id)
+    }
+    for (const id of [...ids]) {
+      let current = byId.get(id)
+      let guard = 0
+      while (current && current.parent_id !== '0' && guard < 200) {
+        ids.add(current.parent_id)
+        current = byId.get(current.parent_id)
+        guard += 1
+      }
+    }
+  }
+
+  const targets = [...ids]
+    .map((id) => getTarget(projectId, id))
+    .filter((target): target is Target => Boolean(target))
+    .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+
+  return { project, targets, rootId, notFound: false }
+}
+
 export function docShareTypeLabel(share: DocShare): string {
   if (share.scope === 'project') return '项目'
   if (share.scope === 'folder') return '目录'
   if (share.scope === 'custom') return '自定义'
-  const api = share.snapshot.targets.find((item) => item.target_type === 'api')
+  const resolved = resolveDocShareTargets(share.project_id, share)
+  const api = resolved.targets.find((item) => item.target_id === resolved.rootId)
   return api ? docProtocolLabel(api) : 'HTTP'
 }
 
 function toDocShareSummary(share: DocShare): DocShareSummary {
   const expire = docExpireInfo(share)
   const typeLabel = docShareTypeLabel(share)
+  const resolved = resolveDocShareTargets(share.project_id, share)
   return {
     share_id: share.share_id,
     project_id: share.project_id,
@@ -1712,7 +1809,7 @@ function toDocShareSummary(share: DocShare): DocShareSummary {
     scope: share.scope,
     type_label: typeLabel,
     visibility: share.settings.password ? 'password' : 'public',
-    target_count: share.snapshot.targets.filter((item) => item.target_type === 'api').length,
+    target_count: resolved.targets.filter((item) => item.target_type === 'api').length,
     expire_at: expire.expire_at,
     expire_label: expire.expire_label,
     expired: expire.expired,

@@ -11,6 +11,8 @@ export interface Param {
   is_checked: number
   is_system?: number
   schema?: unknown
+  /** form-data 文件行的大小（字节），仅用于展示 */
+  file_size?: number
 }
 
 export type AuthType =
@@ -92,6 +94,76 @@ export interface ResponseModel {
   example?: ResponseExample[]
 }
 
+export interface DesignError {
+  code: string
+  message: string
+  description?: string
+}
+
+export interface DesignModel {
+  errors?: DesignError[]
+}
+
+export type CaseAssertionKind = 'status' | 'duration' | 'json'
+export type CaseAssertionOp = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'lt'
+
+export interface CaseAssertion {
+  assertion_id: string
+  kind: CaseAssertionKind
+  op: CaseAssertionOp
+  /** JSONPath 子集，如 $.data.items[0].id；kind=json 时使用 */
+  path?: string
+  /** equals / not_equals / contains / gt / lt 使用；exists 忽略 */
+  expected?: string
+  is_enabled: number
+}
+
+export interface ApiCaseOverride {
+  method?: string
+  url?: string
+  headers?: Param[]
+  query?: Param[]
+  restful?: Param[]
+  body_mode?: BodyMode
+  body?: string
+  formdata?: Param[]
+  urlencoded?: Param[]
+}
+
+export interface CaseRunAssertion {
+  assertion_id: string
+  passed: boolean
+  actual?: string
+  message?: string
+}
+
+export interface CaseRunResult {
+  ran_at: string
+  status: 'passed' | 'failed' | 'error'
+  http_status?: number
+  duration_ms?: number
+  error?: string
+  assertions?: CaseRunAssertion[]
+}
+
+export interface ApiCase {
+  case_id: string
+  name: string
+  description?: string
+  is_enabled: number
+  override: ApiCaseOverride
+  assertions: CaseAssertion[]
+  last_run?: CaseRunResult
+}
+
+export interface CaseRunSummary {
+  total: number
+  passed: number
+  failed: number
+  error: number
+  results: Array<{ case_id: string; result: CaseRunResult }>
+}
+
 export interface Target {
   target_id: string
   target_type: TargetType
@@ -111,6 +183,8 @@ export interface Target {
   is_exampled?: number
   request?: RequestModel
   response?: ResponseModel
+  design?: DesignModel
+  cases?: ApiCase[]
   created_at: string
   updated_at: string
 }
@@ -120,6 +194,7 @@ export interface TargetSummary {
   target_type: TargetType
   parent_id: string
   name: string
+  description?: string
   method?: string
   url?: string
   sort: number
@@ -576,6 +651,8 @@ export interface DocSettings {
   show_response: boolean
   show_headers: boolean
   show_scripts: boolean
+  show_design: boolean
+  show_cases: boolean
   openapi: boolean
 }
 

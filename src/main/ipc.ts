@@ -32,6 +32,7 @@ import type {
 import * as store from './storage/store'
 import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
+import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
 import { runFlow } from './flow/engine'
 import { createFlow } from '@shared/factories'
@@ -137,6 +138,43 @@ export function registerIpc(): void {
     store.createTargetInProject(projectId, parentId, type)
   )
   handle('target:save', (projectId: string, target: Target) => store.saveTarget(projectId, target))
+
+  handle('dialog:open-files', async () => {
+    const picked = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections']
+    })
+    if (picked.canceled) return []
+    return picked.filePaths.map((filePath) => {
+      let size = 0
+      try {
+        size = fs.statSync(filePath).size
+      } catch {
+        size = 0
+      }
+      return { path: filePath, name: path.basename(filePath), size }
+    })
+  })
+
+  handle(
+    'target:case:run',
+    (
+      projectId: string,
+      target: Target,
+      caseId: string,
+      environmentId?: string
+    ) => {
+      const apiCase = (target.cases ?? []).find((item) => item.case_id === caseId)
+      if (!apiCase) throw new Error('用例不存在')
+      return runApiCase(projectId, target, apiCase, environmentId)
+    }
+  )
+
+  handle(
+    'target:case:runAll',
+    (projectId: string, target: Target, environmentId?: string) =>
+      runApiCases(projectId, target, environmentId)
+  )
+
   handle('target:delete', (projectId: string, targetId: string) => {
     store.deleteTarget(projectId, targetId)
     return true

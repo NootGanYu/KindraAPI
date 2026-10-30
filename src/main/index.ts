@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
@@ -36,6 +36,7 @@ const appIconPath = app.isPackaged
   : appIcon
 
 let mainWindow: BrowserWindow | null = null
+let allowClose = false
 
 // macOS 用内嵌红绿灯；Windows 交给 Window Controls Overlay 绘制原生按钮；
 // 其余平台保持原来的无边框窗口。
@@ -54,6 +55,7 @@ const windowChrome: Electron.BrowserWindowConstructorOptions =
       : { frame: false, titleBarStyle: 'hidden' }
 
 function createWindow(): void {
+  allowClose = false
   mainWindow = new BrowserWindow({
     ...windowChrome,
     width: 1180,
@@ -73,6 +75,34 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+  })
+
+  // Cmd+W 由渲染层关闭当前标签，而不是关闭窗口。
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (
+      input.type === 'keyDown' &&
+      input.meta &&
+      !input.control &&
+      !input.alt &&
+      input.key.toLowerCase() === 'w'
+    ) {
+      event.preventDefault()
+      mainWindow?.webContents.send('app:close-tab')
+    }
+  })
+
+  // 关闭窗口前交给渲染层确认未保存标签，渲染层确认后才真正关闭。
+  mainWindow.on('close', (event) => {
+    if (allowClose) return
+    event.preventDefault()
+    mainWindow?.webContents.send('app:request-close')
+  })
+
+  ipcMain.removeHandler('app:confirm-close')
+  ipcMain.handle('app:confirm-close', () => {
+    allowClose = true
+    mainWindow?.close()
+    return { ok: true, data: true }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -130,7 +160,8 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('before-quit', () => {
+  // will-quit 在所有窗口关闭后触发；若关闭被未保存守卫拦截，不会执行。
+  app.on('will-quit', () => {
     void shutdownMcp()
     void shutdownDocs()
     shutdownMqtt()

@@ -72,6 +72,8 @@ interface Draft {
   showResponse: boolean
   showHeaders: boolean
   showScripts: boolean
+  showDesign: boolean
+  showCases: boolean
   openapi: boolean
 }
 
@@ -152,6 +154,8 @@ export default function DocShareDialog({
     showResponse: true,
     showHeaders: true,
     showScripts: false,
+    showDesign: true,
+    showCases: true,
     openapi: false
   }))
   const [saving, setSaving] = useState(false)
@@ -185,6 +189,8 @@ export default function DocShareDialog({
       showResponse: settings.show_response,
       showHeaders: settings.show_headers,
       showScripts: settings.show_scripts,
+      showDesign: settings.show_design,
+      showCases: settings.show_cases,
       openapi: settings.openapi
     })
   }, [open, initialKey, lockScope, lockTarget, lockTargetName, projectName])
@@ -239,6 +245,8 @@ export default function DocShareDialog({
         show_response: draft.showResponse,
         show_headers: draft.showHeaders,
         show_scripts: draft.showScripts,
+        show_design: draft.showDesign,
+        show_cases: draft.showCases,
         openapi: draft.openapi
       }
     }
@@ -427,6 +435,18 @@ export default function DocShareDialog({
               onChange={(event) => patchDraft({ showScripts: event.target.checked })}
             >
               前后脚本
+            </Checkbox>
+            <Checkbox
+              checked={draft.showDesign}
+              onChange={(event) => patchDraft({ showDesign: event.target.checked })}
+            >
+              接口设计
+            </Checkbox>
+            <Checkbox
+              checked={draft.showCases}
+              onChange={(event) => patchDraft({ showCases: event.target.checked })}
+            >
+              接口用例
             </Checkbox>
           </div>
         </div>

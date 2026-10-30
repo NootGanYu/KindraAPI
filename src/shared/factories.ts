@@ -1,8 +1,13 @@
 import type {
+  ApiCase,
   AuthModel,
   BodyModel,
+  CaseAssertion,
+  CaseAssertionKind,
+  CaseAssertionOp,
   DataModel,
   DbConnection,
+  DesignError,
   DictionaryEntry,
   DocSettings,
   Environment,
@@ -286,6 +291,39 @@ export function createDbConnection(projectId: string, partial: Partial<DbConnect
   }
 }
 
+export function createDesignError(partial: Partial<DesignError> = {}): DesignError {
+  return {
+    code: '',
+    message: '',
+    description: '',
+    ...partial
+  }
+}
+
+export function createCaseAssertion(partial: Partial<CaseAssertion> = {}): CaseAssertion {
+  return {
+    assertion_id: createId('as'),
+    kind: (partial.kind ?? 'status') as CaseAssertionKind,
+    op: (partial.op ?? 'equals') as CaseAssertionOp,
+    path: partial.path ?? '',
+    expected: partial.expected ?? '200',
+    is_enabled: partial.is_enabled ?? 1,
+    ...partial
+  }
+}
+
+export function createApiCase(partial: Partial<ApiCase> = {}): ApiCase {
+  return {
+    case_id: createId('case'),
+    name: '新用例',
+    description: '',
+    is_enabled: 1,
+    override: {},
+    assertions: [],
+    ...partial
+  }
+}
+
 export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettings {
   return {
     password: '',
@@ -295,6 +333,8 @@ export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettin
     show_response: true,
     show_headers: true,
     show_scripts: false,
+    show_design: true,
+    show_cases: true,
     openapi: false,
     ...partial
   }

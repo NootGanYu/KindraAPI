@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { App as AntApp, Spin } from 'antd'
+import { App as AntApp, Button, Modal, Spin } from 'antd'
 import { useApp } from './store'
 import TopBar from './components/TopBar'
 import LeftNav from './components/LeftNav'
@@ -37,6 +37,74 @@ function Shell(): JSX.Element {
   )
 }
 
+function QuitGuard(): JSX.Element {
+  const { message } = AntApp.useApp()
+  const saveTarget = useApp((s) => s.saveTarget)
+  const dirtyCount = useApp(
+    (s) => s.tabs.filter((tab) => tab.dirty).length
+  )
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    return window.api.app.onRequestClose(() => {
+      const dirty = useApp.getState().tabs.filter((tab) => tab.dirty)
+      if (dirty.length === 0) {
+        void window.api.app.confirmClose()
+        return
+      }
+      setOpen(true)
+    })
+  }, [])
+
+  const saveAndClose = async (): Promise<void> => {
+    setSaving(true)
+    try {
+      const dirty = useApp.getState().tabs.filter((tab) => tab.dirty)
+      for (const tab of dirty) await saveTarget(tab.id)
+      await window.api.app.confirmClose()
+    } catch (error) {
+      message.error((error as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="放弃未保存的修改？"
+      closable={false}
+      maskClosable={false}
+      footer={null}
+    >
+      <p>
+        {dirtyCount > 1
+          ? `有 ${dirtyCount} 个标签页存在未保存的修改，关闭后将丢失。`
+          : '该标签页有未保存的修改，关闭后将丢失。'}
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <Button
+          style={{ background: '#2f8f62', borderColor: '#2f8f62', color: '#fff' }}
+          loading={saving}
+          onClick={() => void saveAndClose()}
+        >
+          保存后关闭
+        </Button>
+        <Button onClick={() => setOpen(false)}>取消</Button>
+        <Button
+          danger
+          onClick={() => {
+            void window.api.app.confirmClose()
+          }}
+        >
+          放弃并关闭
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
 export default function App(): JSX.Element {
   const init = useApp((s) => s.init)
   const ready = useApp((s) => s.ready)
@@ -61,6 +129,7 @@ export default function App(): JSX.Element {
   return (
     <AntApp>
       <Shell />
+      <QuitGuard />
     </AntApp>
   )
 }

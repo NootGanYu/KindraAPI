@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   App as AntApp,
+  Button,
   Checkbox,
   Dropdown,
   Input,
+  Modal,
   Popover,
   Tag,
   Tooltip
 } from 'antd'
+import type { MenuProps } from 'antd'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import {
   ApiOutlined,
@@ -34,6 +37,8 @@ import { useApp } from '../store'
 import ApiTree from '../components/ApiTree'
 import RequestEditor from '../components/RequestEditor'
 import ResponsePanel from '../components/ResponsePanel'
+import DesignEditor from '../components/DesignEditor'
+import CasesEditor from '../components/CasesEditor'
 import DocShareDialog from '../components/DocShareDialog'
 import DocShareLinkDialog, {
   type DocShareLinkInfo
@@ -87,7 +92,11 @@ export default function ApisPage(): JSX.Element {
   const tabScrollRef = useRef<HTMLDivElement | null>(null)
   const [tabOverflow, setTabOverflow] = useState(false)
   const [tabEdges, setTabEdges] = useState({ left: false, right: false })
-  const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null)
+  const [shareTarget, setShareTarget] = useState<{
+    id: string
+    name: string
+    scope: 'api' | 'folder'
+  } | null>(null)
   const [shareLink, setShareLink] = useState<DocShareLinkInfo | null>(null)
   const [descOpen, setDescOpen] = useState(false)
   const [versionOpen, setVersionOpen] = useState(false)
@@ -96,6 +105,11 @@ export default function ApisPage(): JSX.Element {
   const [envSearch, setEnvSearch] = useState('')
   const [envModalOpen, setEnvModalOpen] = useState(false)
   const [envModalInitial, setEnvModalInitial] = useState<string | undefined>(undefined)
+  const [closeRequest, setCloseRequest] = useState<{
+    ids: string[]
+    dirtyIds: string[]
+  } | null>(null)
+  const [closing, setClosing] = useState(false)
 
   const updateTabScroll = (): void => {
     const el = tabScrollRef.current
@@ -146,19 +160,96 @@ export default function ApisPage(): JSX.Element {
     }
   }
 
-  const handleClose = (id: string, dirty: boolean): void => {
-    if (!dirty) {
-      closeTab(id)
+  const performClose = (ids: string[]): void => {
+    for (const id of ids) closeTab(id)
+    setCloseRequest(null)
+  }
+
+  const requestClose = (ids: string[]): void => {
+    const unique = [...new Set(ids)]
+    if (unique.length === 0) return
+    const dirtyIds = unique.filter(
+      (id) => tabs.find((tab) => tab.id === id)?.dirty
+    )
+    if (dirtyIds.length === 0) {
+      performClose(unique)
       return
     }
-    modal.confirm({
-      title: '放弃未保存的修改？',
-      content: '该标签页有未保存的修改，关闭后将丢失。',
-      okText: '放弃并关闭',
-      okButtonProps: { danger: true },
-      cancelText: '取消',
-      onOk: () => closeTab(id)
+    setCloseRequest({ ids: unique, dirtyIds })
+  }
+
+  const saveAndClose = async (): Promise<void> => {
+    if (!closeRequest) return
+    setClosing(true)
+    try {
+      for (const id of closeRequest.dirtyIds) await saveTarget(id)
+      performClose(closeRequest.ids)
+      message.success('已保存并关闭')
+    } catch (error) {
+      message.error((error as Error).message)
+    } finally {
+      setClosing(false)
+    }
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!activeId) return
+      const isF4 = event.key === 'F4' && event.ctrlKey && !event.metaKey
+      const isCmdW =
+        event.key.toLowerCase() === 'w' && event.metaKey && !event.ctrlKey && !event.altKey
+      if (!isF4 && !isCmdW) return
+      event.preventDefault()
+      requestClose([activeId])
+    }
+    window.addEventListener('keydown', onKey)
+    const offShortcut = window.api.app.onCloseTabShortcut(() => {
+      const id = useApp.getState().activeId
+      if (id) requestClose([id])
     })
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      offShortcut()
+    }
+  }, [activeId, tabs])
+
+  const tabMenuItems = (tab: (typeof tabs)[number]): MenuProps['items'] => {
+    const index = tabs.findIndex((item) => item.id === tab.id)
+    const others = tabs.filter((item) => item.id !== tab.id)
+    const unmodified = others.filter((item) => !item.dirty)
+    return [
+      { key: 'close', label: '关闭 (Ctrl+F4)', onClick: () => requestClose([tab.id]) },
+      {
+        key: 'closeOthers',
+        label: '关闭其他标签页',
+        disabled: others.length === 0,
+        onClick: () => requestClose(others.map((item) => item.id))
+      },
+      {
+        key: 'closeAll',
+        label: '关闭所有标签页',
+        onClick: () => requestClose(tabs.map((item) => item.id))
+      },
+      {
+        key: 'closeUnmodified',
+        label: '关闭未修改标签页',
+        disabled: unmodified.length === 0,
+        onClick: () => requestClose(unmodified.map((item) => item.id))
+      },
+      { type: 'divider' as const },
+      {
+        key: 'closeLeft',
+        label: '关闭左侧标签页',
+        disabled: index <= 0,
+        onClick: () => requestClose(tabs.slice(0, index).map((item) => item.id))
+      },
+      {
+        key: 'closeRight',
+        label: '关闭右侧标签页',
+        disabled: index >= tabs.length - 1,
+        onClick: () => requestClose(tabs.slice(index + 1).map((item) => item.id))
+      }
+    ]
   }
 
   const saveActive = async (): Promise<void> => {
@@ -191,11 +282,11 @@ export default function ApisPage(): JSX.Element {
     if (!active || active.target_type === 'folder' || !projectId) return
     const tab = tabs.find((item) => item.id === active.target_id)
     try {
-      // 有未保存修改时先落盘，保证分享快照与当前界面一致。
+      // 有未保存修改时先落盘，保证分享内容与当前界面一致。
       if (tab?.dirty) await saveTarget(active.target_id)
       const freshName =
         useApp.getState().drafts[active.target_id]?.name ?? active.name
-      setShareTarget({ id: active.target_id, name: freshName })
+      setShareTarget({ id: active.target_id, name: freshName, scope: 'api' })
     } catch (error) {
       message.error((error as Error).message)
     }
@@ -242,6 +333,24 @@ export default function ApisPage(): JSX.Element {
     }
   }
 
+  const openShareNode = async (item: (typeof targets)[number]): Promise<void> => {
+    if (!projectId) return
+    try {
+      const tab = tabs.find((entry) => entry.id === item.target_id)
+      // 有未保存修改时先落盘，保证分享内容与当前界面一致。
+      if (tab?.dirty) await saveTarget(item.target_id)
+      const freshName =
+        useApp.getState().drafts[item.target_id]?.name ?? item.name
+      setShareTarget({
+        id: item.target_id,
+        name: freshName,
+        scope: item.target_type === 'folder' ? 'folder' : 'api'
+      })
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
+
   const commitDescription = (html: string): void => {
     if (!active) return
     patchDraft(active.target_id, { description: html })
@@ -254,7 +363,11 @@ export default function ApisPage(): JSX.Element {
     <div className="page">
       <PanelGroup direction="horizontal" autoSaveId="workbench-apis-layout-v2">
         <Panel defaultSize={22.5} minSize={18} maxSize={32}>
-          <ApiTree onCreate={handleCreate} onDelete={handleDelete} />
+          <ApiTree
+            onCreate={handleCreate}
+            onDelete={handleDelete}
+            onShare={(item) => void openShareNode(item)}
+          />
         </Panel>
         <PanelResizeHandle className="resize-handle resize-handle-v" />
         <Panel minSize={40}>
@@ -276,38 +389,43 @@ export default function ApisPage(): JSX.Element {
                   const draft = drafts[tab.id]
                   const isFolder = draft?.target_type === 'folder'
                   return (
-                    <div
+                    <Dropdown
                       key={tab.id}
-                      data-tab-id={tab.id}
-                      className={`filetab${tab.id === activeId ? ' active' : ''}`}
-                      onClick={() => setActive(tab.id)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') setActive(tab.id)
-                      }}
+                      trigger={['contextMenu']}
+                      menu={{ items: tabMenuItems(tab) }}
                     >
-                      {tab.dirty ? <span className="red-dot" /> : null}
-                      {isFolder ? (
-                        <FolderOutlined style={{ fontSize: 12, color: '#a58a58' }} />
-                      ) : (
-                        <span className="method-text">
-                          {(draft?.method || 'GET').toUpperCase()}
-                        </span>
-                      )}
-                      <span className="tab-name">{tab.name}</span>
-                      <span
-                        className="tab-x"
+                      <div
+                        data-tab-id={tab.id}
+                        className={`filetab${tab.id === activeId ? ' active' : ''}`}
+                        onClick={() => setActive(tab.id)}
                         role="button"
-                        tabIndex={-1}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          handleClose(tab.id, tab.dirty)
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') setActive(tab.id)
                         }}
                       >
-                        <CloseOutlined style={{ fontSize: 10 }} />
-                      </span>
-                    </div>
+                        {tab.dirty ? <span className="red-dot" /> : null}
+                        {isFolder ? (
+                          <FolderOutlined style={{ fontSize: 12, color: '#a58a58' }} />
+                        ) : (
+                          <span className="method-text">
+                            {(draft?.method || 'GET').toUpperCase()}
+                          </span>
+                        )}
+                        <span className="tab-name">{tab.name}</span>
+                        <span
+                          className="tab-x"
+                          role="button"
+                          tabIndex={-1}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            requestClose([tab.id])
+                          }}
+                        >
+                          <CloseOutlined style={{ fontSize: 10 }} />
+                        </span>
+                      </div>
+                    </Dropdown>
                   )
                 })}
               </div>
@@ -540,6 +658,19 @@ export default function ApisPage(): JSX.Element {
                       </div>
                     </Panel>
                   </PanelGroup>
+                ) : mode === '设计' ? (
+                  <DesignEditor
+                    draft={active}
+                    projectId={projectId}
+                    onChange={(patch) => patchDraft(active.target_id, patch)}
+                  />
+                ) : mode === '接口用例' ? (
+                  <CasesEditor
+                    draft={active}
+                    projectId={projectId}
+                    environmentId={currentEnvId}
+                    onChange={(patch) => patchDraft(active.target_id, patch)}
+                  />
                 ) : (
                   <ModePlaceholder mode={mode} draft={active} />
                 )}
@@ -548,6 +679,38 @@ export default function ApisPage(): JSX.Element {
           </div>
         </Panel>
       </PanelGroup>
+
+      <Modal
+        open={closeRequest !== null}
+        title="放弃未保存的修改？"
+        closable={false}
+        maskClosable={false}
+        footer={null}
+      >
+        <p>
+          {closeRequest && closeRequest.dirtyIds.length > 1
+            ? `有 ${closeRequest.dirtyIds.length} 个标签页存在未保存的修改，关闭后将丢失。`
+            : '该标签页有未保存的修改，关闭后将丢失。'}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button
+            style={{ background: '#2f8f62', borderColor: '#2f8f62', color: '#fff' }}
+            loading={closing}
+            onClick={() => void saveAndClose()}
+          >
+            保存后关闭
+          </Button>
+          <Button onClick={() => setCloseRequest(null)}>取消</Button>
+          <Button
+            danger
+            onClick={() => {
+              if (closeRequest) performClose(closeRequest.ids)
+            }}
+          >
+            放弃并关闭
+          </Button>
+        </div>
+      </Modal>
 
       <DocShareDialog
         open={Boolean(shareTarget)}
@@ -558,12 +721,12 @@ export default function ApisPage(): JSX.Element {
           shareTarget
             ? {
                 name: shareTarget.name,
-                scope: 'api',
+                scope: shareTarget.scope,
                 targetIds: [shareTarget.id]
               }
             : undefined
         }
-        lockScope="api"
+        lockScope={shareTarget?.scope ?? 'api'}
         lockTarget={shareTarget?.id}
         lockTargetName={shareTarget?.name}
         onClose={() => setShareTarget(null)}

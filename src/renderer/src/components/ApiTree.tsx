@@ -34,10 +34,12 @@ import {
 } from '@ant-design/icons'
 import type { TargetSummary } from '@shared/types'
 import { useApp } from '../store'
+import ApiDescriptionDialog from './ApiDescriptionDialog'
 
 interface Props {
   onCreate: (parentId: string, type: 'folder' | 'api') => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onShare: (item: TargetSummary) => void
 }
 
 interface TreeNode extends DataNode {
@@ -99,13 +101,14 @@ function buildTree(items: TargetSummary[], ascending: boolean): TreeNode[] {
   return build('0')
 }
 
-export default function ApiTree({ onCreate, onDelete }: Props): JSX.Element {
+export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Element {
   const { modal, message } = AntApp.useApp()
   const targets = useApp((s) => s.targets)
   const activeId = useApp((s) => s.activeId)
   const openTarget = useApp((s) => s.openTarget)
   const reloadTargets = useApp((s) => s.reloadTargets)
   const renameTarget = useApp((s) => s.renameTarget)
+  const describeTarget = useApp((s) => s.describeTarget)
   const reorderTargets = useApp((s) => s.reorderTargets)
   const [keyword, setKeyword] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
@@ -114,6 +117,7 @@ export default function ApiTree({ onCreate, onDelete }: Props): JSX.Element {
   const [newOpen, setNewOpen] = useState(false)
   const [renaming, setRenaming] = useState<TargetSummary | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [describing, setDescribing] = useState<TargetSummary | null>(null)
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
@@ -294,7 +298,7 @@ export default function ApiTree({ onCreate, onDelete }: Props): JSX.Element {
           key: 'share',
           label: '分享',
           icon: <ShareAltOutlined />,
-          onClick: () => message.info('分享将在后续里程碑支持')
+          onClick: () => onShare(item)
         },
         { type: 'divider' as const },
         {
@@ -305,6 +309,12 @@ export default function ApiTree({ onCreate, onDelete }: Props): JSX.Element {
         },
         { key: 'copy', label: '复制', icon: <CopyOutlined />, onClick: () => message.info('复制将在后续里程碑支持') },
         { key: 'edit', label: '编辑', icon: <EditOutlined />, onClick: () => openRename(item) },
+        {
+          key: 'describe',
+          label: '编辑说明',
+          icon: <FileMarkdownOutlined />,
+          onClick: () => setDescribing(item)
+        },
         { type: 'divider' as const },
         { key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true, onClick: () => handleDelete(item) }
       ]
@@ -314,7 +324,7 @@ export default function ApiTree({ onCreate, onDelete }: Props): JSX.Element {
         key: 'share',
         label: '分享',
         icon: <ShareAltOutlined />,
-        onClick: () => message.info('分享将在后续里程碑支持')
+        onClick: () => onShare(item)
       },
       { type: 'divider' as const },
       {
@@ -506,6 +516,18 @@ export default function ApiTree({ onCreate, onDelete }: Props): JSX.Element {
           />
         )}
       </div>
+
+      <ApiDescriptionDialog
+        open={describing !== null}
+        value={describing?.description ?? ''}
+        onClose={() => setDescribing(null)}
+        onCommit={(html) => {
+          if (!describing) return
+          const id = describing.target_id
+          setDescribing(null)
+          void describeTarget(id, html).catch((error: Error) => message.error(error.message))
+        }}
+      />
 
       <Modal
         title="编辑"

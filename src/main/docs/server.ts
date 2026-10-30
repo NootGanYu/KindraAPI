@@ -1,16 +1,20 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
 import os from 'node:os'
+import path from 'node:path'
 import type {
+  CaseAssertion,
   DocServiceStatus,
   DocSettings,
   DocShare,
-  DocTargetSnapshot,
   Param,
-  ResponseExample
+  Project,
+  ResponseExample,
+  Target
 } from '@shared/types'
 import * as store from '../storage/store'
 import { htmlToText, sanitizeRichHtml } from '@shared/richText'
+import { createZip } from './zip'
 
 const DOC_HOST = '0.0.0.0'
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000
@@ -166,7 +170,7 @@ function sendHtml(res: http.ServerResponse, code: number, body: string): void {
 
 function sendAttachment(
   res: http.ServerResponse,
-  body: string,
+  body: string | Buffer,
   contentType: string,
   filename: string
 ): void {
@@ -398,6 +402,21 @@ details.raw-request summary{cursor:pointer;color:var(--gold);font-size:12.5px}
 .empty{padding:40px;text-align:center;color:var(--muted);background:#fff;border:1px dashed var(--line);border-radius:10px}
 .doc-footer{max-width:1340px;margin:0 auto;padding:0 44px 40px 318px;color:var(--muted);font-size:11.5px}
 .muted{color:var(--muted)}
+.breadcrumb{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;margin-bottom:14px}
+.breadcrumb a{color:var(--gold)}
+.breadcrumb .sep{color:#c9bfae}
+.download-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.dl-btn{display:inline-flex;align-items:center;height:30px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:#fff;color:var(--text);font-size:12.5px;text-decoration:none}
+.dl-btn:hover{border-color:var(--gold);color:var(--gold)}
+.dl-btn.disabled{background:var(--soft);color:#b8ae9d;border-color:var(--line);cursor:not-allowed}
+.folder-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin:14px 0;box-shadow:0 1px 2px rgba(70,55,30,.03)}
+.folder-card h2{margin:0;font-size:17px}
+.folder-card .folder-count{margin-top:8px;color:var(--muted);font-size:12px}
+.nav-api.active{background:rgba(138,107,59,.12);color:var(--ink);font-weight:600}
+.nav-folder>summary a{color:inherit;text-decoration:none}
+.nav-desc{color:var(--muted);font-size:11.5px;line-height:1.5;margin:2px 8px 6px 20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.folder-desc{margin:8px 0 18px}
+.offline-note{margin-top:16px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:12px;background:var(--soft)}
 .gate-wrap{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(160deg,#faf8f4 0%,#f1e8d7 100%)}
 .gate{width:100%;max-width:380px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:32px 30px;box-shadow:0 18px 60px rgba(70,55,30,.10)}
 .gate .logo{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#c8a25e,#8a6b3b);font-weight:700;margin-bottom:18px}
@@ -473,15 +492,24 @@ function methodClass(method?: string): string {
   return /^[A-Z]+$/.test(upper) ? upper : 'OTHER'
 }
 
+function fileNameOf(filePath: string): string {
+  const parts = filePath.split(/[\\/]/)
+  return parts[parts.length - 1] || filePath
+}
+
 function renderParamTable(params: Param[], showValue = true): string {
   const rows = params
-    .map(
-      (param) => `<tr>
+    .map((param) => {
+      const value =
+        param.field_type === 'file' && param.value
+          ? fileNameOf(param.value)
+          : param.value
+      return `<tr>
 <td class="mono">${escapeHtml(param.key)}</td>
-${showValue ? `<td class="mono">${param.value ? escapeHtml(param.value) : '<span class="muted">—</span>'}</td>` : ''}
+${showValue ? `<td class="mono">${value ? escapeHtml(value) : '<span class="muted">—</span>'}</td>` : ''}
 <td>${escapeHtml(param.description || '')}</td>
 </tr>`
-    )
+    })
     .join('')
   return `<table><thead><tr><th>参数名</th>${showValue ? '<th>值</th>' : ''}<th>说明</th></tr></thead><tbody>${rows}</tbody></table>`
 }
@@ -541,7 +569,7 @@ ${headerBlock}${cookieBlock}${requestBlock}
 </div>`
 }
 
-function renderBody(target: DocTargetSnapshot, settings: DocSettings): string {
+function renderBody(target: Target, settings: DocSettings): string {
   if (!settings.show_body) return ''
   const body = target.request?.body
   if (!body) return ''
@@ -564,7 +592,7 @@ function renderBody(target: DocTargetSnapshot, settings: DocSettings): string {
   return `<h4>请求体</h4><pre>${escapeHtml(prettyBody)}</pre>`
 }
 
-function renderScripts(target: DocTargetSnapshot, settings: DocSettings): string {
+function renderScripts(target: Target, settings: DocSettings): string {
   if (!settings.show_scripts) return ''
   const pre = target.request?.pre_script?.trim()
   const test = target.request?.test?.trim()
@@ -574,7 +602,66 @@ function renderScripts(target: DocTargetSnapshot, settings: DocSettings): string
   }`
 }
 
-function renderApi(target: DocTargetSnapshot, settings: DocSettings): string {
+function renderDesignSection(target: Target): string {
+  const errors = target.design?.errors ?? []
+  if (errors.length === 0) return ''
+  const rows = errors
+    .map(
+      (error) => `<tr>
+<td class="mono">${escapeHtml(error.code)}</td>
+<td>${escapeHtml(error.message)}</td>
+<td>${escapeHtml(error.description || '')}</td>
+</tr>`
+    )
+    .join('')
+  return `<div class="api-block"><h3>设计 · 错误码</h3>
+<table><thead><tr><th>Code</th><th>说明</th><th>备注</th></tr></thead><tbody>${rows}</tbody></table>
+</div>`
+}
+
+const ASSERTION_OPS: Record<string, string> = {
+  equals: '等于',
+  not_equals: '不等于',
+  contains: '包含',
+  exists: '存在',
+  gt: '大于',
+  lt: '小于'
+}
+
+function assertionText(assertion: CaseAssertion): string {
+  const subject =
+    assertion.kind === 'status'
+      ? '状态码'
+      : assertion.kind === 'duration'
+        ? '耗时(ms)'
+        : `JSON ${assertion.path || '（未设置路径）'}`
+  const op = ASSERTION_OPS[assertion.op] ?? assertion.op
+  const expected = assertion.op === 'exists' ? '' : ` ${assertion.expected ?? ''}`
+  return `${subject} ${op}${expected}`
+}
+
+function renderCasesSection(target: Target): string {
+  const cases = (target.cases ?? []).filter((item) => item.is_enabled !== 0)
+  if (cases.length === 0) return ''
+  const rows = cases
+    .map((item) => {
+      const assertions = (item.assertions ?? [])
+        .filter((assertion) => assertion.is_enabled !== 0)
+        .map(assertionText)
+        .join('；')
+      return `<tr>
+<td>${escapeHtml(item.name)}</td>
+<td>${escapeHtml(item.description || '')}</td>
+<td>${escapeHtml(assertions || '—')}</td>
+</tr>`
+    })
+    .join('')
+  return `<div class="api-block"><h3>接口用例</h3>
+<table><thead><tr><th>用例</th><th>说明</th><th>断言</th></tr></thead><tbody>${rows}</tbody></table>
+</div>`
+}
+
+function renderApi(target: Target, settings: DocSettings, apiHref?: string): string {
   const method = methodClass(target.method)
   const label = methodText(target.method)
   const request = target.request
@@ -609,71 +696,185 @@ ${
   const scriptSection = scriptBlock
     ? `<div class="api-block"><h3>脚本</h3>${scriptBlock}</div>`
     : ''
+  const designSection = settings.show_design !== false ? renderDesignSection(target) : ''
+  const casesSection = settings.show_cases !== false ? renderCasesSection(target) : ''
+
+  const heading = apiHref
+    ? `<a href="${escapeHtml(apiHref)}">${escapeHtml(target.name)}</a>`
+    : escapeHtml(target.name)
 
   return `<section class="api-card" id="api-${escapeHtml(target.target_id)}">
 <div class="api-head">
 <span class="method ${method}">${escapeHtml(label)}</span>
-<h2>${escapeHtml(target.name)}</h2>
+<h2>${heading}</h2>
 </div>
 ${target.description ? `<div class="api-desc">${sanitizeRichHtml(target.description)}</div>` : ''}
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
     target.url || '（未设置 URL）'
   )}</div>
-${requestSection}${responseSection}${scriptSection}
+${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}
 </section>`
 }
 
-function renderNav(share: DocShare): string {
-  const targets = share.snapshot.targets
-  const ids = new Set(targets.map((target) => target.target_id))
-  const byParent = new Map<string, DocTargetSnapshot[]>()
-  for (const target of targets) {
+interface ShareView {
+  share: DocShare
+  project: Project
+  targets: Target[]
+  rootId: string | null
+  byParent: Map<string, Target[]>
+  byId: Map<string, Target>
+  lastUpdated: string
+}
+
+interface RenderCtx {
+  share: DocShare
+  view: ShareView
+  offline: boolean
+  /** 当前页面在 ZIP 内的路径，仅离线渲染使用 */
+  currentFile: string
+  /** target_id → ZIP 内路径，仅离线渲染使用 */
+  fileOf: ((targetId: string) => string | null) | null
+}
+
+function buildShareView(
+  share: DocShare,
+  resolved: store.ResolvedDocShare
+): ShareView | null {
+  if (!resolved.project || resolved.notFound) return null
+  const ids = new Set(resolved.targets.map((target) => target.target_id))
+  const byParent = new Map<string, Target[]>()
+  const byId = new Map<string, Target>()
+  let lastUpdated = share.updated_at
+  for (const target of resolved.targets) {
+    byId.set(target.target_id, target)
+    if (!lastUpdated || target.updated_at > lastUpdated) lastUpdated = target.updated_at
     const parent = ids.has(target.parent_id) ? target.parent_id : '0'
     const list = byParent.get(parent) ?? []
     list.push(target)
     byParent.set(parent, list)
   }
+  for (const list of byParent.values()) {
+    list.sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+  }
+  return { share, project: resolved.project, targets: resolved.targets, rootId: resolved.rootId, byParent, byId, lastUpdated }
+}
 
-  const sortItems = (items: DocTargetSnapshot[]): DocTargetSnapshot[] =>
-    items
-      .slice()
-      .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-Hans-CN'))
+function shareBase(share: DocShare): string {
+  return `/share/${encodeURIComponent(share.share_id)}`
+}
 
-  const walk = (parent: string): string => {
-    const items = sortItems(byParent.get(parent) ?? [])
-    return items
-      .map((target) => {
-        if (target.target_type === 'folder') {
-          const children = walk(target.target_id)
-          return `<details class="nav-folder" open>
-<summary>${escapeHtml(target.name)}</summary>
+function navRoot(view: ShareView): string {
+  return view.share.scope === 'folder' && view.rootId ? view.rootId : '0'
+}
+
+function relativeHref(fromFile: string, toFile: string): string {
+  const fromDir = path.posix.dirname(fromFile)
+  const rel = path.posix.relative(fromDir, toFile)
+  return encodeURI(rel || path.posix.basename(toFile))
+}
+
+function hrefFor(ctx: RenderCtx, target: Target): string {
+  if (!ctx.offline) {
+    return target.target_type === 'folder'
+      ? `${shareBase(ctx.share)}/f/${encodeURIComponent(target.target_id)}`
+      : `${shareBase(ctx.share)}/a/${encodeURIComponent(target.target_id)}`
+  }
+  const to = ctx.fileOf?.(target.target_id)
+  if (!to) return '#'
+  return relativeHref(ctx.currentFile, to)
+}
+
+function indexHref(ctx: RenderCtx): string {
+  return ctx.offline ? relativeHref(ctx.currentFile, 'index.html') : shareBase(ctx.share)
+}
+
+function folderChain(view: ShareView, targetId: string): Target[] {
+  const stack: Target[] = []
+  const current = view.byId.get(targetId)
+  if (!current) return stack
+  let parent = current.parent_id !== '0' ? view.byId.get(current.parent_id) : undefined
+  while (parent) {
+    stack.unshift(parent)
+    parent = parent.parent_id !== '0' ? view.byId.get(parent.parent_id) : undefined
+  }
+  return stack
+}
+
+function renderBreadcrumb(ctx: RenderCtx, current?: Target): string {
+  const parts = [`<a href="${escapeHtml(indexHref(ctx))}">${escapeHtml(ctx.share.name)}</a>`]
+  if (current) {
+    for (const ancestor of folderChain(ctx.view, current.target_id)) {
+      if (ancestor.target_id === current.target_id) continue
+      parts.push(`<span class="sep">/</span><a href="${escapeHtml(hrefFor(ctx, ancestor))}">${escapeHtml(ancestor.name)}</a>`)
+    }
+    parts.push(`<span class="sep">/</span><span>${escapeHtml(current.name)}</span>`)
+  }
+  return `<div class="breadcrumb">${parts.join('')}</div>`
+}
+
+function renderDownloadBar(
+  share: DocShare,
+  folderId: string | null,
+  apiId: string | null
+): string {
+  const base = shareBase(share)
+  const all = `<a class="dl-btn" href="${base}/download?scope=all&amp;format=zip">下载全部</a>`
+  const folder = folderId
+    ? `<a class="dl-btn" href="${base}/f/${encodeURIComponent(folderId)}/download?format=zip">下载当前文件夹</a>`
+    : '<span class="dl-btn disabled" title="仅在文件夹页可用">下载当前文件夹</span>'
+  const api = apiId
+    ? `<a class="dl-btn" href="${base}/a/${encodeURIComponent(apiId)}/download?format=html">下载当前接口</a>`
+    : '<span class="dl-btn disabled" title="仅在接口页可用">下载当前接口</span>'
+  return `<div class="download-bar">${all}${folder}${api}</div>`
+}
+
+function renderNav(ctx: RenderCtx, currentFolderId?: string, currentApiId?: string): string {
+  const folderNode = (target: Target): string => {
+    const children = walk(target.target_id)
+    const active = target.target_id === currentFolderId ? ' active' : ''
+    const desc = target.description
+      ? `<div class="nav-desc">${escapeHtml(htmlToText(target.description))}</div>`
+      : ''
+    return `<details class="nav-folder" open>
+<summary class="nav-folder-summary${active}"><a href="${escapeHtml(hrefFor(ctx, target))}">${escapeHtml(target.name)}</a></summary>
+${desc}
 <div class="nav-children">${children || '<span class="muted" style="padding:4px 8px;display:block;font-size:12px">空目录</span>'}</div>
 </details>`
-        }
-        return `<a class="nav-api" href="#api-${escapeHtml(target.target_id)}"><span class="m ${methodClass(
+  }
+
+  const walk = (parent: string): string =>
+    (ctx.view.byParent.get(parent) ?? [])
+      .map((target) => {
+        if (target.target_type === 'folder') return folderNode(target)
+        const active = target.target_id === currentApiId ? ' active' : ''
+        return `<a class="nav-api${active}" href="${escapeHtml(hrefFor(ctx, target))}"><span class="m ${methodClass(
           target.method
         )}">${escapeHtml(methodText(target.method))}</span><span>${escapeHtml(target.name)}</span></a>`
       })
       .join('')
-  }
 
-  return walk('0')
+  if (ctx.view.share.scope === 'folder' && ctx.view.rootId) {
+    const root = ctx.view.byId.get(ctx.view.rootId)
+    if (root) return folderNode(root)
+  }
+  return walk(navRoot(ctx.view))
 }
 
-function renderDocPage(share: DocShare): string {
-  const apis = share.snapshot.targets.filter((target) => target.target_type === 'api')
+function renderShareShell(
+  ctx: RenderCtx,
+  title: string,
+  main: string,
+  currentFolderId?: string,
+  currentApiId?: string
+): string {
+  const { share, view } = ctx
+  const apiCount = view.targets.filter((target) => target.target_type === 'api').length
   const expire = store.docShareExpireInfo(share)
-  const nav = renderNav(share)
-  const content = apis.length
-    ? `<div class="section-title">接口（${apis.length}）</div>${apis
-        .map((api) => renderApi(api, share.settings))
-        .join('')}`
-    : '<div class="empty">该分享中没有接口</div>'
-
+  const nav = renderNav(ctx, currentFolderId, currentApiId)
   const body = `
 <header class="doc-top">
   <div class="brand"><span class="logo">K</span> KindraAPI 文档</div>
-  <div class="top-crumb">${escapeHtml(share.snapshot.project_name)} / ${escapeHtml(share.name)}</div>
+  <div class="top-crumb">${escapeHtml(view.project.name)} / ${escapeHtml(share.name)}</div>
   <div class="top-badges">${shareChips(share)}</div>
 </header>
 <div class="doc-layout">
@@ -681,28 +882,129 @@ function renderDocPage(share: DocShare): string {
     <div class="nav-title">目录</div>
     ${nav || '<span class="muted">暂无内容</span>'}
     <div class="nav-meta">
-      <div>项目：<b>${escapeHtml(share.snapshot.project_name)}</b></div>
-      <div>接口数：<b>${apis.length}</b></div>
-      <div>最后更新：<b>${escapeHtml(formatTime(share.updated_at))}</b></div>
+      <div>项目：<b>${escapeHtml(view.project.name)}</b></div>
+      <div>接口数：<b>${apiCount}</b></div>
+      <div>最后更新：<b>${escapeHtml(formatTime(view.lastUpdated))}</b></div>
       <div>有效期：<b>${escapeHtml(expire.expire_label)}</b></div>
     </div>
   </aside>
-  <main class="doc-main">
-    <div class="hero">
-      <h1>${escapeHtml(share.name)}</h1>
-      ${share.snapshot.project_intro ? `<p>${escapeHtml(share.snapshot.project_intro)}</p>` : ''}
-      <div class="hero-meta">
-        <span>项目 ${escapeHtml(share.snapshot.project_name)}</span>
-        <span>生成于 ${escapeHtml(formatTime(share.snapshot.generated_at))}</span>
-        <span>${escapeHtml(shareChipText(share))}</span>
-      </div>
-    </div>
-    ${content}
-  </main>
+  <main class="doc-main">${main}</main>
 </div>
-<footer class="doc-footer">由 KindraAPI 生成 · ${escapeHtml(formatTime(share.updated_at))}</footer>`
+<footer class="doc-footer">由 KindraAPI 生成 · ${escapeHtml(formatTime(view.lastUpdated))}</footer>`
+  return pageShell(title, body)
+}
 
-  return pageShell(`${share.name} · KindraAPI 文档`, body)
+function folderCounts(view: ShareView, folderId: string): string {
+  const children = view.byParent.get(folderId) ?? []
+  const folders = children.filter((item) => item.target_type === 'folder').length
+  const apis = children.filter((item) => item.target_type === 'api').length
+  return `${folders} 个子目录 · ${apis} 个接口`
+}
+
+function renderFolderCard(ctx: RenderCtx, folder: Target): string {
+  const href = hrefFor(ctx, folder)
+  return `<section class="folder-card">
+<h2><a href="${escapeHtml(href)}">${escapeHtml(folder.name)}</a></h2>
+${folder.description ? `<div class="api-desc">${sanitizeRichHtml(folder.description)}</div>` : ''}
+<div class="folder-count">${escapeHtml(folderCounts(ctx.view, folder.target_id))}</div>
+</section>`
+}
+
+function renderListing(ctx: RenderCtx, parentId: string): string {
+  const items = ctx.view.byParent.get(parentId) ?? []
+  if (items.length === 0) {
+    return '<div class="empty">该目录下暂无内容</div>'
+  }
+  const folders = items.filter((item) => item.target_type === 'folder')
+  const apis = items.filter((item) => item.target_type === 'api')
+  return `${folders.map((folder) => renderFolderCard(ctx, folder)).join('')}${
+    apis.length
+      ? `<div class="section-title">接口（${apis.length}）</div>${apis
+          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api)))
+          .join('')}`
+      : ''
+  }`
+}
+
+function renderOfflineNote(ctx: RenderCtx): string {
+  if (!ctx.offline) return ''
+  return `<div class="offline-note">离线文档 · 生成于 ${escapeHtml(formatTime(ctx.view.lastUpdated))}，由 KindraAPI 导出。</div>`
+}
+
+function renderHero(
+  ctx: RenderCtx,
+  options: {
+    title?: string
+    introHtml?: string
+    introText?: string
+    downloadFolderId?: string | null
+    downloadApiId?: string | null
+    current?: Target
+  }
+): string {
+  const { share } = ctx
+  const meta = `<div class="hero-meta">
+<span>项目 ${escapeHtml(ctx.view.project.name)}</span>
+<span>${escapeHtml(shareChipText(share))}</span>
+</div>`
+  return `<div class="hero">
+${renderBreadcrumb(ctx, options.current)}
+${options.title ? `<h1>${escapeHtml(options.title)}</h1>` : ''}
+${options.introHtml ? `<div class="api-desc folder-desc">${options.introHtml}</div>` : ''}
+${options.introText ? `<p>${escapeHtml(options.introText)}</p>` : ''}
+${meta}
+${ctx.offline ? '' : renderDownloadBar(share, options.downloadFolderId ?? null, options.downloadApiId ?? null)}
+${renderOfflineNote(ctx)}
+</div>`
+}
+
+function renderShareIndexPage(ctx: RenderCtx): string | null {
+  if (ctx.share.scope === 'folder' && ctx.view.rootId) {
+    return renderFolderPage(ctx, ctx.view.rootId)
+  }
+  if (ctx.share.scope === 'api' && ctx.view.rootId) {
+    return renderApiPage(ctx, ctx.view.rootId)
+  }
+  const main = `${renderHero(ctx, {
+    title: ctx.share.name,
+    introText: ctx.view.project.intro
+  })}
+<div class="section-title">目录</div>
+${renderListing(ctx, '0')}`
+  return renderShareShell(ctx, `${ctx.share.name} · KindraAPI 文档`, main)
+}
+
+function renderFolderPage(ctx: RenderCtx, folderId: string): string | null {
+  const folder = ctx.view.byId.get(folderId)
+  if (!folder || folder.target_type !== 'folder') return null
+  const main = `${renderHero(ctx, {
+    current: folder,
+    title: folder.name,
+    introHtml: folder.description ? sanitizeRichHtml(folder.description) : '',
+    downloadFolderId: folder.target_id
+  })}
+<div class="section-title">内容</div>
+${renderListing(ctx, folder.target_id)}`
+  return renderShareShell(
+    ctx,
+    `${folder.name} · ${ctx.share.name}`,
+    main,
+    folder.target_id
+  )
+}
+
+function renderApiPage(ctx: RenderCtx, apiId: string): string | null {
+  const api = ctx.view.byId.get(apiId)
+  if (!api || api.target_type !== 'api') return null
+  const main = `${renderHero(ctx, { current: api, downloadApiId: api.target_id })}
+${renderApi(api, ctx.share.settings)}`
+  return renderShareShell(
+    ctx,
+    `${api.name} · ${ctx.share.name}`,
+    main,
+    undefined,
+    api.target_id
+  )
 }
 
 function renderPasswordPage(share: DocShare, error = false): string {
@@ -737,18 +1039,23 @@ function renderMessagePage(title: string, message: string, code = 404): string {
   return pageShell(`${title} · KindraAPI 文档`, body)
 }
 
+function shareProjectName(share: DocShare): string {
+  const resolved = store.resolveDocShareTargets(share.project_id, share)
+  return resolved.project?.name ?? share.snapshot.project_name
+}
+
 function renderIndexPage(): string {
   const shares = store.listAllDocShares()
   const rows = shares
     .map((share) => {
       if (shareExpired(share)) {
         return `<tr><td>${escapeHtml(share.name)}</td><td>${escapeHtml(
-          share.snapshot.project_name
+          shareProjectName(share)
         )}</td><td><span class="chip expired">已过期</span></td><td>—</td></tr>`
       }
       return `<tr>
-<td><a href="/share/${escapeHtml(share.share_id)}">${escapeHtml(share.name)}</a></td>
-<td>${escapeHtml(share.snapshot.project_name)}</td>
+<td><a href="${shareBase(share)}">${escapeHtml(share.name)}</a></td>
+<td>${escapeHtml(shareProjectName(share))}</td>
 <td>${share.settings.password ? '<span class="chip password">密码</span>' : '<span class="chip public">公开</span>'}</td>
 <td>${escapeHtml(formatTime(share.updated_at))}</td>
 </tr>`
@@ -787,19 +1094,25 @@ function mdParams(title: string, params: Param[]): string {
   const list = activeParams(params)
   if (list.length === 0) return ''
   return `\n**${title}**\n\n| 参数 | 值 | 说明 |\n| --- | --- | --- |\n${list
-    .map((param) => `| ${mdCell(param.key)} | ${mdCell(param.value)} | ${mdCell(param.description)} |`)
+    .map((param) => {
+      const value =
+        param.field_type === 'file' && param.value
+          ? fileNameOf(param.value)
+          : param.value
+      return `| ${mdCell(param.key)} | ${mdCell(value)} | ${mdCell(param.description)} |`
+    })
     .join('\n')}\n`
 }
 
-function buildMarkdown(share: DocShare): string {
+function buildMarkdown(share: DocShare, view: ShareView): string {
   const settings = share.settings
   const lines: string[] = []
   lines.push(`# ${share.name}`, '')
-  lines.push(`> 项目：${share.snapshot.project_name}`)
-  lines.push(`> 最后更新：${formatTime(share.updated_at)}`)
+  lines.push(`> 项目：${view.project.name}`)
+  lines.push(`> 最后更新：${formatTime(view.lastUpdated)}`)
   lines.push(`> 有效期：${store.docShareExpireInfo(share).expire_label}`, '')
 
-  const apis = share.snapshot.targets.filter((target) => target.target_type === 'api')
+  const apis = view.targets.filter((target) => target.target_type === 'api')
   for (const api of apis) {
     const method = methodText(api.method)
     lines.push(`## ${method} ${api.name}`, '')
@@ -902,9 +1215,9 @@ function urlToOpenApiPath(raw?: string): string {
   return value || '/'
 }
 
-function buildOpenApi(share: DocShare): Record<string, unknown> | null {
+function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown> | null {
   if (!share.settings.openapi) return null
-  const apis = share.snapshot.targets.filter((target) => target.target_type === 'api')
+  const apis = view.targets.filter((target) => target.target_type === 'api')
   const paths: Record<string, Record<string, unknown>> = {}
   const servers = new Set<string>()
 
@@ -1020,19 +1333,149 @@ function buildOpenApi(share: DocShare): Record<string, unknown> | null {
     openapi: '3.0.3',
     info: {
       title: share.name,
-      description: share.snapshot.project_intro || `${share.snapshot.project_name} 接口文档`,
+      description: view.project.intro || `${view.project.name} 接口文档`,
       version: '1.0.0'
     },
     servers: (servers.size ? [...servers] : ['http://localhost']).map((url) => ({ url })),
-    tags: [{ name: share.snapshot.project_name }],
+    tags: [{ name: view.project.name }],
     paths
   }
 }
 
 function downloadName(share: DocShare, ext: string): string {
-  const base = (share.name || '文档').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
+  const base = sanitizeSegment(share.name || '文档', 'docs').slice(0, 80)
   return `${base}.${ext}`
 }
+
+function sanitizeSegment(raw: string, fallback: string): string {
+  let value = String(raw ?? '')
+    .trim()
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    .replace(/[. ]+$/g, '')
+  if (!value) value = fallback
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(value)) value = `_${value}`
+  return value.slice(0, 60) || fallback
+}
+
+interface ZipLayout {
+  files: Map<string, string>
+  pages: Array<{ target: Target; file: string }>
+}
+
+function buildZipLayout(view: ShareView, rootFolderId?: string): ZipLayout {
+  const files = new Map<string, string>()
+  const pages: Array<{ target: Target; file: string }> = []
+  const used = new Map<string, Set<string>>()
+
+  const unique = (dir: string, base: string): string => {
+    const set = used.get(dir) ?? new Set<string>()
+    used.set(dir, set)
+    let name = base
+    let n = 2
+    while (set.has(name.toLowerCase())) name = `${base} (${n++})`
+    set.add(name.toLowerCase())
+    return name
+  }
+  const join = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name)
+
+  const walk = (parent: string, dir: string): void => {
+    for (const item of view.byParent.get(parent) ?? []) {
+      const base = sanitizeSegment(
+        item.name,
+        item.target_type === 'folder' ? 'folder' : 'api'
+      )
+      if (item.target_type === 'folder') {
+        const folderDir = join(dir, unique(dir, base))
+        const file = `${folderDir}/index.html`
+        files.set(item.target_id, file)
+        pages.push({ target: item, file })
+        walk(item.target_id, folderDir)
+      } else {
+        const file = join(dir, `${unique(dir, base)}.html`)
+        files.set(item.target_id, file)
+        pages.push({ target: item, file })
+      }
+    }
+  }
+
+  if (rootFolderId) {
+    const root = view.byId.get(rootFolderId)
+    if (root && root.target_type === 'folder') {
+      files.set(root.target_id, 'index.html')
+      pages.push({ target: root, file: 'index.html' })
+      walk(root.target_id, '')
+    }
+  } else if (view.share.scope === 'folder' && view.rootId) {
+    const root = view.byId.get(view.rootId)
+    if (root) {
+      files.set(root.target_id, 'index.html')
+      pages.push({ target: root, file: 'index.html' })
+      walk(root.target_id, '')
+    }
+  } else if (view.share.scope === 'api' && view.rootId) {
+    const root = view.byId.get(view.rootId)
+    if (root) {
+      files.set(root.target_id, 'index.html')
+      pages.push({ target: root, file: 'index.html' })
+    }
+  } else {
+    walk('0', '')
+  }
+
+  return { files, pages }
+}
+
+function offlineCtx(
+  share: DocShare,
+  view: ShareView,
+  layout: ZipLayout,
+  currentFile: string
+): RenderCtx {
+  return {
+    share,
+    view,
+    offline: true,
+    currentFile,
+    fileOf: (id) => layout.files.get(id) ?? null
+  }
+}
+
+function buildZip(
+  share: DocShare,
+  view: ShareView,
+  rootFolderId?: string
+): Buffer {
+  const layout = buildZipLayout(view, rootFolderId)
+  const entries: Array<{ path: string; data: string }> = []
+  const indexFile = rootFolderId ?? (view.share.scope === 'folder' || view.share.scope === 'api' ? view.rootId : null)
+  const indexCtx = offlineCtx(share, view, layout, 'index.html')
+  const indexHtml = indexFile
+    ? view.byId.get(indexFile)?.target_type === 'api'
+      ? renderApiPage(indexCtx, indexFile)
+      : renderFolderPage(indexCtx, indexFile)
+    : renderShareIndexPage(indexCtx)
+  entries.push({ path: 'index.html', data: indexHtml ?? '' })
+
+  for (const page of layout.pages) {
+    if (page.file === 'index.html') continue
+    const ctx = offlineCtx(share, view, layout, page.file)
+    const html =
+      page.target.target_type === 'folder'
+        ? renderFolderPage(ctx, page.target.target_id)
+        : renderApiPage(ctx, page.target.target_id)
+    if (html) entries.push({ path: page.file, data: html })
+  }
+
+  const root = sanitizeSegment(share.name, 'docs')
+  return createZip(entries.map((entry) => ({ path: `${root}/${entry.path}`, data: entry.data })))
+}
+
+function buildSingleApiHtml(share: DocShare, view: ShareView, apiId: string): string | null {
+  const layout = buildZipLayout(view)
+  const ctx = offlineCtx(share, view, layout, 'index.html')
+  return renderApiPage(ctx, apiId)
+}
+
 
 // ---------------------------------------------------------------------------
 // Routing
@@ -1075,11 +1518,16 @@ async function handleAuth(
   res.end()
 }
 
+function loadShareView(share: DocShare): ShareView | null {
+  return buildShareView(share, store.resolveDocShareTargets(share.project_id, share))
+}
+
 function handleDownload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   share: DocShare,
-  url: URL
+  url: URL,
+  scope: { folderId?: string; apiId?: string } = {}
 ): void {
   if (shareExpired(share)) {
     sendHtml(res, 410, renderMessagePage('文档已过期', '该分享已超过有效期。', 410))
@@ -1089,22 +1537,117 @@ function handleDownload(
     sendHtml(res, 401, renderPasswordPage(share))
     return
   }
-  const format = (url.searchParams.get('format') || 'md').toLowerCase()
+  const view = loadShareView(share)
+  if (!view) {
+    sendHtml(res, 404, renderMessagePage('分享内容不存在', '该分享的目标可能已被删除。', 404))
+    return
+  }
+
+  if (scope.folderId) {
+    const folder = view.byId.get(scope.folderId)
+    if (!folder || folder.target_type !== 'folder') {
+      sendHtml(res, 404, renderMessagePage('目录不存在', '该目录可能已被删除。', 404))
+      return
+    }
+    if ((url.searchParams.get('format') || 'zip').toLowerCase() !== 'zip') {
+      sendText(res, 400, '文件夹仅支持 ZIP 下载')
+      return
+    }
+    sendAttachment(
+      res,
+      buildZip(share, view, folder.target_id),
+      'application/zip',
+      downloadName(share, 'zip')
+    )
+    return
+  }
+
+  if (scope.apiId) {
+    const api = view.byId.get(scope.apiId)
+    if (!api || api.target_type !== 'api') {
+      sendHtml(res, 404, renderMessagePage('接口不存在', '该接口可能已被删除。', 404))
+      return
+    }
+    const format = (url.searchParams.get('format') || 'html').toLowerCase()
+    if (format === 'md' || format === 'markdown') {
+      const subView: ShareView = {
+        ...view,
+        targets: [api],
+        byParent: new Map([['0', [api]]]),
+        byId: new Map([[api.target_id, api]])
+      }
+      sendAttachment(
+        res,
+        buildMarkdown(share, subView),
+        'text/markdown; charset=utf-8',
+        `${sanitizeSegment(api.name, 'api')}.md`
+      )
+      return
+    }
+    if (format === 'html') {
+      const html = buildSingleApiHtml(share, view, api.target_id)
+      if (!html) {
+        sendHtml(res, 404, renderMessagePage('接口不存在', '该接口可能已被删除。', 404))
+        return
+      }
+      sendAttachment(
+        res,
+        html,
+        'text/html; charset=utf-8',
+        `${sanitizeSegment(api.name, 'api')}.html`
+      )
+      return
+    }
+    sendText(res, 400, '不支持的导出格式')
+    return
+  }
+
+  const format = (
+    url.searchParams.get('format') ||
+    (url.searchParams.get('scope') === 'all' ? 'zip' : 'md')
+  ).toLowerCase()
+
+  if (format === 'zip') {
+    sendAttachment(
+      res,
+      buildZip(share, view),
+      'application/zip',
+      downloadName(share, 'zip')
+    )
+    return
+  }
   if (format === 'openapi') {
-    const spec = buildOpenApi(share)
+    const spec = buildOpenApi(share, view)
     if (!spec) {
       sendText(res, 403, '该分享未开启 OpenAPI 访问')
       return
     }
-    sendAttachment(res, JSON.stringify(spec, null, 2), 'application/json; charset=utf-8', downloadName(share, 'openapi.json'))
+    sendAttachment(
+      res,
+      JSON.stringify(spec, null, 2),
+      'application/json; charset=utf-8',
+      downloadName(share, 'openapi.json')
+    )
     return
   }
   if (format === 'html') {
-    sendAttachment(res, renderDocPage(share), 'text/html; charset=utf-8', downloadName(share, 'html'))
+    const layout = buildZipLayout(view)
+    const html = renderShareIndexPage(offlineCtx(share, view, layout, 'index.html'))
+    sendAttachment(
+      res,
+      html ?? '',
+      'text/html; charset=utf-8',
+      downloadName(share, 'html')
+    )
     return
   }
   if (format === 'md' || format === 'markdown') {
-    sendAttachment(res, buildMarkdown(share), 'text/markdown; charset=utf-8', downloadName(share, 'md'))
+    sendAttachment(
+      res,
+      buildMarkdown(share, view),
+      'text/markdown; charset=utf-8',
+      downloadName(share, 'md')
+    )
     return
   }
   sendText(res, 400, '不支持的导出格式')
@@ -1114,10 +1657,14 @@ async function handleShare(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   share: DocShare,
-  action: string | undefined,
+  rest: string,
   url: URL
 ): Promise<void> {
-  if (action === '/auth' && req.method === 'POST') {
+  if (rest === '/auth') {
+    if (req.method !== 'POST') {
+      sendText(res, 405, 'Method Not Allowed')
+      return
+    }
     if (shareExpired(share)) {
       sendHtml(res, 410, renderMessagePage('文档已过期', '该分享已超过有效期。', 410))
       return
@@ -1125,14 +1672,27 @@ async function handleShare(
     await handleAuth(req, res, share)
     return
   }
+
+  const folderMatch = rest.match(/^\/f\/([A-Za-z0-9_-]{1,80})(\/download)?\/?$/)
+  const apiMatch = rest.match(/^\/a\/([A-Za-z0-9_-]{1,80})(\/download)?\/?$/)
+  const isIndex = rest === '' || rest === '/'
+  const isDownload = rest === '/download'
+  if (!isIndex && !isDownload && !folderMatch && !apiMatch) {
+    sendHtml(res, 404, renderMessagePage('页面不存在', '请检查分享链接是否正确。', 404))
+    return
+  }
   if (req.method !== 'GET') {
     sendText(res, 405, 'Method Not Allowed')
     return
   }
-  if (action === '/download') {
-    handleDownload(req, res, share, url)
+  if (isDownload || folderMatch?.[2] || apiMatch?.[2]) {
+    handleDownload(req, res, share, url, {
+      folderId: folderMatch?.[1],
+      apiId: apiMatch?.[1]
+    })
     return
   }
+
   if (shareExpired(share)) {
     sendHtml(res, 410, renderMessagePage('文档已过期', '该分享已超过有效期。', 410))
     return
@@ -1141,7 +1701,28 @@ async function handleShare(
     sendHtml(res, 401, renderPasswordPage(share, url.searchParams.get('e') === '1'))
     return
   }
-  sendHtml(res, 200, renderDocPage(share))
+  const view = loadShareView(share)
+  if (!view) {
+    sendHtml(res, 404, renderMessagePage('分享内容不存在', '该分享的目标可能已被删除。', 404))
+    return
+  }
+  const ctx: RenderCtx = {
+    share,
+    view,
+    offline: false,
+    currentFile: '',
+    fileOf: null
+  }
+  const html = isIndex
+    ? renderShareIndexPage(ctx)
+    : folderMatch
+      ? renderFolderPage(ctx, folderMatch[1])
+      : renderApiPage(ctx, apiMatch![1])
+  if (!html) {
+    sendHtml(res, 404, renderMessagePage('页面不存在', '该页面可能已被删除。', 404))
+    return
+  }
+  sendHtml(res, 200, html)
 }
 
 async function handleRequest(
@@ -1165,7 +1746,7 @@ async function handleRequest(
     return
   }
 
-  const match = url.pathname.match(/^\/share\/([A-Za-z0-9_-]{1,80})(\/auth|\/download)?\/?$/)
+  const match = url.pathname.match(/^\/share\/([A-Za-z0-9_-]{1,80})(\/.*)?$/)
   if (!match) {
     sendHtml(res, 404, renderMessagePage('页面不存在', '请检查分享链接是否正确。', 404))
     return
@@ -1177,5 +1758,5 @@ async function handleRequest(
     return
   }
 
-  await handleShare(req, res, share, match[2], url)
+  await handleShare(req, res, share, match[2] ?? '', url)
 }

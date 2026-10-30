@@ -1,6 +1,8 @@
 import type {
   AppPaths,
   AppSettings,
+  CaseRunResult,
+  CaseRunSummary,
   DataModel,
   DbConnection,
   DebugConfig,
@@ -75,6 +77,12 @@ import type {
   MqttTestOptions
 } from '@shared/mqtt'
 
+export interface SelectedFile {
+  path: string
+  name: string
+  size: number
+}
+
 export interface ApiBridge {
   paths(): Promise<Result<AppPaths>>
   app: {
@@ -82,6 +90,15 @@ export interface ApiBridge {
     copyText(text: string): Promise<Result<boolean>>
     openExternal(url: string): Promise<Result<boolean>>
     relaunch(): Promise<Result<boolean>>
+    onRequestClose(callback: () => void): () => void
+    onCloseTabShortcut(callback: () => void): () => void
+    confirmClose(): Promise<Result<boolean>>
+  }
+  dialog: {
+    openFiles(): Promise<Result<SelectedFile[]>>
+  }
+  files: {
+    getPathForFile(file: File): string
   }
   debug: {
     get(): Promise<Result<DebugState>>
@@ -109,6 +126,19 @@ export interface ApiBridge {
       orderedIds: string[]
     ): Promise<Result<TargetSummary[]>>
     clone(projectId: string, targetId: string): Promise<Result<Target>>
+    cases: {
+      run(
+        projectId: string,
+        target: Target,
+        caseId: string,
+        environmentId?: string
+      ): Promise<Result<CaseRunResult>>
+      runAll(
+        projectId: string,
+        target: Target,
+        environmentId?: string
+      ): Promise<Result<CaseRunSummary>>
+    }
     versions: {
       list(projectId: string, targetId: string): Promise<Result<TargetVersionSummary[]>>
       get(

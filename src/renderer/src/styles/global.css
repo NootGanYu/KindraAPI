@@ -2180,8 +2180,9 @@ button {
   background: #fbf8f1; border: 1px solid var(--line-2); border-radius: 4px; font-size: 11.5px;
 }
 .body-model-bar .mini {
-  height: 22px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 3px;
-  background: #fff; color: #5b4d38; font-size: 11.5px; cursor: pointer;
+  width: auto; flex: none; height: 22px; padding: 0 8px; border: 1px solid var(--line-2);
+  border-radius: 3px; background: #fff; color: #5b4d38; font-size: 11.5px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
 }
 .body-model-bar .mini:hover { border-color: var(--primary-2); color: var(--primary-2); }
 .model-picker-list { max-height: 360px; overflow: auto; }
@@ -3031,8 +3032,7 @@ button {
   margin: 0 4px;
 }
 .api-desc-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
   height: 430px;
   border: 1px solid var(--line-2);
   border-radius: 6px;
@@ -3042,8 +3042,9 @@ button {
 .api-desc-shell.fullscreen .api-desc-body {
   height: calc(100vh - 170px);
 }
-.api-desc-editor,
-.api-desc-preview {
+.api-desc-editor {
+  flex: 1;
+  min-width: 0;
   overflow: auto;
   padding: 14px 16px;
   outline: none;
@@ -3051,30 +3052,27 @@ button {
   line-height: 1.75;
   color: #3d352a;
 }
-.api-desc-editor {
-  border-right: 1px solid var(--line-2);
-}
 .api-desc-editor:empty::before {
   content: attr(data-placeholder);
   color: #b6a992;
 }
-.api-desc-preview h1,
-.api-desc-preview h2,
-.api-desc-preview h3,
-.api-desc-preview h4 {
+.api-desc-editor h1,
+.api-desc-editor h2,
+.api-desc-editor h3,
+.api-desc-editor h4 {
   margin: 10px 0 6px;
   color: var(--ink);
 }
-.api-desc-preview p {
+.api-desc-editor p {
   margin: 6px 0;
 }
-.api-desc-preview blockquote {
+.api-desc-editor blockquote {
   margin: 8px 0;
   padding-left: 10px;
   border-left: 3px solid #d9c7a5;
   color: #6b5d48;
 }
-.api-desc-preview pre {
+.api-desc-editor pre {
   margin: 8px 0;
   padding: 8px 10px;
   background: #f7f3ea;
@@ -3083,19 +3081,19 @@ button {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
-.api-desc-preview table {
+.api-desc-editor table {
   border-collapse: collapse;
   margin: 8px 0;
 }
-.api-desc-preview th,
-.api-desc-preview td {
+.api-desc-editor th,
+.api-desc-editor td {
   border: 1px solid #e3d9c6;
   padding: 4px 8px;
 }
-.api-desc-preview img {
+.api-desc-editor img {
   max-width: 100%;
 }
-.api-desc-preview a {
+.api-desc-editor a {
   color: #2f6bb0;
 }
 .api-desc-footer {

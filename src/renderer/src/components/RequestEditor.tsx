@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App as AntApp, Dropdown, Input, Radio, Select, Space, Tag, Tooltip } from 'antd'
+import { App as AntApp, Button, Dropdown, Input, Radio, Select, Space, Tag, Tooltip } from 'antd'
 import { DownOutlined } from '@ant-design/icons'
 import type {
   AuthType,
@@ -353,6 +353,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           params={body.formdata ?? []}
           onChange={(formdata) => setBody({ formdata })}
           valuePlaceholder="值或文件路径"
+          allowFile
         />
       )
     }
@@ -362,13 +363,41 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           <span className="muted" style={{ fontSize: 11 }}>
             二进制文件绝对路径
           </span>
-          <Input
-            value={body.binary?.file_path ?? ''}
-            onChange={(event) =>
-              setBody({ binary: { ...(body.binary ?? {}), file_path: event.target.value } })
-            }
-            placeholder="/path/to/file"
-          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Input
+              value={body.binary?.file_path ?? ''}
+              onChange={(event) =>
+                setBody({ binary: { ...(body.binary ?? {}), file_path: event.target.value } })
+              }
+              placeholder="/path/to/file"
+            />
+            <Button
+              onClick={() => {
+                void window.api.dialog.openFiles().then((result) => {
+                  if (!result.ok) {
+                    message.error(result.error)
+                    return
+                  }
+                  const file = result.data[0]
+                  if (!file) return
+                  setBody({
+                    binary: {
+                      ...(body.binary ?? {}),
+                      file_path: file.path,
+                      file_name: file.name
+                    }
+                  })
+                })
+              }}
+            >
+              选择文件
+            </Button>
+          </div>
+          {body.binary?.file_name ? (
+            <span className="muted" style={{ fontSize: 11 }}>
+              {body.binary.file_name}
+            </span>
+          ) : null}
         </Space>
       </div>
     )
