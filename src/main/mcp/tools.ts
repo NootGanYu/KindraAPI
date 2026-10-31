@@ -30,6 +30,12 @@ import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { applyRequestInput, runFlow } from '../flow/engine'
 import { generateSchemaExample } from '../schema/example'
+import {
+  fieldDocsFromSchema,
+  mergeFieldDocs,
+  normalizeFieldDocs,
+  withDisplayPath
+} from '@shared/jsonFields'
 import { importDbTables, testDbConnection } from '../db/mysql'
 import * as mqttStore from '../mqtt/store'
 import * as mqttSessions from '../mqtt/sessionManager'
@@ -83,6 +89,24 @@ function apiTargetOf(args: Args): Target {
   const target = store.getTarget(projectIdOf(args), requiredStr(args, 'target_id'))
   if (!target || target.target_type !== 'api') throw new Error('接口不存在')
   return target
+}
+
+/** 返回给 MCP 调用方时，为每个字段文档附带可读 path。 */
+function withDisplayFieldDocs(target: Target): Target {
+  const body = target.request?.body
+  if (!body?.field_docs?.length) return target
+  return {
+    ...target,
+    request: target.request
+      ? {
+          ...target.request,
+          body: {
+            ...body,
+            field_docs: body.field_docs.map((doc) => withDisplayPath(doc))
+          }
+        }
+      : target.request
+  }
 }
 
 function caseOf(target: Target, caseId: string): ApiCase {
@@ -391,6 +415,59 @@ const TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: 'create_folder',
+    description: '在项目中创建目录，可指定父目录（根为 0）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        parent_id: { type: 'string', description: '父目录 ID，根为 0' },
+        name: { type: 'string', description: '目录名称' },
+        sort: { type: 'number', description: '排序值（可选）' }
+      },
+      ['project_id', 'name']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const parentId = str(args, 'parent_id') || '0'
+      const folder = store.createTargetInProject(projectId, parentId, 'folder')
+      folder.name = requiredStr(args, 'name')
+      if (typeof args.sort === 'number' && Number.isFinite(args.sort)) folder.sort = args.sort
+      return { folder: store.saveTarget(projectId, folder) }
+    }
+  },
+  {
+    name: 'create_api',
+    description: '在项目指定目录下创建空接口（根为 0）。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        parent_id: { type: 'string', description: '父目录 ID，根为 0' },
+        name: { type: 'string', description: '接口名称' },
+        method: { type: 'string', description: 'HTTP 方法，默认 GET' },
+        url: { type: 'string', description: '接口地址，可含 {{baseUrl}}' },
+        description: { type: 'string', description: '接口说明' }
+      },
+      ['project_id', 'name']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const parentId = str(args, 'parent_id') || '0'
+      const target = store.createTargetInProject(projectId, parentId, 'api')
+      target.name = requiredStr(args, 'name')
+      const method = str(args, 'method').trim().toUpperCase()
+      if (method) target.method = method
+      const url = str(args, 'url')
+      if (url) target.url = url
+      const description = str(args, 'description')
+      if (description) target.description = description
+      return { api: store.saveTarget(projectId, target) }
+    }
+  },
+  {
     name: 'get_api_detail',
     description: '获取单个接口的完整实体。',
     requires_write: false,
@@ -399,7 +476,7 @@ const TOOLS: ToolDefinition[] = [
     handler: (args) => {
       const target = store.getTarget(projectIdOf(args), requiredStr(args, 'target_id'))
       if (!target) throw new Error('接口不存在')
-      return { api: target }
+      return { api: withDisplayFieldDocs(target) }
     }
   },
   {
@@ -467,7 +544,37 @@ const TOOLS: ToolDefinition[] = [
               enum: ['none', 'raw', 'json', 'urlencoded', 'formdata', 'binary']
             },
             raw: { type: 'string', description: 'raw/json 模式下的内容' },
-            parameters: { type: 'array', description: 'urlencoded/form-data 参数列表' }
+            parameters: { type: 'array', description: 'urlencoded/form-data 参数列表' },
+            field_docs: {
+              type: 'array',
+              description: 'JSON 请求体字段说明；传入即全量替换',
+              items: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    description: '可读路径，如 user.name、items[].id；也接受 JSON Pointer'
+                  },
+                  pointer: { type: 'string', description: '内部 JSON Pointer（与 path 二选一）' },
+                  type: {
+                    type: 'string',
+                    enum: [
+                      'string',
+                      'number',
+                      'integer',
+                      'boolean',
+                      'null',
+                      'object',
+                      'array',
+                      'unknown'
+                    ]
+                  },
+                  required: { type: 'boolean' },
+                  description: { type: 'string' },
+                  doc_only: { type: 'boolean', description: 'raw 中不存在的仅文档字段' }
+                }
+              }
+            }
           }
         },
         response_example: {
@@ -541,6 +648,8 @@ const TOOLS: ToolDefinition[] = [
         }
         const params = toParams(body.parameters)
         if (params) target.request.body.parameter = params
+        const fieldDocs = normalizeFieldDocs(body.field_docs)
+        if (fieldDocs) target.request.body.field_docs = fieldDocs
       }
 
       const auth = args.auth as Record<string, unknown> | undefined
@@ -591,6 +700,59 @@ const TOOLS: ToolDefinition[] = [
       }
 
       return { api: store.saveTarget(projectId, target) }
+    }
+  },
+  {
+    name: 'move_target',
+    description: '移动接口或目录到指定父目录，并可同时重命名；根为 0。',
+    requires_write: true,
+    requires_execute: false,
+    input_schema: schema(
+      {
+        project_id: S.project,
+        target_id: { type: 'string', description: '接口或目录的 target_id' },
+        parent_id: {
+          type: 'string',
+          description: '目标父目录 ID，根为 0；不传则保持原目录（仅重命名）'
+        },
+        name: { type: 'string', description: '新名称（可选）' }
+      },
+      ['project_id', 'target_id']
+    ),
+    handler: (args) => {
+      const projectId = projectIdOf(args)
+      const target = store.getTarget(projectId, requiredStr(args, 'target_id'))
+      if (!target) throw new Error('接口或目录不存在')
+      const list = store.listTargets(projectId)
+      const parentArg = typeof args.parent_id === 'string' ? args.parent_id.trim() : ''
+      if (parentArg) {
+        if (parentArg !== '0') {
+          const parent = list.find((item) => item.target_id === parentArg)
+          if (!parent || parent.target_type !== 'folder') throw new Error('目标目录不存在')
+        }
+        if (target.target_type === 'folder') {
+          let cursor: string | undefined = parentArg
+          const seen = new Set<string>()
+          while (cursor && cursor !== '0') {
+            if (cursor === target.target_id) {
+              throw new Error('不能将目录移动到自身或子目录')
+            }
+            if (seen.has(cursor)) break
+            seen.add(cursor)
+            cursor = list.find((item) => item.target_id === cursor)?.parent_id
+          }
+        }
+        if (target.parent_id !== parentArg) {
+          const siblings = list.filter(
+            (item) => item.parent_id === parentArg && item.target_id !== target.target_id
+          )
+          target.parent_id = parentArg
+          target.sort = siblings.reduce((max, item) => Math.max(max, item.sort), 0) + 100
+        }
+      }
+      const name = str(args, 'name').trim()
+      if (name) target.name = name
+      return { target: store.saveTarget(projectId, target) }
     }
   },
   {
@@ -687,10 +849,16 @@ const TOOLS: ToolDefinition[] = [
             op.requestBody?.content?.['application/json']?.schema ??
             params.find((param: any) => param?.in === 'body')?.schema
           if (bodySchema) {
+            const exampleValue = exampleFromSchema(bodySchema)
+            const fieldDocs = mergeFieldDocs(
+              target.request?.body?.field_docs,
+              fieldDocsFromSchema(bodySchema, exampleValue)
+            )
             request.body = {
               ...request.body,
               mode: 'json',
-              raw: JSON.stringify(exampleFromSchema(bodySchema), null, 2)
+              raw: JSON.stringify(exampleValue, null, 2),
+              field_docs: fieldDocs
             }
           }
           target.request = request
@@ -2194,7 +2362,7 @@ const TOOLS: ToolDefinition[] = [
       'target_id'
     ]),
     handler: (args) => {
-      const target = apiTargetOf(args)
+      const target = withDisplayFieldDocs(apiTargetOf(args))
       return {
         target_id: target.target_id,
         name: target.name,
@@ -2253,7 +2421,10 @@ const TOOLS: ToolDefinition[] = [
         }
       }
       if (args.request && typeof args.request === 'object') {
-        next.request = args.request as Target['request']
+        const request = args.request as Target['request']
+        const fieldDocs = normalizeFieldDocs(request?.body?.field_docs)
+        if (fieldDocs && request?.body) request.body.field_docs = fieldDocs
+        next.request = request
       }
       if (args.response && typeof args.response === 'object') {
         next.response = args.response as Target['response']

@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App as AntApp, Button, Dropdown, Input, Radio, Select, Space, Tag, Tooltip } from 'antd'
+import {
+  App as AntApp,
+  Button,
+  Dropdown,
+  Input,
+  Radio,
+  Segmented,
+  Select,
+  Space,
+  Tag,
+  Tooltip
+} from 'antd'
 import { DownOutlined } from '@ant-design/icons'
 import type {
   AuthType,
@@ -11,6 +22,7 @@ import type {
 import { createBody } from '@shared/factories'
 import { useApp } from '../store'
 import ParamTable from './ParamTable'
+import JsonFieldTable from './JsonFieldTable'
 import ModelPickerModal from './schemas/ModelPickerModal'
 
 interface Props {
@@ -88,6 +100,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   const [activeTab, setActiveTab] = useState('Body')
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
+  const [bodyView, setBodyView] = useState<'raw' | 'fields'>('raw')
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
 
@@ -240,6 +253,10 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     return () => clearTimeout(timer)
   }, [body.mode, body.raw])
 
+  useEffect(() => {
+    if (jsonError && bodyView === 'fields') setBodyView('raw')
+  }, [jsonError, bodyView])
+
   const sendMenu = {
     items: [
       { key: 'send', label: '发送' },
@@ -287,6 +304,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
       )
     }
     if (body.mode === 'raw' || body.mode === 'json') {
+      const fieldView = body.mode === 'json' && bodyView === 'fields'
       return (
         <div className="body-editor-wrap">
           <div className="body-model-bar">
@@ -298,7 +316,6 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
                   <Tag color="gold">模型 · {referencedModel?.name}</Tag>
                 )}
                 <span className="muted">发送时按模型实时生成，内容只读</span>
-                <span style={{ flex: 1 }} />
                 <Tooltip title="解除引用后保留当前 JSON 可编辑">
                   <button className="mini" onClick={confirmEdit}>
                     编辑
@@ -316,24 +333,61 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
                 <span className="muted">也可直接手写 JSON</span>
               </>
             )}
+            {jsonError ? (
+              <div
+                className="json-error inline"
+                role="alert"
+                title="点击定位到错误位置"
+                onClick={() => focusJsonError(jsonError)}
+              >
+                <span className="json-error-tag">JSON 结构错误</span>
+                第 {jsonError.line} 行第 {jsonError.column} 列：{jsonError.message}
+              </div>
+            ) : (
+              <>
+                <span style={{ flex: 1 }} />
+                {body.mode === 'json' ? (
+                  <Segmented
+                    className="body-view-segmented"
+                    size="small"
+                    value={bodyView}
+                    onChange={(value) => setBodyView(value as 'raw' | 'fields')}
+                    options={[
+                      { label: '原始', value: 'raw' },
+                      { label: '字段', value: 'fields' }
+                    ]}
+                  />
+                ) : null}
+              </>
+            )}
           </div>
-          <div className="editor-shell fill">
-            <Input.TextArea
-              className="editor-input"
-              value={body.raw ?? ''}
-              readOnly={Boolean(bodyModel)}
-              onChange={(event) => setBody({ raw: event.target.value })}
-              onBlur={() => {
-                if (bodyModel) return
-                formatJsonBody()
-                const problem = validateJson(request.body?.raw ?? '')
-                setJsonError(problem)
-                if (problem) setTimeout(() => focusJsonError(problem), 0)
-              }}
-              placeholder={body.mode === 'json' ? '{ "key": "value" }' : '请求体'}
-              spellCheck={false}
+          {fieldView ? (
+            <JsonFieldTable
+              raw={body.raw ?? ''}
+              docs={body.field_docs ?? []}
+              valuesReadOnly={Boolean(bodyModel)}
+              onChangeRaw={(raw) => setBody({ raw })}
+              onChangeDocs={(field_docs) => setBody({ field_docs })}
             />
-          </div>
+          ) : (
+            <div className="editor-shell fill">
+              <Input.TextArea
+                className="editor-input"
+                value={body.raw ?? ''}
+                readOnly={Boolean(bodyModel)}
+                onChange={(event) => setBody({ raw: event.target.value })}
+                onBlur={() => {
+                  if (bodyModel) return
+                  formatJsonBody()
+                  const problem = validateJson(request.body?.raw ?? '')
+                  setJsonError(problem)
+                  if (problem) setTimeout(() => focusJsonError(problem), 0)
+                }}
+                placeholder={body.mode === 'json' ? '{ "key": "value" }' : '请求体'}
+                spellCheck={false}
+              />
+            </div>
+          )}
         </div>
       )
     }
@@ -425,17 +479,6 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
               options={BODY_OPTIONS}
             />
           </div>
-          {jsonError ? (
-            <div
-              className="json-error"
-              role="alert"
-              title="点击定位到错误位置"
-              onClick={() => focusJsonError(jsonError)}
-            >
-              <span className="json-error-tag">JSON 结构错误</span>
-              第 {jsonError.line} 行第 {jsonError.column} 列：{jsonError.message}
-            </div>
-          ) : null}
           {renderBody()}
         </div>
       )

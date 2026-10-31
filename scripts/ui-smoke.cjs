@@ -450,6 +450,43 @@ async function main() {
     }
   })
 
+  await step('JSON 字段说明表编辑与保存', async () => {
+    const bodyTextArea = page.locator('.req-body textarea.editor-input')
+    await bodyTextArea.fill('{"user": ')
+    await page.waitForTimeout(700)
+    await page.locator('.json-error.inline').waitFor()
+    if (await page.locator('.body-view-segmented').count()) {
+      throw new Error('JSON 报错时字段切换按钮应隐藏')
+    }
+    await bodyTextArea.fill('')
+    await bodyTextArea.pressSequentially('{"user":{"name":"Ada"},"amount":12}', { delay: 10 })
+    await page.waitForTimeout(700)
+    await page.locator('.body-view-segmented').waitFor()
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '字段' }).click()
+    await page.locator('.json-field-panel').waitFor()
+    const nameRow = page
+      .locator('.json-field-name [title="user.name"]')
+      .locator('xpath=ancestor::div[contains(@class,"json-field-row")]')
+    await nameRow.locator('textarea').fill('用户姓名')
+    await page.waitForTimeout(200)
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '原始' }).click()
+    const rawValue = await bodyTextArea.inputValue()
+    if (!rawValue.includes('"name": "Ada"')) {
+      throw new Error('字段说明编辑不应破坏原始 JSON')
+    }
+    await page.locator('.save-btn').click()
+    await page.waitForTimeout(300)
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '字段' }).click()
+    const savedDescription = await page
+      .locator('.json-field-name [title="user.name"]')
+      .locator('xpath=ancestor::div[contains(@class,"json-field-row")]')
+      .locator('textarea')
+      .inputValue()
+    if (savedDescription !== '用户姓名') {
+      throw new Error('字段说明未保存')
+    }
+  })
+
   await step('响应示例引用模型与失效徽标', async () => {
     await page.locator('.resp-tabs button').filter({ hasText: '响应示例' }).click()
     await page.locator('.resp .body-model-bar').getByText('引用模型').click()

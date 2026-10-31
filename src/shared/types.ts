@@ -39,6 +39,30 @@ export interface AuthModel {
   [key: string]: unknown
 }
 
+export type JsonFieldType =
+  | 'string'
+  | 'number'
+  | 'integer'
+  | 'boolean'
+  | 'null'
+  | 'object'
+  | 'array'
+  | 'unknown'
+
+/**
+ * JSON 请求体的字段文档。pointer 使用内部 JSON Pointer，数组任意下标记为 `*`。
+ * 值与原始结构仍以 body.raw 为准，这里只保存无法从 JSON 推导的信息。
+ */
+export interface FieldDoc {
+  pointer: string
+  type?: JsonFieldType
+  required?: boolean
+  description?: string
+  /** 用户显式新增、raw 中可能不存在的仅文档行 */
+  doc_only?: boolean
+  source?: 'manual' | 'openapi'
+}
+
 export interface BodyModel {
   mode: BodyMode
   raw?: string
@@ -47,6 +71,8 @@ export interface BodyModel {
   formdata?: Param[]
   binary?: { file_path?: string; data_url?: string; file_name?: string }
   json?: string
+  /** JSON 请求体的字段说明 sidecar */
+  field_docs?: FieldDoc[]
   /** 引用数据模型；存在时 raw 仅作为最近一次生成结果 */
   model_id?: string
 }

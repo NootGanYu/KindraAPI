@@ -175,6 +175,29 @@ async function main(): Promise<void> {
   ]
   saveTarget(project.project_id, orders)
 
+  const createOrder = createTargetInProject(project.project_id, '0', 'api')
+  createOrder.name = '创建订单'
+  createOrder.method = 'POST'
+  createOrder.url = '{{baseUrl}}/orders/create'
+  createOrder.request!.body = {
+    ...createOrder.request!.body,
+    mode: 'json',
+    raw: JSON.stringify(
+      { user: { name: '张三' }, amount: 99, tags: ['a', 'b'] },
+      null,
+      2
+    ),
+    field_docs: [
+      { pointer: '/user', type: 'object', description: '下单用户' },
+      { pointer: '/user/name', type: 'string', required: true, description: '用户姓名' },
+      { pointer: '/amount', type: 'number', required: true, description: '订单金额' },
+      { pointer: '/tags/*', type: 'string', description: '标签' },
+      { pointer: '/remark', type: 'string', description: '备注（可选）', doc_only: true },
+      { pointer: '/removed', type: 'string', description: '已删除字段' }
+    ]
+  }
+  saveTarget(project.project_id, createOrder)
+
   // Cases · JSONPath 子集与断言求值
   assert(parseJsonPath('$.data.items[0].id') !== null, 'jsonpath parse')
   assert(parseJsonPath('data.items') === null, 'jsonpath rejects loose path')
@@ -441,7 +464,7 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 67, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 70, 'mcp tool list')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -557,8 +580,22 @@ async function main(): Promise<void> {
       openapi: '3.0.0',
       paths: {
         '/ping': {
-          get: {
+          post: {
             summary: 'Ping',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['name'],
+                    properties: {
+                      name: { type: 'string', description: '名称' },
+                      tags: { type: 'array', items: { type: 'string' } }
+                    }
+                  }
+                }
+              }
+            },
             responses: {
               '200': {
                 content: {
@@ -582,6 +619,110 @@ async function main(): Promise<void> {
     keyword: 'Ping'
   })
   assert(syncedApis.ok && syncedApis.result.apis.length === 1, 'mcp synced api visible')
+  const syncedId = syncedApis.result.apis[0].target_id as string
+  const syncedDetail = await bridgeCall(port, 'smoke-token-123', 'get_api_detail', {
+    project_id: project.project_id,
+    target_id: syncedId
+  })
+  const syncedDocs = (syncedDetail.result.api.request.body.field_docs ?? []) as Array<
+    Record<string, unknown>
+  >
+  assert(
+    syncedDocs.some(
+      (doc) => doc.path === 'name' && doc.description === '名称' && doc.required === true
+    ),
+    'mcp sync imports field docs'
+  )
+  const docsWrite = await bridgeCall(port, 'smoke-token-123', 'update_api', {
+    project_id: project.project_id,
+    target_id: syncedId,
+    body: {
+      field_docs: [
+        { path: 'meta.note', type: 'string', description: '备注', doc_only: true }
+      ]
+    }
+  })
+  assert(docsWrite.ok, 'mcp update field docs')
+  const afterDocs = await bridgeCall(port, 'smoke-token-123', 'get_api_detail', {
+    project_id: project.project_id,
+    target_id: syncedId
+  })
+  const writtenDocs = (afterDocs.result.api.request.body.field_docs ?? []) as Array<
+    Record<string, unknown>
+  >
+  assert(
+    writtenDocs.length === 1 &&
+      writtenDocs[0].path === 'meta.note' &&
+      writtenDocs[0].doc_only === true,
+    'mcp field docs full replace'
+  )
+
+  // MCP · 目录 / 接口结构管理
+  const folderA = await bridgeCall(port, 'smoke-token-123', 'create_folder', {
+    project_id: pid,
+    parent_id: '0',
+    name: 'MCP 目录 A'
+  })
+  assert(folderA.ok && folderA.result.folder.target_type === 'folder', 'mcp create root folder')
+  const folderAId = folderA.result.folder.target_id as string
+  const folderB = await bridgeCall(port, 'smoke-token-123', 'create_folder', {
+    project_id: pid,
+    parent_id: folderAId,
+    name: 'MCP 目录 B'
+  })
+  assert(
+    folderB.ok && folderB.result.folder.parent_id === folderAId,
+    'mcp create nested folder'
+  )
+  const folderBId = folderB.result.folder.target_id as string
+  const childApi = await bridgeCall(port, 'smoke-token-123', 'create_api', {
+    project_id: pid,
+    parent_id: folderBId,
+    name: 'MCP 子接口',
+    method: 'post',
+    url: '{{baseUrl}}/mcp/child',
+    description: '结构管理测试'
+  })
+  assert(
+    childApi.ok &&
+      childApi.result.api.parent_id === folderBId &&
+      childApi.result.api.method === 'POST',
+    'mcp create api in folder'
+  )
+  const childApiId = childApi.result.api.target_id as string
+  const movedApi = await bridgeCall(port, 'smoke-token-123', 'move_target', {
+    project_id: pid,
+    target_id: childApiId,
+    parent_id: folderAId
+  })
+  assert(movedApi.ok && movedApi.result.target.parent_id === folderAId, 'mcp move api')
+  const cycleMove = await bridgeCall(port, 'smoke-token-123', 'move_target', {
+    project_id: pid,
+    target_id: folderAId,
+    parent_id: folderBId
+  })
+  assert(cycleMove.ok === false, 'mcp reject folder cycle')
+  const renamedFolder = await bridgeCall(port, 'smoke-token-123', 'move_target', {
+    project_id: pid,
+    target_id: folderBId,
+    name: 'MCP 目录 B 改名'
+  })
+  assert(
+    renamedFolder.ok && renamedFolder.result.target.name === 'MCP 目录 B 改名',
+    'mcp rename folder'
+  )
+  const movedRoot = await bridgeCall(port, 'smoke-token-123', 'move_target', {
+    project_id: pid,
+    target_id: childApiId,
+    parent_id: '0'
+  })
+  assert(movedRoot.ok && movedRoot.result.target.parent_id === '0', 'mcp move api to root')
+  const cleanupStructure = await bridgeCall(port, 'smoke-token-123', 'delete_apis', {
+    project_id: pid,
+    target_ids: [folderAId, childApiId],
+    confirm: true
+  })
+  assert(cleanupStructure.ok, 'mcp cleanup structure test')
 
   // -------------------------------------------------------------------------
   // Issues 12-13 · MCP dictionary / model / database tools
@@ -852,7 +993,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 67, 'stdio tools/list')
+  assert(stdioTools.result?.tools?.length === 70, 'stdio tools/list')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}
@@ -891,11 +1032,23 @@ async function main(): Promise<void> {
   assert(docHtml.includes('查询订单'), 'doc page contains api')
   assert(docHtml.includes('未授权'), 'doc page contains design errors')
   assert(docHtml.includes('登录成功（改名）'), 'doc page contains cases')
+  assert(docHtml.includes('请求体字段说明'), 'doc html contains field docs')
+  assert(
+    docHtml.includes('用户姓名') && docHtml.includes('备注（可选）'),
+    'doc html contains field descriptions'
+  )
+  assert(docHtml.includes('user.name') && docHtml.includes('tags[]'), 'doc html uses readable paths')
+  assert(!docHtml.includes('已删除字段'), 'doc html excludes orphan field docs')
 
   const md = await fetch(`${docBase}/share/${publicShare.share_id}/download?format=md`)
   assert(md.status === 200, 'doc markdown 200')
   const mdText = await md.text()
   assert(mdText.includes('# smoke 文档') && mdText.includes('查询订单'), 'doc markdown content')
+  assert(
+    mdText.includes('请求体字段说明') && mdText.includes('订单金额'),
+    'doc markdown contains field docs'
+  )
+  assert(!mdText.includes('已删除字段'), 'doc markdown excludes orphan field docs')
 
   const openapiResponse = await fetch(
     `${docBase}/share/${publicShare.share_id}/download?format=openapi`
@@ -903,6 +1056,42 @@ async function main(): Promise<void> {
   assert(openapiResponse.status === 200, 'doc openapi 200')
   const spec = (await openapiResponse.json()) as { openapi?: string; paths?: Record<string, unknown> }
   assert(spec.openapi === '3.0.3' && Boolean(spec.paths?.['/orders']), 'doc openapi content')
+  const bodySchema = (
+    spec as {
+      paths?: Record<
+        string,
+        {
+          post?: {
+            requestBody?: {
+              content?: Record<string, { schema?: Record<string, any> }>
+            }
+          }
+        }
+      >
+    }
+  ).paths?.['/orders/create']?.post?.requestBody?.content?.['application/json']?.schema
+  assert(
+    bodySchema?.properties?.user?.properties?.name?.description === '用户姓名',
+    'openapi field description'
+  )
+  assert(
+    Array.isArray(bodySchema?.properties?.user?.required) &&
+      bodySchema.properties.user.required.includes('name'),
+    'openapi nested required'
+  )
+  assert(bodySchema?.properties?.amount?.type === 'number', 'openapi field type')
+  assert(
+    bodySchema?.properties?.remark?.description === '备注（可选）',
+    'openapi doc-only field'
+  )
+  assert(
+    Array.isArray(bodySchema?.required) &&
+      bodySchema.required.includes('user') &&
+      bodySchema.required.includes('amount'),
+    'openapi required propagation'
+  )
+  assert(!bodySchema?.properties?.removed, 'openapi excludes orphan field docs')
+  assert(bodySchema?.properties?.tags?.items?.type === 'string', 'openapi array items')
 
   const passwordShare = createDocShare(project.project_id, {
     name: '密码文档',

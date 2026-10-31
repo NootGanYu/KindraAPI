@@ -167,6 +167,50 @@ export function sanitizeRichHtml(html: string): string {
   return sanitizeFallback(value)
 }
 
+const HTML_TAG_PATTERN =
+  /<\/?(?:p|div|span|br|hr|b|strong|i|em|u|s|del|blockquote|a|img|pre|code|ul|ol|li|table|thead|tbody|tr|th|td|h[1-4])\b[^>]*>/i
+
+function escapeHtmlText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
+ * 将纯文本转为富文本段落：空行分段，单换行转为 `<br>`。
+ * 同时兼容字面量 `\n`（MCP / 外部导入常见），以及 Windows 换行。
+ */
+export function plainTextToHtml(text: string): string {
+  const normalized = String(text ?? '')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\r\n?/g, '\n')
+  const trimmed = normalized.trim()
+  if (!trimmed) return ''
+  return trimmed
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block.split('\n').map((line) => escapeHtmlText(line))
+      return `<p>${lines.join('<br>')}</p>`
+    })
+    .join('')
+}
+
+/**
+ * 把接口 / 目录说明统一转成可渲染的富文本 HTML。
+ * 已是 HTML 的内容只做白名单清洗；纯文本（如 MCP 写入或含字面 `\n`）转成段落。
+ */
+export function descriptionToHtml(value: string): string {
+  const raw = String(value ?? '')
+  if (!raw.trim()) return ''
+  if (HTML_TAG_PATTERN.test(raw)) return sanitizeRichHtml(raw)
+  return sanitizeRichHtml(plainTextToHtml(raw))
+}
+
 function decodeEntities(text: string): string {
   return text
     .replace(/&nbsp;/gi, ' ')

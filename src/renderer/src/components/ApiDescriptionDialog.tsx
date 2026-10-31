@@ -20,7 +20,7 @@ import {
   UnderlineOutlined,
   UnorderedListOutlined
 } from '@ant-design/icons'
-import { countRichText, sanitizeRichHtml } from '@shared/richText'
+import { countRichText, descriptionToHtml, sanitizeRichHtml } from '@shared/richText'
 
 interface Props {
   open: boolean
@@ -45,7 +45,7 @@ export default function ApiDescriptionDialog({
 
   useEffect(() => {
     if (!open) return
-    const initial = sanitizeRichHtml(value ?? '')
+    const initial = descriptionToHtml(value ?? '')
     setHtml(initial)
     setInitialHtml(initial)
     setFullscreen(false)

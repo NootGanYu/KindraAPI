@@ -13,7 +13,8 @@ import type {
   Target
 } from '@shared/types'
 import * as store from '../storage/store'
-import { htmlToText, sanitizeRichHtml } from '@shared/richText'
+import { descriptionToHtml, htmlToText } from '@shared/richText'
+import { buildFieldRows, buildFieldSchema, typeLabel, type JsonFieldRow } from '@shared/jsonFields'
 import { createZip } from './zip'
 
 const DOC_HOST = '0.0.0.0'
@@ -375,11 +376,21 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.PUT,.method.PATCH{background:#b7791f}
 .method.DELETE{background:var(--red)}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
-.api-desc{color:var(--text);margin:10px 0 0}
+.api-desc{color:var(--text);margin:10px 0 0;line-height:1.75;word-break:break-word}
+.api-desc p{margin:6px 0}
+.api-desc p:first-child{margin-top:0}
+.api-desc p:last-child{margin-bottom:0}
+.api-desc h1,.api-desc h2,.api-desc h3,.api-desc h4{margin:12px 0 6px;color:var(--ink);line-height:1.4}
+.api-desc ul,.api-desc ol{margin:8px 0;padding-left:22px}
+.api-desc li{margin:3px 0}
+.api-desc a{color:#2f6bb0}
 .api-desc img{max-width:100%}
+.api-desc hr{border:none;border-top:1px solid var(--line);margin:12px 0}
+.api-desc code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em;background:#f6f1e7;padding:1px 4px;border-radius:3px}
 .api-desc blockquote{margin:8px 0;padding-left:10px;border-left:3px solid #d9c7a5;color:#6b5d48}
 .api-desc pre{background:#f7f3ea;padding:8px 10px;border-radius:4px;overflow:auto}
-.api-desc table{border-collapse:collapse}
+.api-desc pre code{background:none;padding:0}
+.api-desc table{border-collapse:collapse;margin:8px 0}
 .api-desc th,.api-desc td{border:1px solid #e3d9c6;padding:4px 8px}
 .url-line{margin:14px 0 2px;padding:9px 12px;background:var(--soft);border:1px solid var(--line);border-radius:7px;font-size:12.5px;word-break:break-all;color:#4a3d29}
 .url-line b{color:var(--gold);margin-right:8px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
@@ -520,6 +531,21 @@ function renderParamGroup(title: string, params: Param[]): string {
   return `<h4>${escapeHtml(title)}</h4>${renderParamTable(list)}`
 }
 
+function renderFieldDocsTable(rows: JsonFieldRow[]): string {
+  if (rows.length === 0) return ''
+  const body = rows
+    .map(
+      (row) => `<tr>
+<td class="mono">${escapeHtml(row.path || row.name)}</td>
+<td>${escapeHtml(typeLabel(row))}</td>
+<td>${row.effectiveRequired ? '是' : '否'}</td>
+<td>${escapeHtml(row.description || '').replace(/\n/g, '<br>')}</td>
+</tr>`
+    )
+    .join('')
+  return `<h4>请求体字段说明</h4><table><thead><tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr></thead><tbody>${body}</tbody></table>`
+}
+
 function renderResponseExample(example: ResponseExample, settings: DocSettings): string {
   const code = example.expect?.code ?? 200
   const name = example.expect?.name || ''
@@ -586,10 +612,15 @@ function renderBody(target: Target, settings: DocSettings): string {
     if (!body.binary?.file_name) return ''
     return `<h4>二进制文件</h4><pre>${escapeHtml(body.binary.file_name)}</pre>`
   }
-  const raw = mode === 'json' ? body.json ?? body.raw : body.raw
-  if (!raw) return ''
-  const prettyBody = pretty(raw)
-  return `<h4>请求体</h4><pre>${escapeHtml(prettyBody)}</pre>`
+  const raw = mode === 'json' ? body.raw ?? body.json : body.raw
+  const fieldRows =
+    mode === 'json' && (body.field_docs?.length ?? 0) > 0
+      ? buildFieldRows(raw ?? '', body.field_docs ?? []).exportedRows
+      : []
+  const fieldTable = renderFieldDocsTable(fieldRows)
+  if (!raw && !fieldTable) return ''
+  const prettyBody = raw ? `<h4>请求体</h4><pre>${escapeHtml(pretty(raw))}</pre>` : ''
+  return `${prettyBody}${fieldTable}`
 }
 
 function renderScripts(target: Target, settings: DocSettings): string {
@@ -708,7 +739,7 @@ ${
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${heading}</h2>
 </div>
-${target.description ? `<div class="api-desc">${sanitizeRichHtml(target.description)}</div>` : ''}
+${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
     target.url || '（未设置 URL）'
   )}</div>
@@ -833,7 +864,7 @@ function renderNav(ctx: RenderCtx, currentFolderId?: string, currentApiId?: stri
     const children = walk(target.target_id)
     const active = target.target_id === currentFolderId ? ' active' : ''
     const desc = target.description
-      ? `<div class="nav-desc">${escapeHtml(htmlToText(target.description))}</div>`
+      ? `<div class="nav-desc">${escapeHtml(htmlToText(descriptionToHtml(target.description)))}</div>`
       : ''
     return `<details class="nav-folder" open>
 <summary class="nav-folder-summary${active}"><a href="${escapeHtml(hrefFor(ctx, target))}">${escapeHtml(target.name)}</a></summary>
@@ -905,7 +936,7 @@ function renderFolderCard(ctx: RenderCtx, folder: Target): string {
   const href = hrefFor(ctx, folder)
   return `<section class="folder-card">
 <h2><a href="${escapeHtml(href)}">${escapeHtml(folder.name)}</a></h2>
-${folder.description ? `<div class="api-desc">${sanitizeRichHtml(folder.description)}</div>` : ''}
+${folder.description ? `<div class="api-desc">${descriptionToHtml(folder.description)}</div>` : ''}
 <div class="folder-count">${escapeHtml(folderCounts(ctx.view, folder.target_id))}</div>
 </section>`
 }
@@ -936,7 +967,6 @@ function renderHero(
   options: {
     title?: string
     introHtml?: string
-    introText?: string
     downloadFolderId?: string | null
     downloadApiId?: string | null
     current?: Target
@@ -951,7 +981,6 @@ function renderHero(
 ${renderBreadcrumb(ctx, options.current)}
 ${options.title ? `<h1>${escapeHtml(options.title)}</h1>` : ''}
 ${options.introHtml ? `<div class="api-desc folder-desc">${options.introHtml}</div>` : ''}
-${options.introText ? `<p>${escapeHtml(options.introText)}</p>` : ''}
 ${meta}
 ${ctx.offline ? '' : renderDownloadBar(share, options.downloadFolderId ?? null, options.downloadApiId ?? null)}
 ${renderOfflineNote(ctx)}
@@ -967,7 +996,7 @@ function renderShareIndexPage(ctx: RenderCtx): string | null {
   }
   const main = `${renderHero(ctx, {
     title: ctx.share.name,
-    introText: ctx.view.project.intro
+    introHtml: descriptionToHtml(ctx.view.project.intro)
   })}
 <div class="section-title">目录</div>
 ${renderListing(ctx, '0')}`
@@ -980,7 +1009,7 @@ function renderFolderPage(ctx: RenderCtx, folderId: string): string | null {
   const main = `${renderHero(ctx, {
     current: folder,
     title: folder.name,
-    introHtml: folder.description ? sanitizeRichHtml(folder.description) : '',
+    introHtml: folder.description ? descriptionToHtml(folder.description) : '',
     downloadFolderId: folder.target_id
   })}
 <div class="section-title">内容</div>
@@ -1104,6 +1133,19 @@ function mdParams(title: string, params: Param[]): string {
     .join('\n')}\n`
 }
 
+function mdFieldDocs(rows: JsonFieldRow[]): string {
+  if (rows.length === 0) return ''
+  const body = rows
+    .map(
+      (row) =>
+        `| ${mdCell(row.path || row.name)} | ${mdCell(typeLabel(row))} | ${
+          row.effectiveRequired ? '是' : '否'
+        } | ${mdCell(row.description || '')} |`
+    )
+    .join('\n')
+  return `\n**请求体字段说明**\n\n| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | --- | --- |\n${body}\n`
+}
+
 function buildMarkdown(share: DocShare, view: ShareView): string {
   const settings = share.settings
   const lines: string[] = []
@@ -1119,7 +1161,7 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
     lines.push('```http')
     lines.push(`${method} ${api.url || ''}`)
     lines.push('```', '')
-    const descriptionText = htmlToText(api.description ?? '')
+    const descriptionText = htmlToText(descriptionToHtml(api.description ?? ''))
     if (descriptionText) lines.push(descriptionText, '')
 
     const request = api.request
@@ -1142,8 +1184,12 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
       } else if (body.mode === 'binary') {
         if (body.binary?.file_name) lines.push(`**二进制文件**：${body.binary.file_name}`, '')
       } else {
-        const raw = body.mode === 'json' ? body.json ?? body.raw : body.raw
+        const raw = body.mode === 'json' ? body.raw ?? body.json : body.raw
         if (raw) lines.push('**请求体**', '', '```json', pretty(raw), '```', '')
+        if (body.mode === 'json' && (body.field_docs?.length ?? 0) > 0) {
+          const result = buildFieldRows(raw ?? '', body.field_docs ?? [])
+          if (result.ok) lines.push(mdFieldDocs(result.exportedRows))
+        }
       }
     }
 
@@ -1234,7 +1280,7 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
     const path = urlToOpenApiPath(api.url)
     const operation: Record<string, unknown> = {
       summary: api.name || path,
-      description: htmlToText(api.description ?? '') || undefined,
+      description: htmlToText(descriptionToHtml(api.description ?? '')) || undefined,
       parameters: [] as Record<string, unknown>[],
       responses: {} as Record<string, unknown>
     }
@@ -1284,19 +1330,32 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
           }
         }
       } else if (body.mode !== 'none' && body.mode !== 'binary') {
-        const raw = body.mode === 'json' ? body.json ?? body.raw : body.raw
+        const raw = body.mode === 'json' ? body.raw ?? body.json : body.raw
+        const fieldDocs = body.field_docs ?? []
         if (raw && raw.trim()) {
           let example: unknown = raw
           let schema: Record<string, unknown> = { type: 'string' }
           try {
             example = JSON.parse(raw)
-            schema = schemaForExample(example)
+            if (body.mode === 'json' && fieldDocs.length > 0) {
+              const built = buildFieldSchema(raw, fieldDocs)
+              schema = built.ok ? built.schema : schemaForExample(example)
+            } else {
+              schema = schemaForExample(example)
+            }
           } catch {
             // keep string
           }
           operation.requestBody = {
             content: {
               [body.mode === 'json' ? 'application/json' : 'text/plain']: { schema, example }
+            }
+          }
+        } else if (body.mode === 'json' && fieldDocs.length > 0) {
+          const built = buildFieldSchema('', fieldDocs)
+          if (built.ok && built.hasFields) {
+            operation.requestBody = {
+              content: { 'application/json': { schema: built.schema, example: {} } }
             }
           }
         }
@@ -1333,7 +1392,8 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
     openapi: '3.0.3',
     info: {
       title: share.name,
-      description: view.project.intro || `${view.project.name} 接口文档`,
+      description:
+        htmlToText(descriptionToHtml(view.project.intro)) || `${view.project.name} 接口文档`,
       version: '1.0.0'
     },
     servers: (servers.size ? [...servers] : ['http://localhost']).map((url) => ({ url })),

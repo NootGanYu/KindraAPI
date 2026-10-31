@@ -64,7 +64,8 @@ export function createBody(): BodyModel {
     urlencoded: [],
     formdata: [],
     binary: {},
-    json: ''
+    json: '',
+    field_docs: []
   }
 }
 

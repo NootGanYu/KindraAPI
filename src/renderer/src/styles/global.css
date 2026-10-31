@@ -1653,6 +1653,10 @@ body {
   display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 3px;
   background: #c0392b; color: #fff; font-size: 10.5px;
 }
+.json-error.inline {
+  flex: 1 1 240px; min-width: 0; margin: 0; padding: 4px 8px;
+  font-size: 11.5px; line-height: 1.5;
+}
 .req-body.has-json-error .editor-shell {
   border-color: #d94a34; box-shadow: 0 0 0 1px rgba(217, 74, 52, 0.35) inset;
 }
@@ -2176,9 +2180,10 @@ button {
 .schema-depth-warning { font-size: 11px; color: #a47400; padding: 4px 0; }
 .body-editor-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .body-model-bar {
-  flex: none; display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 6px 8px;
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; padding: 6px 8px;
   background: #fbf8f1; border: 1px solid var(--line-2); border-radius: 4px; font-size: 11.5px;
 }
+.body-view-segmented { flex: none; }
 .body-model-bar .mini {
   width: auto; flex: none; height: 22px; padding: 0 8px; border: 1px solid var(--line-2);
   border-radius: 3px; background: #fff; color: #5b4d38; font-size: 11.5px; cursor: pointer;
@@ -4516,4 +4521,182 @@ button {
     max-height: 220px;
     overflow: auto;
   }
+}
+
+/* JSON 字段说明表 */
+.json-field-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-right);
+}
+
+.json-field-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.json-field-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--font-title-color);
+}
+
+.field-banner {
+  margin: 8px 10px 0;
+  padding: 6px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--font-content-color);
+  background: var(--color-primary-opacity);
+}
+
+.field-banner.warning {
+  color: #8a5a13;
+  background: rgba(192, 138, 46, 0.12);
+}
+
+.field-banner.error {
+  color: #b23a2b;
+  background: rgba(201, 70, 58, 0.1);
+}
+
+.json-field-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 4px 8px;
+}
+
+.json-field-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-border);
+  min-height: 32px;
+}
+
+.json-field-row.is-orphan {
+  background: rgba(192, 138, 46, 0.06);
+}
+
+.json-field-row.is-doc-only {
+  background: rgba(138, 107, 59, 0.04);
+}
+
+.json-field-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-page);
+  color: var(--font-light-color);
+  font-size: 11px;
+  min-height: 28px;
+}
+
+.json-field-cell {
+  padding: 4px 6px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.json-field-name {
+  flex: 1.4 1 0;
+  min-width: 170px;
+  gap: 4px;
+}
+
+.json-field-value {
+  flex: 1.7 1 0;
+  min-width: 180px;
+}
+
+.json-field-type {
+  width: 150px;
+  flex: none;
+  gap: 4px;
+}
+
+.json-field-required {
+  width: 52px;
+  flex: none;
+  justify-content: center;
+}
+
+.json-field-desc {
+  flex: 1.4 1 0;
+  min-width: 150px;
+}
+
+.json-field-actions {
+  width: 38px;
+  flex: none;
+  justify-content: center;
+}
+
+.json-field-row .ant-input,
+.json-field-row .ant-select-selection-item,
+.json-field-row .ant-select-selection-placeholder {
+  font-size: 12px;
+}
+
+.field-expand {
+  width: 16px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--font-light-color);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.field-expand-placeholder {
+  width: 16px;
+  flex: none;
+  display: inline-block;
+}
+
+.field-static-value {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  color: var(--font-content-color);
+}
+
+.field-value-json {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.field-value-error {
+  color: var(--color-error);
+  font-size: 11px;
+  padding: 0 6px 3px;
+}
+
+.json-field-empty {
+  padding: 18px 12px;
+  color: var(--font-light-color);
+  font-size: 12px;
+  text-align: center;
+}
+
+.field-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-form label {
+  font-size: 12px;
+  color: var(--font-content-color);
+  margin-top: 2px;
 }
