@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KindraAPI UI 清单 · 101 个状态</title>
+<style>
+  :root { --bg:#faf5ea; --panel:#fff; --line:rgba(147,117,63,.18); --text:#2c2214; --muted:#6b5d48; --primary:#8a6b3b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif; }
+  header { position:sticky; top:0; z-index:2; background:#f4eddf; border-bottom:1px solid var(--line); padding:14px 20px; }
+  header h1 { margin:0 0 4px; font-size:18px; }
+  header p { margin:0; color:var(--muted); }
+  nav { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:10px; }
+  nav a { color:var(--primary); text-decoration:none; }
+  .toolbar { padding:14px 20px 0; }
+  .toolbar input { width:100%; max-width:420px; height:34px; padding:0 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--text); }
+  main { padding:8px 20px 40px; }
+  section { margin-top:26px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  h2 small { color:var(--muted); font-weight:400; font-size:12px; margin-left:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .card img { display:block; width:100%; height:auto; background:#fff; }
+  .card-meta { padding:8px 10px; display:flex; flex-direction:column; gap:2px; border-top:1px solid var(--line); }
+  .card-meta strong { font-size:12px; word-break:break-all; }
+  .card-meta span { color:var(--muted); font-size:11px; }
+  .empty { color:var(--muted); padding:20px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>KindraAPI 前端 UI 清单</h1>
+  <p>101 个状态 · 15630 条 DOM/AX 记录 · 主项目「默认项目」 · 浅色主题 · 1180×760 / 1440×900</p>
+  <nav><a href="#apis">APIs 接口工作台</a><a href="#history">最近 / 发送历史</a><a href="#docs">文档分享</a><a href="#schemas">字典 / 数据模型 / 数据库</a><a href="#mqtt">MQTT 模块</a><a href="#automation">流程自动化</a><a href="#git">Git 版本管理</a><a href="#settings">设置</a><a href="#global">全局框架</a><a href="README.md">README</a><a href="observations.md">重构观察</a><a href="rea-ipc-evidence.md">REA IPC 证据</a></nav>
+</header>
+<div class="toolbar"><input id="q" placeholder="筛选状态 / 类型 / 路由…" autocomplete="off"></div>
+<main>
+<section id="apis"><h2>APIs 接口工作台 <small>/apis · 29 个状态</small></h2><div class="grid"><article class="card" data-text="apis-welcome-1180x760 page /apis 未选择接口时的欢迎页/空态">
+  <a href="screenshots/webp/apis-welcome-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-welcome-1180x760.webp" alt="apis-welcome-1180x760"></a>
+  <div class="card-meta"><strong>apis-welcome-1180x760</strong><span>page · 1180×760 · 477 元素</span></div>
+</article>
+<article class="card" data-text="apis-welcome-1440x900 page /apis 未选择接口时的欢迎页/空态">
+  <a href="screenshots/webp/apis-welcome-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-welcome-1440x900.webp" alt="apis-welcome-1440x900"></a>
+  <div class="card-meta"><strong>apis-welcome-1440x900</strong><span>page · 1440×900 · 477 元素</span></div>
+</article>
+<article class="card" data-text="apis-tree-expanded page /apis api 树全部展开">
+  <a href="screenshots/webp/apis-tree-expanded.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-tree-expanded.webp" alt="apis-tree-expanded"></a>
+  <div class="card-meta"><strong>apis-tree-expanded</strong><span>page · 1180×760 · 477 元素</span></div>
+</article>
+<article class="card" data-text="apis-editor-debug-1180x760 page /apis 接口调试工作台默认态">
+  <a href="screenshots/webp/apis-editor-debug-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-editor-debug-1180x760.webp" alt="apis-editor-debug-1180x760"></a>
+  <div class="card-meta"><strong>apis-editor-debug-1180x760</strong><span>page · 1180×760 · 527 元素</span></div>
+</article>
+<article class="card" data-text="apis-editor-debug-1440x900 page /apis 接口调试工作台默认态">
+  <a href="screenshots/webp/apis-editor-debug-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-editor-debug-1440x900.webp" alt="apis-editor-debug-1440x900"></a>
+  <div class="card-meta"><strong>apis-editor-debug-1440x900</strong><span>page · 1440×900 · 527 元素</span></div>
+</article>
+<article class="card" data-text="apis-mode-design page /apis 模式：设计">
+  <a href="screenshots/webp/apis-mode-design.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-mode-design.webp" alt="apis-mode-design"></a>
+  <div class="card-meta"><strong>apis-mode-design</strong><span>page · 1180×760 · 527 元素</span></div>
+</article>
+<article class="card" data-text="apis-mode-cases page /apis 模式：接口用例">
+  <a href="screenshots/webp/apis-mode-cases.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-mode-cases.webp" alt="apis-mode-cases"></a>
+  <div class="card-meta"><strong>apis-mode-cases</strong><span>page · 1180×760 · 491 元素</span></div>
+</article>
+<article class="card" data-text="apis-mode-stress page /apis 模式：一键压测">
+  <a href="screenshots/webp/apis-mode-stress.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-mode-stress.webp" alt="apis-mode-stress"></a>
+  <div class="card-meta"><strong>apis-mode-stress</strong><span>page · 1180×760 · 485 元素</span></div>
+</article>
+<article class="card" data-text="apis-mode-mock page /apis 模式：mock">
+  <a href="screenshots/webp/apis-mode-mock.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-mode-mock.webp" alt="apis-mode-mock"></a>
+  <div class="card-meta"><strong>apis-mode-mock</strong><span>page · 1180×760 · 485 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-header page /apis 请求编辑器 tab：header">
+  <a href="screenshots/webp/apis-request-tab-header.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-header.webp" alt="apis-request-tab-header"></a>
+  <div class="card-meta"><strong>apis-request-tab-header</strong><span>page · 1180×760 · 534 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-query page /apis 请求编辑器 tab：query">
+  <a href="screenshots/webp/apis-request-tab-query.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-query.webp" alt="apis-request-tab-query"></a>
+  <div class="card-meta"><strong>apis-request-tab-query</strong><span>page · 1180×760 · 520 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-path page /apis 请求编辑器 tab：path">
+  <a href="screenshots/webp/apis-request-tab-path.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-path.webp" alt="apis-request-tab-path"></a>
+  <div class="card-meta"><strong>apis-request-tab-path</strong><span>page · 1180×760 · 520 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-body page /apis 请求编辑器 tab：body">
+  <a href="screenshots/webp/apis-request-tab-body.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-body.webp" alt="apis-request-tab-body"></a>
+  <div class="card-meta"><strong>apis-request-tab-body</strong><span>page · 1180×760 · 527 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-auth page /apis 请求编辑器 tab：认证">
+  <a href="screenshots/webp/apis-request-tab-auth.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-auth.webp" alt="apis-request-tab-auth"></a>
+  <div class="card-meta"><strong>apis-request-tab-auth</strong><span>page · 1180×760 · 517 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-cookie page /apis 请求编辑器 tab：cookie">
+  <a href="screenshots/webp/apis-request-tab-cookie.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-cookie.webp" alt="apis-request-tab-cookie"></a>
+  <div class="card-meta"><strong>apis-request-tab-cookie</strong><span>page · 1180×760 · 520 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-pre-request page /apis 请求编辑器 tab：预执行操作">
+  <a href="screenshots/webp/apis-request-tab-pre-request.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-pre-request.webp" alt="apis-request-tab-pre-request"></a>
+  <div class="card-meta"><strong>apis-request-tab-pre-request</strong><span>page · 1180×760 · 515 元素</span></div>
+</article>
+<article class="card" data-text="apis-request-tab-post-request page /apis 请求编辑器 tab：后执行操作">
+  <a href="screenshots/webp/apis-request-tab-post-request.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-request-tab-post-request.webp" alt="apis-request-tab-post-request"></a>
+  <div class="card-meta"><strong>apis-request-tab-post-request</strong><span>page · 1180×760 · 515 元素</span></div>
+</article>
+<article class="card" data-text="apis-response-tab-response page /apis 响应面板 tab：实时响应">
+  <a href="screenshots/webp/apis-response-tab-response.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-response-tab-response.webp" alt="apis-response-tab-response"></a>
+  <div class="card-meta"><strong>apis-response-tab-response</strong><span>page · 1180×760 · 515 元素</span></div>
+</article>
+<article class="card" data-text="apis-response-tab-headers page /apis 响应面板 tab：响应头">
+  <a href="screenshots/webp/apis-response-tab-headers.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-response-tab-headers.webp" alt="apis-response-tab-headers"></a>
+  <div class="card-meta"><strong>apis-response-tab-headers</strong><span>page · 1180×760 · 515 元素</span></div>
+</article>
+<article class="card" data-text="apis-response-tab-example page /apis 响应面板 tab：响应示例">
+  <a href="screenshots/webp/apis-response-tab-example.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-response-tab-example.webp" alt="apis-response-tab-example"></a>
+  <div class="card-meta"><strong>apis-response-tab-example</strong><span>page · 1180×760 · 526 元素</span></div>
+</article>
+<article class="card" data-text="apis-response-tab-field-docs page /apis 响应面板 tab：字段说明">
+  <a href="screenshots/webp/apis-response-tab-field-docs.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-response-tab-field-docs.webp" alt="apis-response-tab-field-docs"></a>
+  <div class="card-meta"><strong>apis-response-tab-field-docs</strong><span>page · 1180×760 · 725 元素</span></div>
+</article>
+<article class="card" data-text="apis-response-tab-actual-request page /apis 响应面板 tab：实际请求">
+  <a href="screenshots/webp/apis-response-tab-actual-request.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-response-tab-actual-request.webp" alt="apis-response-tab-actual-request"></a>
+  <div class="card-meta"><strong>apis-response-tab-actual-request</strong><span>page · 1180×760 · 515 元素</span></div>
+</article>
+<article class="card" data-text="apis-response-tab-console page /apis 响应面板 tab：控制台">
+  <a href="screenshots/webp/apis-response-tab-console.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-response-tab-console.webp" alt="apis-response-tab-console"></a>
+  <div class="card-meta"><strong>apis-response-tab-console</strong><span>page · 1180×760 · 515 元素</span></div>
+</article>
+<article class="card" data-text="apis-more-menu menu /apis ">
+  <a href="screenshots/webp/apis-more-menu.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-more-menu.webp" alt="apis-more-menu"></a>
+  <div class="card-meta"><strong>apis-more-menu</strong><span>menu · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="apis-dialog-codegen dialog /apis ">
+  <a href="screenshots/webp/apis-dialog-codegen.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-dialog-codegen.webp" alt="apis-dialog-codegen"></a>
+  <div class="card-meta"><strong>apis-dialog-codegen</strong><span>dialog · 1180×760 · 40 元素</span></div>
+</article>
+<article class="card" data-text="apis-drawer-versions drawer /apis ">
+  <a href="screenshots/webp/apis-drawer-versions.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-drawer-versions.webp" alt="apis-drawer-versions"></a>
+  <div class="card-meta"><strong>apis-drawer-versions</strong><span>drawer · 1180×760 · 69 元素</span></div>
+</article>
+<article class="card" data-text="apis-dialog-description dialog /apis ">
+  <a href="screenshots/webp/apis-dialog-description.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-dialog-description.webp" alt="apis-dialog-description"></a>
+  <div class="card-meta"><strong>apis-dialog-description</strong><span>dialog · 1180×760 · 41 元素</span></div>
+</article>
+<article class="card" data-text="apis-dialog-share dialog /apis ">
+  <a href="screenshots/webp/apis-dialog-share.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-dialog-share.webp" alt="apis-dialog-share"></a>
+  <div class="card-meta"><strong>apis-dialog-share</strong><span>dialog · 1180×760 · 20 元素</span></div>
+</article>
+<article class="card" data-text="apis-empty-search page /apis 搜索无结果空态">
+  <a href="screenshots/webp/apis-empty-search.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/apis-empty-search.webp" alt="apis-empty-search"></a>
+  <div class="card-meta"><strong>apis-empty-search</strong><span>page · 1180×760 · 65 元素</span></div>
+</article></div></section>
+<section id="history"><h2>最近 / 发送历史 <small>/history · 11 个状态</small></h2><div class="grid"><article class="card" data-text="history-list-1180x760 page /history 发送历史列表（最多 100 条）">
+  <a href="screenshots/webp/history-list-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-list-1180x760.webp" alt="history-list-1180x760"></a>
+  <div class="card-meta"><strong>history-list-1180x760</strong><span>page · 1180×760 · 86 元素</span></div>
+</article>
+<article class="card" data-text="history-list-1440x900 page /history 发送历史列表（最多 100 条）">
+  <a href="screenshots/webp/history-list-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-list-1440x900.webp" alt="history-list-1440x900"></a>
+  <div class="card-meta"><strong>history-list-1440x900</strong><span>page · 1440×900 · 86 元素</span></div>
+</article>
+<article class="card" data-text="history-detail-drawer drawer /history ">
+  <a href="screenshots/webp/history-detail-drawer.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-detail-drawer.webp" alt="history-detail-drawer"></a>
+  <div class="card-meta"><strong>history-detail-drawer</strong><span>drawer · 1180×760 · 17 元素</span></div>
+</article>
+<article class="card" data-text="history-drawer-tab-headers drawer-tab /history ">
+  <a href="screenshots/webp/history-drawer-tab-headers.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-drawer-tab-headers.webp" alt="history-drawer-tab-headers"></a>
+  <div class="card-meta"><strong>history-drawer-tab-headers</strong><span>drawer-tab · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="history-drawer-tab-cookie drawer-tab /history ">
+  <a href="screenshots/webp/history-drawer-tab-cookie.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-drawer-tab-cookie.webp" alt="history-drawer-tab-cookie"></a>
+  <div class="card-meta"><strong>history-drawer-tab-cookie</strong><span>drawer-tab · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="history-drawer-tab-example drawer-tab /history ">
+  <a href="screenshots/webp/history-drawer-tab-example.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-drawer-tab-example.webp" alt="history-drawer-tab-example"></a>
+  <div class="card-meta"><strong>history-drawer-tab-example</strong><span>drawer-tab · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="history-drawer-tab-field-docs drawer-tab /history ">
+  <a href="screenshots/webp/history-drawer-tab-field-docs.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-drawer-tab-field-docs.webp" alt="history-drawer-tab-field-docs"></a>
+  <div class="card-meta"><strong>history-drawer-tab-field-docs</strong><span>drawer-tab · 1180×760 · 12 元素</span></div>
+</article>
+<article class="card" data-text="history-drawer-tab-actual-request drawer-tab /history ">
+  <a href="screenshots/webp/history-drawer-tab-actual-request.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-drawer-tab-actual-request.webp" alt="history-drawer-tab-actual-request"></a>
+  <div class="card-meta"><strong>history-drawer-tab-actual-request</strong><span>drawer-tab · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="history-drawer-tab-console drawer-tab /history ">
+  <a href="screenshots/webp/history-drawer-tab-console.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-drawer-tab-console.webp" alt="history-drawer-tab-console"></a>
+  <div class="card-meta"><strong>history-drawer-tab-console</strong><span>drawer-tab · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="history-empty-search page /history 历史搜索无结果">
+  <a href="screenshots/webp/history-empty-search.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-empty-search.webp" alt="history-empty-search"></a>
+  <div class="card-meta"><strong>history-empty-search</strong><span>page · 1180×760 · 16 元素</span></div>
+</article>
+<article class="card" data-text="history-confirm-clear confirm /history ">
+  <a href="screenshots/webp/history-confirm-clear.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/history-confirm-clear.webp" alt="history-confirm-clear"></a>
+  <div class="card-meta"><strong>history-confirm-clear</strong><span>confirm · 1180×760 · 3 元素</span></div>
+</article></div></section>
+<section id="docs"><h2>文档分享 <small>/docs · 10 个状态</small></h2><div class="grid"><article class="card" data-text="docs-list-1180x760 page /docs 文档分享列表与筛选">
+  <a href="screenshots/webp/docs-list-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-list-1180x760.webp" alt="docs-list-1180x760"></a>
+  <div class="card-meta"><strong>docs-list-1180x760</strong><span>page · 1180×760 · 68 元素</span></div>
+</article>
+<article class="card" data-text="docs-list-1440x900 page /docs 文档分享列表与筛选">
+  <a href="screenshots/webp/docs-list-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-list-1440x900.webp" alt="docs-list-1440x900"></a>
+  <div class="card-meta"><strong>docs-list-1440x900</strong><span>page · 1440×900 · 68 元素</span></div>
+</article>
+<article class="card" data-text="docs-dialog-new-share dialog /docs ">
+  <a href="screenshots/webp/docs-dialog-new-share.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-dialog-new-share.webp" alt="docs-dialog-new-share"></a>
+  <div class="card-meta"><strong>docs-dialog-new-share</strong><span>dialog · 1180×760 · 24 元素</span></div>
+</article>
+<article class="card" data-text="docs-new-share-tab-project dialog-tab /docs ">
+  <a href="screenshots/webp/docs-new-share-tab-project.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-new-share-tab-project.webp" alt="docs-new-share-tab-project"></a>
+  <div class="card-meta"><strong>docs-new-share-tab-project</strong><span>dialog-tab · 1180×760 · 24 元素</span></div>
+</article>
+<article class="card" data-text="docs-new-share-tab-folder dialog-tab /docs ">
+  <a href="screenshots/webp/docs-new-share-tab-folder.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-new-share-tab-folder.webp" alt="docs-new-share-tab-folder"></a>
+  <div class="card-meta"><strong>docs-new-share-tab-folder</strong><span>dialog-tab · 1180×760 · 27 元素</span></div>
+</article>
+<article class="card" data-text="docs-new-share-tab-api dialog-tab /docs ">
+  <a href="screenshots/webp/docs-new-share-tab-api.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-new-share-tab-api.webp" alt="docs-new-share-tab-api"></a>
+  <div class="card-meta"><strong>docs-new-share-tab-api</strong><span>dialog-tab · 1180×760 · 27 元素</span></div>
+</article>
+<article class="card" data-text="docs-new-share-tab-custom dialog-tab /docs ">
+  <a href="screenshots/webp/docs-new-share-tab-custom.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-new-share-tab-custom.webp" alt="docs-new-share-tab-custom"></a>
+  <div class="card-meta"><strong>docs-new-share-tab-custom</strong><span>dialog-tab · 1180×760 · 439 元素</span></div>
+</article>
+<article class="card" data-text="docs-dialog-share-service dialog /docs ">
+  <a href="screenshots/webp/docs-dialog-share-service.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-dialog-share-service.webp" alt="docs-dialog-share-service"></a>
+  <div class="card-meta"><strong>docs-dialog-share-service</strong><span>dialog · 1180×760 · 17 元素</span></div>
+</article>
+<article class="card" data-text="docs-filter-http page /docs 筛选：http">
+  <a href="screenshots/webp/docs-filter-http.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-filter-http.webp" alt="docs-filter-http"></a>
+  <div class="card-meta"><strong>docs-filter-http</strong><span>page · 1180×760 · 20 元素</span></div>
+</article>
+<article class="card" data-text="docs-filter-graphql page /docs 筛选：graphql">
+  <a href="screenshots/webp/docs-filter-graphql.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/docs-filter-graphql.webp" alt="docs-filter-graphql"></a>
+  <div class="card-meta"><strong>docs-filter-graphql</strong><span>page · 1180×760 · 20 元素</span></div>
+</article></div></section>
+<section id="schemas"><h2>字典 / 数据模型 / 数据库 <small>/schemas · 16 个状态</small></h2><div class="grid"><article class="card" data-text="schemas-landing-1180x760 page /schemas 字典/模型/数据库入口">
+  <a href="screenshots/webp/schemas-landing-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-landing-1180x760.webp" alt="schemas-landing-1180x760"></a>
+  <div class="card-meta"><strong>schemas-landing-1180x760</strong><span>page · 1180×760 · 19 元素</span></div>
+</article>
+<article class="card" data-text="schemas-landing-1440x900 page /schemas 字典/模型/数据库入口">
+  <a href="screenshots/webp/schemas-landing-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-landing-1440x900.webp" alt="schemas-landing-1440x900"></a>
+  <div class="card-meta"><strong>schemas-landing-1440x900</strong><span>page · 1440×900 · 19 元素</span></div>
+</article>
+<article class="card" data-text="schemas-dictionary page /schemas 数据字典面板">
+  <a href="screenshots/webp/schemas-dictionary.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-dictionary.webp" alt="schemas-dictionary"></a>
+  <div class="card-meta"><strong>schemas-dictionary</strong><span>page · 1180×760 · 30 元素</span></div>
+</article>
+<article class="card" data-text="schemas-dictionary-new-field dialog /schemas ">
+  <a href="screenshots/webp/schemas-dictionary-new-field.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-dictionary-new-field.webp" alt="schemas-dictionary-new-field"></a>
+  <div class="card-meta"><strong>schemas-dictionary-new-field</strong><span>dialog · 1180×760 · 30 元素</span></div>
+</article>
+<article class="card" data-text="schemas-database-empty page /schemas 数据库连接列表空态">
+  <a href="screenshots/webp/schemas-database-empty.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-database-empty.webp" alt="schemas-database-empty"></a>
+  <div class="card-meta"><strong>schemas-database-empty</strong><span>page · 1180×760 · 30 元素</span></div>
+</article>
+<article class="card" data-text="schemas-dialog-db-connection dialog /schemas ">
+  <a href="screenshots/webp/schemas-dialog-db-connection.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-dialog-db-connection.webp" alt="schemas-dialog-db-connection"></a>
+  <div class="card-meta"><strong>schemas-dialog-db-connection</strong><span>dialog · 1180×760 · 45 元素</span></div>
+</article>
+<article class="card" data-text="schemas-dialog-db-connection-filled dialog /schemas ">
+  <a href="screenshots/webp/schemas-dialog-db-connection-filled.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-dialog-db-connection-filled.webp" alt="schemas-dialog-db-connection-filled"></a>
+  <div class="card-meta"><strong>schemas-dialog-db-connection-filled</strong><span>dialog · 1180×760 · 45 元素</span></div>
+</article>
+<article class="card" data-text="schemas-database-list page /schemas 已保存的 mysql 连接（只读）">
+  <a href="screenshots/webp/schemas-database-list.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-database-list.webp" alt="schemas-database-list"></a>
+  <div class="card-meta"><strong>schemas-database-list</strong><span>page · 1180×760 · 37 元素</span></div>
+</article>
+<article class="card" data-text="schemas-dialog-import-tables dialog /schemas 导入表结构：表列表（ft-nbm-v2，只读）">
+  <a href="screenshots/webp/schemas-dialog-import-tables.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-dialog-import-tables.webp" alt="schemas-dialog-import-tables"></a>
+  <div class="card-meta"><strong>schemas-dialog-import-tables</strong><span>dialog · 1180×760 · 106 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-editor page /schemas 数据模型编辑器">
+  <a href="screenshots/webp/schemas-model-editor.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-editor.webp" alt="schemas-model-editor"></a>
+  <div class="card-meta"><strong>schemas-model-editor</strong><span>page · 1180×760 · 53 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-add-field page /schemas 添加字段后的字段表">
+  <a href="screenshots/webp/schemas-model-add-field.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-add-field.webp" alt="schemas-model-add-field"></a>
+  <div class="card-meta"><strong>schemas-model-add-field</strong><span>page · 1180×760 · 75 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-visual page /schemas 模型模式：可视化">
+  <a href="screenshots/webp/schemas-model-visual.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-visual.webp" alt="schemas-model-visual"></a>
+  <div class="card-meta"><strong>schemas-model-visual</strong><span>page · 1180×760 · 53 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-raw page /schemas 模型模式：raw 编辑">
+  <a href="screenshots/webp/schemas-model-raw.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-raw.webp" alt="schemas-model-raw"></a>
+  <div class="card-meta"><strong>schemas-model-raw</strong><span>page · 1180×760 · 52 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-preview page /schemas 模型模式：预览">
+  <a href="screenshots/webp/schemas-model-preview.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-preview.webp" alt="schemas-model-preview"></a>
+  <div class="card-meta"><strong>schemas-model-preview</strong><span>page · 1180×760 · 50 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-codegen page /schemas 模型模式：生成代码">
+  <a href="screenshots/webp/schemas-model-codegen.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-codegen.webp" alt="schemas-model-codegen"></a>
+  <div class="card-meta"><strong>schemas-model-codegen</strong><span>page · 1180×760 · 50 元素</span></div>
+</article>
+<article class="card" data-text="schemas-model-smart-import page /schemas 模型模式：智能导入">
+  <a href="screenshots/webp/schemas-model-smart-import.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/schemas-model-smart-import.webp" alt="schemas-model-smart-import"></a>
+  <div class="card-meta"><strong>schemas-model-smart-import</strong><span>page · 1180×760 · 50 元素</span></div>
+</article></div></section>
+<section id="mqtt"><h2>MQTT 模块 <small>/mqtt · 13 个状态</small></h2><div class="grid"><article class="card" data-text="mqtt-empty-1180x760 page /mqtt mqtt 连接列表空态">
+  <a href="screenshots/webp/mqtt-empty-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-empty-1180x760.webp" alt="mqtt-empty-1180x760"></a>
+  <div class="card-meta"><strong>mqtt-empty-1180x760</strong><span>page · 1180×760 · 10 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-empty-1440x900 page /mqtt mqtt 连接列表空态">
+  <a href="screenshots/webp/mqtt-empty-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-empty-1440x900.webp" alt="mqtt-empty-1440x900"></a>
+  <div class="card-meta"><strong>mqtt-empty-1440x900</strong><span>page · 1440×900 · 10 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-profile-editor-1180x760 page /mqtt mqtt 连接编辑器（新建默认连接）">
+  <a href="screenshots/webp/mqtt-profile-editor-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-profile-editor-1180x760.webp" alt="mqtt-profile-editor-1180x760"></a>
+  <div class="card-meta"><strong>mqtt-profile-editor-1180x760</strong><span>page · 1180×760 · 101 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-profile-editor-1440x900 page /mqtt mqtt 连接编辑器（新建默认连接）">
+  <a href="screenshots/webp/mqtt-profile-editor-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-profile-editor-1440x900.webp" alt="mqtt-profile-editor-1440x900"></a>
+  <div class="card-meta"><strong>mqtt-profile-editor-1440x900</strong><span>page · 1440×900 · 101 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-tab-messages page /mqtt mqtt tab：消息">
+  <a href="screenshots/webp/mqtt-tab-messages.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-tab-messages.webp" alt="mqtt-tab-messages"></a>
+  <div class="card-meta"><strong>mqtt-tab-messages</strong><span>page · 1180×760 · 101 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-tab-publish page /mqtt mqtt tab：发布">
+  <a href="screenshots/webp/mqtt-tab-publish.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-tab-publish.webp" alt="mqtt-tab-publish"></a>
+  <div class="card-meta"><strong>mqtt-tab-publish</strong><span>page · 1180×760 · 119 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-tab-attempts page /mqtt mqtt tab：运行记录">
+  <a href="screenshots/webp/mqtt-tab-attempts.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-tab-attempts.webp" alt="mqtt-tab-attempts"></a>
+  <div class="card-meta"><strong>mqtt-tab-attempts</strong><span>page · 1180×760 · 103 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-more-menu menu /mqtt ">
+  <a href="screenshots/webp/mqtt-more-menu.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-more-menu.webp" alt="mqtt-more-menu"></a>
+  <div class="card-meta"><strong>mqtt-more-menu</strong><span>menu · 1180×760 · 8 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-drawer-versions drawer /mqtt ">
+  <a href="screenshots/webp/mqtt-drawer-versions.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-drawer-versions.webp" alt="mqtt-drawer-versions"></a>
+  <div class="card-meta"><strong>mqtt-drawer-versions</strong><span>drawer · 1180×760 · 8 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-subscription-row page /mqtt 新增订阅行">
+  <a href="screenshots/webp/mqtt-subscription-row.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-subscription-row.webp" alt="mqtt-subscription-row"></a>
+  <div class="card-meta"><strong>mqtt-subscription-row</strong><span>page · 1180×760 · 111 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-advanced-tls page /mqtt 展开：tls 校验证书">
+  <a href="screenshots/webp/mqtt-advanced-tls.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-advanced-tls.webp" alt="mqtt-advanced-tls"></a>
+  <div class="card-meta"><strong>mqtt-advanced-tls</strong><span>page · 1180×760 · 101 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-advanced-will page /mqtt 展开：遗嘱 will">
+  <a href="screenshots/webp/mqtt-advanced-will.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-advanced-will.webp" alt="mqtt-advanced-will"></a>
+  <div class="card-meta"><strong>mqtt-advanced-will</strong><span>page · 1180×760 · 102 元素</span></div>
+</article>
+<article class="card" data-text="mqtt-advanced-props page /mqtt 展开：mqtt 5 属性">
+  <a href="screenshots/webp/mqtt-advanced-props.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/mqtt-advanced-props.webp" alt="mqtt-advanced-props"></a>
+  <div class="card-meta"><strong>mqtt-advanced-props</strong><span>page · 1180×760 · 122 元素</span></div>
+</article></div></section>
+<section id="automation"><h2>流程自动化 <small>/automation · 7 个状态</small></h2><div class="grid"><article class="card" data-text="automation-empty-1180x760 page /automation 流程列表空态">
+  <a href="screenshots/webp/automation-empty-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-empty-1180x760.webp" alt="automation-empty-1180x760"></a>
+  <div class="card-meta"><strong>automation-empty-1180x760</strong><span>page · 1180×760 · 11 元素</span></div>
+</article>
+<article class="card" data-text="automation-empty-1440x900 page /automation 流程列表空态">
+  <a href="screenshots/webp/automation-empty-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-empty-1440x900.webp" alt="automation-empty-1440x900"></a>
+  <div class="card-meta"><strong>automation-empty-1440x900</strong><span>page · 1440×900 · 11 元素</span></div>
+</article>
+<article class="card" data-text="automation-flow-editor-1180x760 page /automation 流程编辑器（新建流程）">
+  <a href="screenshots/webp/automation-flow-editor-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-flow-editor-1180x760.webp" alt="automation-flow-editor-1180x760"></a>
+  <div class="card-meta"><strong>automation-flow-editor-1180x760</strong><span>page · 1180×760 · 19 元素</span></div>
+</article>
+<article class="card" data-text="automation-flow-editor-1440x900 page /automation 流程编辑器（新建流程）">
+  <a href="screenshots/webp/automation-flow-editor-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-flow-editor-1440x900.webp" alt="automation-flow-editor-1440x900"></a>
+  <div class="card-meta"><strong>automation-flow-editor-1440x900</strong><span>page · 1440×900 · 19 元素</span></div>
+</article>
+<article class="card" data-text="automation-event-menu menu /automation ">
+  <a href="screenshots/webp/automation-event-menu.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-event-menu.webp" alt="automation-event-menu"></a>
+  <div class="card-meta"><strong>automation-event-menu</strong><span>menu · 1180×760 · 8 元素</span></div>
+</article>
+<article class="card" data-text="automation-event-added page /automation 添加一个事件后的编辑器">
+  <a href="screenshots/webp/automation-event-added.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-event-added.webp" alt="automation-event-added"></a>
+  <div class="card-meta"><strong>automation-event-added</strong><span>page · 1180×760 · 27 元素</span></div>
+</article>
+<article class="card" data-text="automation-run-result-empty page /automation 运行结果/历史运行空态">
+  <a href="screenshots/webp/automation-run-result-empty.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/automation-run-result-empty.webp" alt="automation-run-result-empty"></a>
+  <div class="card-meta"><strong>automation-run-result-empty</strong><span>page · 1180×760 · 27 元素</span></div>
+</article></div></section>
+<section id="git"><h2>Git 版本管理 <small>/git · 4 个状态</small></h2><div class="grid"><article class="card" data-text="git-status-1180x760 page /git git 工作区状态（临时仓库）">
+  <a href="screenshots/webp/git-status-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/git-status-1180x760.webp" alt="git-status-1180x760"></a>
+  <div class="card-meta"><strong>git-status-1180x760</strong><span>page · 1180×760 · 50 元素</span></div>
+</article>
+<article class="card" data-text="git-status-1440x900 page /git git 工作区状态（临时仓库）">
+  <a href="screenshots/webp/git-status-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/git-status-1440x900.webp" alt="git-status-1440x900"></a>
+  <div class="card-meta"><strong>git-status-1440x900</strong><span>page · 1440×900 · 50 元素</span></div>
+</article>
+<article class="card" data-text="git-dialog-branches dialog /git ">
+  <a href="screenshots/webp/git-dialog-branches.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/git-dialog-branches.webp" alt="git-dialog-branches"></a>
+  <div class="card-meta"><strong>git-dialog-branches</strong><span>dialog · 1180×760 · 6 元素</span></div>
+</article>
+<article class="card" data-text="git-dialog-remotes dialog /git ">
+  <a href="screenshots/webp/git-dialog-remotes.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/git-dialog-remotes.webp" alt="git-dialog-remotes"></a>
+  <div class="card-meta"><strong>git-dialog-remotes</strong><span>dialog · 1180×760 · 9 元素</span></div>
+</article></div></section>
+<section id="settings"><h2>设置 <small>/settings · 8 个状态</small></h2><div class="grid"><article class="card" data-text="settings-top-1180x760 page /settings 设置页顶部">
+  <a href="screenshots/webp/settings-top-1180x760.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-top-1180x760.webp" alt="settings-top-1180x760"></a>
+  <div class="card-meta"><strong>settings-top-1180x760</strong><span>page · 1180×760 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-top-1440x900 page /settings 设置页顶部">
+  <a href="screenshots/webp/settings-top-1440x900.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-top-1440x900.webp" alt="settings-top-1440x900"></a>
+  <div class="card-meta"><strong>settings-top-1440x900</strong><span>page · 1440×900 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-section-env page /settings 设置区块：环境与请求前缀">
+  <a href="screenshots/webp/settings-section-env.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-section-env.webp" alt="settings-section-env"></a>
+  <div class="card-meta"><strong>settings-section-env</strong><span>page · 1180×760 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-section-global-vars page /settings 设置区块：全局变量">
+  <a href="screenshots/webp/settings-section-global-vars.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-section-global-vars.webp" alt="settings-section-global-vars"></a>
+  <div class="card-meta"><strong>settings-section-global-vars</strong><span>page · 1180×760 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-section-send page /settings 设置区块：发送设置">
+  <a href="screenshots/webp/settings-section-send.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-section-send.webp" alt="settings-section-send"></a>
+  <div class="card-meta"><strong>settings-section-send</strong><span>page · 1180×760 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-section-mcp page /settings 设置区块：mcp">
+  <a href="screenshots/webp/settings-section-mcp.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-section-mcp.webp" alt="settings-section-mcp"></a>
+  <div class="card-meta"><strong>settings-section-mcp</strong><span>page · 1180×760 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-section-debug page /settings 设置区块：调试">
+  <a href="screenshots/webp/settings-section-debug.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-section-debug.webp" alt="settings-section-debug"></a>
+  <div class="card-meta"><strong>settings-section-debug</strong><span>page · 1180×760 · 55 元素</span></div>
+</article>
+<article class="card" data-text="settings-variable-row-added page /settings 新增环境变量行">
+  <a href="screenshots/webp/settings-variable-row-added.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/settings-variable-row-added.webp" alt="settings-variable-row-added"></a>
+  <div class="card-meta"><strong>settings-variable-row-added</strong><span>page · 1180×760 · 61 元素</span></div>
+</article></div></section>
+<section id="global"><h2>全局框架 <small>/global · 3 个状态</small></h2><div class="grid"><article class="card" data-text="chrome-project-menu menu /global ">
+  <a href="screenshots/webp/chrome-project-menu.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/chrome-project-menu.webp" alt="chrome-project-menu"></a>
+  <div class="card-meta"><strong>chrome-project-menu</strong><span>menu · 1180×760 · 3 元素</span></div>
+</article>
+<article class="card" data-text="chrome-tooltip-git tooltip /global ">
+  <a href="screenshots/webp/chrome-tooltip-git.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/chrome-tooltip-git.webp" alt="chrome-tooltip-git"></a>
+  <div class="card-meta"><strong>chrome-tooltip-git</strong><span>tooltip · 1180×760 · 1 元素</span></div>
+</article>
+<article class="card" data-text="chrome-tooltip-trash tooltip /global ">
+  <a href="screenshots/webp/chrome-tooltip-trash.webp" target="_blank" rel="noreferrer"><img loading="lazy" src="screenshots/webp/chrome-tooltip-trash.webp" alt="chrome-tooltip-trash"></a>
+  <div class="card-meta"><strong>chrome-tooltip-trash</strong><span>tooltip · 1180×760 · 1 元素</span></div>
+</article></div></section>
+<div class="empty" id="empty" hidden>没有匹配的状态。</div>
+</main>
+<script>
+  const q = document.getElementById('q');
+  const cards = [...document.querySelectorAll('.card')];
+  const sections = [...document.querySelectorAll('main section')];
+  q.addEventListener('input', () => {
+    const v = q.value.trim().toLowerCase();
+    let visible = 0;
+    for (const card of cards) {
+      const hit = !v || card.dataset.text.includes(v);
+      card.hidden = !hit;
+      if (hit) visible++;
+    }
+    for (const section of sections) section.hidden = ![...section.querySelectorAll('.card')].some((c) => !c.hidden);
+    document.getElementById('empty').hidden = visible > 0;
+  });
+</script>
+</body>
+</html>

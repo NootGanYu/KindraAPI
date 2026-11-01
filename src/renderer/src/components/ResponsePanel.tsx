@@ -1,6 +1,6 @@
 import JsonFieldTable from './JsonFieldTable'
 import { fieldDocsFromSchema, mergeFieldDocs } from '@shared/jsonFields'
-import { exampleFromRecord } from '../store'
+import { exampleFromRecord, hasLocalEdits, useApp, useModelEpoch } from '../store'
 import { modelDocumentation } from './schemas/modelDocumentation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { App as AntApp, Input, Select, Tag, Tooltip } from 'antd'
@@ -12,6 +12,7 @@ import ModelPickerModal from './schemas/ModelPickerModal'
 type ViewMode = 'pretty' | 'raw' | 'preview' | 'visual' | 'table'
 
 interface Props {
+  targetId?: string
   record: SendRecord | null
   examples?: ResponseExample[]
   loading?: boolean
@@ -87,6 +88,7 @@ function HeaderTable({ rows }: { rows: Array<[string, string]> }): JSX.Element {
 }
 
 export default function ResponsePanel({
+  targetId,
   record,
   examples,
   loading,
@@ -94,6 +96,7 @@ export default function ResponsePanel({
   onChangeExamples
 }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
+  const modelEpoch = useModelEpoch(targetId)
   const [viewMode, setViewMode] = useState<ViewMode>('pretty')
   const [activeTab, setActiveTab] = useState('实时响应')
   const [models, setModels] = useState<ModelSummary[]>([])
@@ -138,7 +141,7 @@ export default function ResponsePanel({
     return () => {
       active = false
     }
-  }, [projectId])
+  }, [projectId, modelEpoch])
 
   const exampleModelId = example?.expect?.model_id
   const referencedModel = useMemo(
@@ -152,10 +155,14 @@ export default function ResponsePanel({
     let active = true
     modelDocumentation(projectId, exampleModelId)
       .then((result) => {
-        if (!active) return
+        if (!active || (targetId && hasLocalEdits(targetId))) return
         setModelWarning('')
         if (result.raw !== (example.raw ?? '') || JSON.stringify(result.field_docs) !== JSON.stringify(example.field_docs)) {
-          onChangeExamples((latestExamples.current ?? []).map(item => item.example_id === example.example_id ? { ...item, ...result } : item))
+          const next = (latestExamples.current ?? []).map(item => item.example_id === example.example_id ? { ...item, ...result } : item)
+          if (targetId) {
+            const target = useApp.getState().drafts[targetId]
+            if (target) useApp.getState().applyDerivedPatch(targetId, { response: { ...target.response, example: next } })
+          } else onChangeExamples(next)
         }
       })
       .catch(error => setModelWarning(error.message))
@@ -163,7 +170,7 @@ export default function ResponsePanel({
       active = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exampleModelId, example?.raw, projectId])
+  }, [exampleModelId, example?.raw, projectId, modelEpoch])
 
   const selectExampleModel = async (model: ModelSummary): Promise<void> => {
     if (!projectId) return

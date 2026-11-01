@@ -1,4 +1,11 @@
 import { create } from 'zustand'
+import {
+  preserveCaseRuns,
+  stableJson,
+  targetDefinition,
+  type TargetChangeEvent,
+  type TargetSnapshot
+} from '@shared/targetSync'
 import { createEnvironment, createId, createParam } from '@shared/factories'
 import type {
   AppPaths,
@@ -19,6 +26,17 @@ export interface Tab {
   id: string
   name: string
   dirty: boolean
+  /** 打开会话标识；异步读取返回时用于丢弃过期结果。 */
+  openKey?: string
+  /** 最近一次自动同步的来源，用于轻量反馈。 */
+  syncedBy?: string
+  /** 存在待处理更新时的外部来源。 */
+  externalSource?: string
+  syncError?: string
+  /** 模型内容变化计数；编辑器据此重新解析引用。 */
+  modelEpoch?: number
+  /** 强制重建编辑器的次数；加载最新版时递增。 */
+  resetKey?: number
 }
 
 interface AppState {
@@ -33,6 +51,14 @@ interface AppState {
   tabs: Tab[]
   activeId: string | null
   drafts: Record<string, Target>
+  /** 每个标签最近一次已保存的快照与并发校验标识。 */
+  baselines: Record<string, TargetSnapshot>
+  /** 外部更新时因本地编辑而暂缓应用的已保存快照。 */
+  pendingUpdates: Record<string, TargetSnapshot>
+  /** 弹窗等尚未提交的本地输入持有的锁计数。 */
+  editLocks: Record<string, number>
+  saveConflict: { id: string; snapshot: TargetSnapshot } | null
+  syncNotice: string
   records: Record<string, SendRecord | null>
   sendingId: string | null
   mcpConfig: McpConfig | null
@@ -48,7 +74,12 @@ interface AppState {
   cloneTarget: (id: string) => Promise<Target>
   replaceDraft: (target: Target) => void
   addEnvironment: (name?: string) => Promise<Environment>
-  saveTarget: (id: string) => Promise<void>
+  saveTarget: (id: string, confirmedRevision?: string) => Promise<void>
+  syncTargets: (event?: TargetChangeEvent) => Promise<void>
+  loadLatest: (id: string) => Promise<void>
+  saveCopy: (id: string) => Promise<void>
+  lockEditing: (id: string, delta: number) => void
+  applyDerivedPatch: (id: string, patch: Partial<Target>) => void
   renameTarget: (id: string, name: string) => Promise<void>
   describeTarget: (id: string, description: string) => Promise<void>
   reorderTargets: (parentId: string, orderedIds: string[]) => Promise<void>
@@ -68,6 +99,126 @@ interface AppState {
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error)
   return result.data
+}
+
+let treeReadSequence = 0
+const ownSaves = new Set<string>()
+const targetReads = new Map<string, number>()
+
+export function hasLocalEdits(id: string): boolean {
+  const state = useApp.getState()
+  return !!state.tabs.find(tab => tab.id === id)?.dirty || (state.editLocks[id] ?? 0) > 0
+}
+
+/** 标签上展示的外部更新来源；MCP 之外的协同写入统一记为“外部”。 */
+function externalLabel(id: string): string {
+  return useApp.getState().tabs.find(tab => tab.id === id)?.externalSource ?? '外部'
+}
+
+interface RefreshOptions {
+  /** 外部更新的展示来源；local 时忽略。 */
+  source?: string
+  force?: boolean
+  runtimeOnly?: boolean
+  modelsChanged?: boolean
+  /** 同一次界面操作已由本地应用：只校准并发基线，不显示为外部更新。 */
+  local?: boolean
+}
+
+async function refreshOpenTarget(id: string, options: RefreshOptions = {}): Promise<void> {
+  const { source = '外部', force = false, runtimeOnly = false, modelsChanged = false, local = false } = options
+  const before = useApp.getState()
+  const projectId = before.project?.project_id, tab = before.tabs.find(tab => tab.id === id)
+  if (!projectId || !tab) return
+  const key = `${projectId}:${id}`, sequence = (targetReads.get(key) ?? 0) + 1
+  targetReads.set(key, sequence)
+  try {
+    const snapshot = unwrap(await window.api.targets.read(projectId, id))
+    const state = useApp.getState()
+    if (state.project?.project_id !== projectId || state.tabs.find(item => item.id === id)?.openKey !== tab.openKey || targetReads.get(key) !== sequence) return
+    if (runtimeOnly && snapshot.target) {
+      useApp.setState(current => {
+        const draft = current.drafts[id]
+        if (!draft) return current
+        return { drafts: { ...current.drafts, [id]: preserveCaseRuns(draft, snapshot.target) } }
+      })
+      return
+    }
+    const changed = snapshot.revision !== state.baselines[id]?.revision
+    if (!force && !changed && !modelsChanged) {
+      useApp.setState(current => ({ tabs: current.tabs.map(item => item.id === id ? { ...item, syncError: undefined } : item) }))
+      return
+    }
+    if (!snapshot.target) {
+      // 删除永远不丢弃本地内容：没有本地编辑才关闭标签，否则保留草稿并提供复制/另存。
+      if (local || !hasLocalEdits(id)) {
+        if (!local) {
+          useApp.setState(current => ({
+            syncNotice: `${source} 已删除「${tab.name}」，标签已关闭`,
+            saveConflict: current.saveConflict?.id === id ? null : current.saveConflict
+          }))
+        }
+        useApp.getState().closeTab(id)
+        return
+      }
+      useApp.setState(current => ({
+        pendingUpdates: { ...current.pendingUpdates, [id]: snapshot },
+        saveConflict: current.saveConflict?.id === id ? { id, snapshot } : current.saveConflict,
+        tabs: current.tabs.map(item => item.id === id ? { ...item, externalSource: source, syncError: undefined } : item)
+      }))
+      return
+    }
+    if (local) {
+      const edited = hasLocalEdits(id)
+      useApp.setState(current => {
+        const pendingUpdates = { ...current.pendingUpdates }
+        if (!edited) delete pendingUpdates[id]
+        const tabs = edited ? current.tabs : current.tabs.map(item => item.id === id ? {
+          ...item, name: snapshot.target!.name, dirty: false, syncError: undefined,
+          // 普通保存不需要重建编辑器；只有模型内容变化时才让编辑器重新解析引用。
+          modelEpoch: (item.modelEpoch ?? 0) + (modelsChanged ? 1 : 0),
+          resetKey: (item.resetKey ?? 0) + (force ? 1 : 0)
+        } : item)
+        return {
+          baselines: { ...current.baselines, [id]: snapshot },
+          pendingUpdates,
+          ...(edited ? {} : { drafts: { ...current.drafts, [id]: snapshot.target! } }),
+          tabs
+        }
+      })
+      return
+    }
+    if (!force && hasLocalEdits(id)) {
+      useApp.setState(current => ({ pendingUpdates: { ...current.pendingUpdates, [id]: snapshot },
+        tabs: current.tabs.map(item => item.id === id ? { ...item, externalSource: source, syncError: undefined } : item) }))
+      return
+    }
+    useApp.setState(current => {
+      const pendingUpdates = { ...current.pendingUpdates }; delete pendingUpdates[id]
+      return {
+        drafts: { ...current.drafts, [id]: snapshot.target! },
+        baselines: { ...current.baselines, [id]: snapshot }, pendingUpdates,
+        saveConflict: current.saveConflict?.id === id ? null : current.saveConflict,
+        tabs: current.tabs.map(item => item.id === id ? { ...item, name: snapshot.target!.name, dirty: false,
+          externalSource: undefined, syncError: undefined, syncedBy: source,
+          modelEpoch: (item.modelEpoch ?? 0) + (modelsChanged ? 1 : 0), resetKey: (item.resetKey ?? 0) + (force ? 1 : 0) } : item)
+      }
+    })
+  } catch (error) {
+    if (useApp.getState().project?.project_id === projectId && targetReads.get(key) === sequence) {
+      useApp.setState(current => ({ tabs: current.tabs.map(item => item.id === id ? { ...item, syncError: (error as Error).message } : item) }))
+    }
+    throw error
+  }
+}
+
+/** 在初始化读取之前订阅；路由切换不影响监听。 */
+export function connectTargetSync(): () => void {
+  const sync = (event?: TargetChangeEvent): void => { void useApp.getState().syncTargets(event).catch(() => undefined) }
+  const off = window.api.targets.onChanged(sync)
+  const onFocus = (): void => sync()
+  window.addEventListener('focus', onFocus)
+  return () => { off(); window.removeEventListener('focus', onFocus) }
 }
 
 export function exampleFromRecord(record: SendRecord): ResponseExample {
@@ -124,6 +275,11 @@ export const useApp = create<AppState>((set, get) => ({
   tabs: [],
   activeId: null,
   drafts: {},
+  baselines: {},
+  pendingUpdates: {},
+  editLocks: {},
+  saveConflict: null,
+  syncNotice: '',
   records: {},
   sendingId: null,
   mcpConfig: null,
@@ -173,6 +329,7 @@ export const useApp = create<AppState>((set, get) => ({
       mcpStatus,
       mcpTools
     })
+    await get().syncTargets()
   },
 
   selectProject: async (projectId) => {
@@ -211,9 +368,15 @@ export const useApp = create<AppState>((set, get) => ({
       tabs: [],
       activeId: null,
       drafts: {},
+      baselines: {},
+      pendingUpdates: {},
+      editLocks: {},
+      saveConflict: null,
+      syncNotice: '',
       records: {},
       sendingId: null
     })
+    await get().syncTargets()
   },
 
   createProject: async (name) => {
@@ -226,8 +389,9 @@ export const useApp = create<AppState>((set, get) => ({
   reloadTargets: async () => {
     const project = get().project
     if (!project) return
+    const sequence = ++treeReadSequence
     const targets = unwrap(await window.api.targets.list(project.project_id))
-    set({ targets })
+    if (get().project?.project_id === project.project_id && sequence === treeReadSequence) set({ targets })
   },
 
   reloadEnvironments: async () => {
@@ -250,11 +414,14 @@ export const useApp = create<AppState>((set, get) => ({
       set({ activeId: id })
       return
     }
-    const target = unwrap(await window.api.targets.get(project.project_id, id))
+    const snapshot = unwrap(await window.api.targets.read(project.project_id, id))
+    const target = snapshot.target
     if (!target) return
+    if (get().project?.project_id !== project.project_id || get().tabs.some(tab => tab.id === id)) return
     set((state) => ({
       drafts: { ...state.drafts, [id]: target },
-      tabs: [...state.tabs, { id, name: target.name, dirty: false }],
+      baselines: { ...state.baselines, [id]: snapshot },
+      tabs: [...state.tabs, { id, name: target.name, dirty: false, openKey: createId('tab') }],
       activeId: id
     }))
   },
@@ -265,11 +432,7 @@ export const useApp = create<AppState>((set, get) => ({
     const target = unwrap(await window.api.targets.create(project.project_id, parentId, type))
     await get().reloadTargets()
     if (type === 'api') {
-      set((state) => ({
-        drafts: { ...state.drafts, [target.target_id]: target },
-        tabs: [...state.tabs, { id: target.target_id, name: target.name, dirty: false }],
-        activeId: target.target_id
-      }))
+      await get().openTarget(target.target_id)
     }
     return target
   },
@@ -286,12 +449,14 @@ export const useApp = create<AppState>((set, get) => ({
   replaceDraft: (target) => {
     set((state) => ({
       drafts: { ...state.drafts, [target.target_id]: target },
+      baselines: { ...state.baselines, [target.target_id]: { target, revision: null } },
       tabs: state.tabs.map((tab) =>
         tab.id === target.target_id
           ? { ...tab, name: target.name, dirty: false }
           : tab
       )
     }))
+    void refreshOpenTarget(target.target_id, { local: true }).catch(() => undefined)
   },
 
   addEnvironment: async (name = '新环境') => {
@@ -305,52 +470,117 @@ export const useApp = create<AppState>((set, get) => ({
     return env
   },
 
-  saveTarget: async (id) => {
+  saveTarget: async (id, confirmedRevision) => {
     const project = get().project
     const draft = get().drafts[id]
     if (!project || !draft) return
+    const tabKey = get().tabs.find(tab => tab.id === id)?.openKey
+    const revision = confirmedRevision ?? get().baselines[id]?.revision
+    if (!revision) throw new Error('正在读取接口最新状态，请稍后保存')
     const payload = draft
-    const saved = unwrap(await window.api.targets.save(project.project_id, payload))
-    set((state) => ({
-      drafts: { ...state.drafts, [id]: saved },
-      tabs: state.tabs.map((t) => (t.id === id ? { ...t, name: saved.name, dirty: false } : t))
-    }))
+    const operationId = createId('save')
+    ownSaves.add(operationId)
+    try {
+      const outcome = unwrap(await window.api.targets.saveChecked(project.project_id, payload, revision, operationId))
+      if (get().project?.project_id !== project.project_id || get().tabs.find(tab => tab.id === id)?.openKey !== tabKey) return
+      if (outcome.status !== 'saved') {
+        const snapshot = { target: outcome.target, revision: outcome.revision }
+        set(state => ({ pendingUpdates: { ...state.pendingUpdates, [id]: snapshot },
+          saveConflict: { id, snapshot }, tabs: state.tabs.map(tab => tab.id === id ? { ...tab, externalSource: tab.externalSource ?? '外部' } : tab) }))
+        throw new Error(outcome.status === 'deleted' ? '接口已被删除，请复制内容或另存为新接口' : '接口已更新，请先处理保存冲突')
+      }
+      set(state => {
+        const current = state.drafts[id]
+        // 保存期间可能只更新了用例运行结果（不属于定义），不能据此把标签标脏。
+        const unchanged = !!current && stableJson(targetDefinition(current)) === stableJson(targetDefinition(payload))
+        const pendingUpdates = { ...state.pendingUpdates }; delete pendingUpdates[id]
+        return {
+          baselines: { ...state.baselines, [id]: { target: outcome.target, revision: outcome.revision } },
+          drafts: unchanged ? { ...state.drafts, [id]: outcome.target } : state.drafts,
+          tabs: state.tabs.map(tab => tab.id === id ? { ...tab, name: (unchanged ? outcome.target : state.drafts[id]).name,
+            dirty: !unchanged, externalSource: undefined, syncedBy: undefined, syncError: undefined } : tab),
+          pendingUpdates, saveConflict: null
+        }
+      })
+      await get().reloadTargets()
+      await refreshOpenTarget(id, { local: true })
+    } finally { ownSaves.delete(operationId) }
+  },
+
+  syncTargets: async (event) => {
+    const projectId = get().project?.project_id
+    if (!projectId || (event && event.projectId !== projectId)) return
+    // 界面自己发起的写入已经本地应用；只校准基线并刷新运行结果，不再提示“外部更新”。
+    const local = !!event && (event.source === 'ui' || ownSaves.has(event.operationId))
+    const source = event?.source === 'mcp' ? 'MCP' : '外部'
+    const runtimeIds = new Set(event ? event.changes.filter(change => change.kind === 'runtime').map(change => change.targetId) : [])
+    const ids = new Set(event ? event.changes.map(change => change.targetId) : get().tabs.map(tab => tab.id))
+    if (event?.modelsChanged) {
+      for (const tab of get().tabs) {
+        const target = get().drafts[tab.id]
+        if (target?.request?.body.model_id || target?.response?.example?.some(example => example.expect?.model_id)) ids.add(tab.id)
+      }
+    }
+    await Promise.all([
+      get().reloadTargets(),
+      ...[...ids].filter(id => get().tabs.some(tab => tab.id === id)).map(id =>
+        refreshOpenTarget(id, { source, runtimeOnly: runtimeIds.has(id), modelsChanged: !!event?.modelsChanged, local }))
+    ])
+  },
+
+  loadLatest: async (id) => { await refreshOpenTarget(id, { source: externalLabel(id), force: true }) },
+
+  saveCopy: async (id) => {
+    const projectId = get().project?.project_id, draft = get().drafts[id]
+    if (!projectId || !draft) return
+    const saved = unwrap(await window.api.targets.saveCopy(projectId, draft))
+    if (get().project?.project_id !== projectId) return
     await get().reloadTargets()
+    await get().openTarget(saved.target_id)
+  },
+
+  lockEditing: (id, delta) => {
+    set(state => ({ editLocks: { ...state.editLocks, [id]: Math.max(0, (state.editLocks[id] ?? 0) + delta) } }))
+    if (delta < 0 && !hasLocalEdits(id) && get().pendingUpdates[id]) {
+      void refreshOpenTarget(id, { source: externalLabel(id) }).catch(() => undefined)
+    }
+  },
+
+  applyDerivedPatch: (id, patch) => {
+    if (hasLocalEdits(id)) return
+    set(state => state.drafts[id] ? { drafts: { ...state.drafts, [id]: { ...state.drafts[id], ...patch } } } : state)
   },
 
   renameTarget: async (id, name) => {
     const project = get().project
     const trimmed = name.trim()
     if (!project || !trimmed) return
-    const draft = get().drafts[id]
-    const target = draft ?? unwrap(await window.api.targets.get(project.project_id, id))
+    if (get().tabs.some(tab => tab.id === id)) {
+      get().patchDraft(id, { name: trimmed })
+      await get().saveTarget(id)
+      return
+    }
+    const snapshot = unwrap(await window.api.targets.read(project.project_id, id))
+    const target = snapshot.target
     if (!target) return
-    const saved = unwrap(
-      await window.api.targets.save(project.project_id, { ...target, name: trimmed })
-    )
-    set((state) => ({
-      drafts: state.drafts[id] ? { ...state.drafts, [id]: saved } : state.drafts,
-      tabs: state.tabs.map((t) => (t.id === id ? { ...t, name: saved.name, dirty: false } : t))
-    }))
+    const saved = unwrap(await window.api.targets.saveChecked(project.project_id, { ...target, name: trimmed }, snapshot.revision!, createId('rename')))
+    if (saved.status !== 'saved') throw new Error('接口已更新，请重新编辑名称')
     await get().reloadTargets()
   },
 
   describeTarget: async (id, description) => {
     const project = get().project
     if (!project) return
-    const draft = get().drafts[id]
-    if (draft) {
-      set((state) => ({
-        drafts: { ...state.drafts, [id]: { ...draft, description } }
-      }))
+    if (get().tabs.some(tab => tab.id === id)) {
+      get().patchDraft(id, { description })
       await get().saveTarget(id)
       return
     }
-    const target = unwrap(await window.api.targets.get(project.project_id, id))
+    const snapshot = unwrap(await window.api.targets.read(project.project_id, id))
+    const target = snapshot.target
     if (!target) return
-    unwrap(
-      await window.api.targets.save(project.project_id, { ...target, description })
-    )
+    const saved = unwrap(await window.api.targets.saveChecked(project.project_id, { ...target, description }, snapshot.revision!, createId('describe')))
+    if (saved.status !== 'saved') throw new Error('接口已更新，请重新编辑说明')
     await get().reloadTargets()
   },
 
@@ -413,7 +643,10 @@ export const useApp = create<AppState>((set, get) => ({
       if (state.activeId === id) {
         activeId = tabs[Math.max(0, index - 1)]?.id ?? tabs[0]?.id ?? null
       }
-      return { tabs, activeId }
+      const drafts = { ...state.drafts }, baselines = { ...state.baselines }, pendingUpdates = { ...state.pendingUpdates }, editLocks = { ...state.editLocks }
+      delete drafts[id]; delete baselines[id]; delete pendingUpdates[id]; delete editLocks[id]
+      return { tabs, activeId, drafts, baselines, pendingUpdates, editLocks,
+        saveConflict: state.saveConflict?.id === id ? null : state.saveConflict }
     })
   },
 
@@ -423,10 +656,12 @@ export const useApp = create<AppState>((set, get) => ({
     set((state) => {
       const draft = state.drafts[id]
       if (!draft) return state
+      const next = { ...draft, ...patch }
+      if (stableJson(targetDefinition(draft)) === stableJson(targetDefinition(next))) return state
       return {
-        drafts: { ...state.drafts, [id]: { ...draft, ...patch } },
+        drafts: { ...state.drafts, [id]: next },
         tabs: state.tabs.map((t) =>
-          t.id === id ? { ...t, dirty: true, name: patch.name ?? t.name } : t
+          t.id === id ? { ...t, dirty: true, name: patch.name ?? t.name, syncedBy: undefined } : t
         )
       }
     })
@@ -483,3 +718,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({ mcpConfig: result.config, mcpStatus: result.status })
   }
 }))
+
+/** 模型内容变化后递增，编辑器以此重新解析引用。 */
+export function useModelEpoch(targetId: string | null | undefined): number {
+  return useApp((state) => state.tabs.find((tab) => tab.id === targetId)?.modelEpoch ?? 0)
+}

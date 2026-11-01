@@ -19,7 +19,7 @@ function checkKeys(value: Obj, keys: readonly string[], path: string): void {
 }
 const properties = {
   type: { type: 'string', enum: FIELD_TYPES },
-  description: { type: 'string', description: '业务含义；未知可省略，不能从示例猜测' },
+  description: { type: 'string', description: '字段业务含义。Agent 必须为每个已知字段填写；未知可省略，不能从字段名或示例猜测' },
   required: { type: 'boolean', description: '请求必填/响应必有，省略为未知' },
   nullable: { type: 'boolean', description: '是否允许 null；与必填分别表达' },
   enum: { type: ['array', 'null'], items: {}, description: '非空枚举列表；null 明确无限制；省略未知' },
@@ -29,10 +29,10 @@ const properties = {
   remove: { type: 'boolean', description: 'true 显式删除字段定义及子字段' },
   unset: { type: 'array', items: { type: 'string', enum: RULE_KEYS }, description: '显式清除指定规则，恢复待补充' }
 }
-export const fieldDocsSchema = { type: 'array', description: '按路径增量合并；省略保留，remove 显式删除。无需 raw 中存在。', items: {
+export const fieldDocsSchema = { type: 'array', description: '字段说明清单。Agent 应为每个已知字段提交 description；按路径增量合并，省略保留，remove 显式删除。无需 raw 中存在。', items: {
   type: 'object', properties: { ...properties, path: { type: 'string', description: '如 data.items[].id' }, pointer: { type: 'string', description: '或 JSON Pointer，如 /data/items/*/id' } }, additionalProperties: false
 } }
-export const paramsSchema = { type: 'array', description: '按 key 增量合并；未提交参数保留，remove:true 删除', items: {
+export const paramsSchema = { type: 'array', description: '参数清单。Agent 应为每个已知参数提交 description；按 key 增量合并，未提交参数保留，remove:true 删除', items: {
   type: 'object', properties: { ...properties, key: { type: 'string' }, value: { type: 'string' }, checked: { type: 'boolean' }, field_type: { type: 'string', enum: [...FIELD_TYPES, 'file'] } }, required: ['key'], additionalProperties: false
 } }
 export const bodySchema = { type: 'object', properties: {
@@ -49,7 +49,9 @@ export const successSchema = { type: 'object', properties: {
 export const apiDocumentationProperties = {
   project_id: { type: 'string' }, target_id: { type: 'string', description: '更新已有接口的 ID' },
   source_key: { type: 'string', description: '项目内稳定且唯一的代码标识，如 OrderController.detail；重复调用更新同一接口。新建必需。' },
-  name: { type: 'string' }, method: { type: 'string' }, url: { type: 'string' }, description: { type: 'string' }, parent_id: { type: 'string' },
+  name: { type: 'string' }, method: { type: 'string' }, url: { type: 'string' },
+  description: { type: 'string', description: '接口说明。新建接口时必须填写；更新时省略保留原值' },
+  parent_id: { type: 'string' },
   headers: paramsSchema, query: paramsSchema, paths: paramsSchema, cookies: paramsSchema,
   body: bodySchema, success_response: successSchema,
   auth: { type: 'object', description: '认证配置；省略保留' }

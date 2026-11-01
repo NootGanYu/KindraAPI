@@ -47,6 +47,7 @@ import ApiDescriptionDialog from '../components/ApiDescriptionDialog'
 import TargetVersionDrawer from '../components/TargetVersionDrawer'
 import CodeGenDialog from '../components/CodeGenDialog'
 import EnvironmentModal from '../components/EnvironmentModal'
+import { TargetEditScope, useTargetEditLock } from '../components/TargetEditScope'
 
 const ENTRIES = [
   { label: 'HTTP', color: '#ff6b6b', icon: <ApiOutlined /> },
@@ -85,6 +86,8 @@ export default function ApisPage(): JSX.Element {
   const cloneTarget = useApp((s) => s.cloneTarget)
   const replaceDraft = useApp((s) => s.replaceDraft)
   const addEnvironment = useApp((s) => s.addEnvironment)
+  const pendingUpdates = useApp(s => s.pendingUpdates)
+  const syncNotice = useApp(s => s.syncNotice)
 
   const [creating, setCreating] = useState(false)
   const [mode, setMode] = useState<Mode>('调试')
@@ -138,6 +141,12 @@ export default function ApisPage(): JSX.Element {
 
   const active = activeId ? drafts[activeId] : undefined
   const record = activeId ? records[activeId] ?? null : null
+  const activeTab = tabs.find(tab => tab.id === activeId)
+  const pending = activeId ? pendingUpdates[activeId] : undefined
+  const editorKey = `${activeId}:${activeTab?.resetKey ?? 0}`
+  const syncAction = async (action: () => Promise<void>): Promise<void> => {
+    try { await action() } catch (error) { message.error((error as Error).message) }
+  }
 
   const handleCreate = async (parentId: string, type: 'folder' | 'api'): Promise<void> => {
     if (creating) return
@@ -360,7 +369,7 @@ export default function ApisPage(): JSX.Element {
   }
 
   return (
-    <div className="page">
+    <TargetEditScope id={activeId}><div className="page">
       <PanelGroup direction="horizontal" autoSaveId="workbench-apis-layout-v2">
         <Panel defaultSize={22.5} minSize={18} maxSize={32}>
           <ApiTree
@@ -388,6 +397,7 @@ export default function ApisPage(): JSX.Element {
                 {tabs.map((tab) => {
                   const draft = drafts[tab.id]
                   const isFolder = draft?.target_type === 'folder'
+                  const tabPending = pendingUpdates[tab.id]
                   return (
                     <Dropdown
                       key={tab.id}
@@ -413,6 +423,10 @@ export default function ApisPage(): JSX.Element {
                           </span>
                         )}
                         <span className="tab-name">{tab.name}</span>
+                        {tab.syncError ? <span className="tab-sync pending" title={tab.syncError}>待处理</span>
+                          : tabPending?.target === null ? <span className="tab-sync pending" title="接口已被删除，本地内容已保留">已删除</span>
+                          : tabPending || tab.externalSource ? <span className="tab-sync pending" title={`${tab.externalSource ?? '外部'} 有待处理更新`}>待处理</span>
+                          : tab.syncedBy ? <span className="tab-sync" title={`${tab.syncedBy} 已更新`}>{tab.syncedBy} 已更新</span> : null}
                         <span
                           className="tab-x"
                           role="button"
@@ -527,10 +541,23 @@ export default function ApisPage(): JSX.Element {
               </Tooltip>
             </div>
 
+            {syncNotice ? <div className="target-sync-banner" role="status"><span>{syncNotice}</span><Button size="small" type="text" onClick={() => useApp.setState({ syncNotice: '' })}>知道了</Button></div> : null}
+            {activeId && (pending || activeTab?.syncError) ? <div className="target-sync-banner" role="status">
+              <span>{activeTab?.syncError ? `同步失败：${activeTab.syncError}` : pending?.target === null
+                ? '接口已被删除，本地内容已保留。' : `接口已被 ${activeTab?.externalSource ?? '外部'} 更新，本地编辑已保留。`}</span>
+              {activeTab?.syncError ? <Button size="small" onClick={() => void syncAction(() => useApp.getState().syncTargets())}>重试同步</Button>
+                : pending?.target === null ? <>
+                  <Button size="small" onClick={() => void syncAction(async () => { await window.api.app.copyText(JSON.stringify(useApp.getState().drafts[activeId], null, 2)); message.success('已复制接口内容') })}>复制内容</Button>
+                  <Button size="small" onClick={() => void syncAction(async () => { await useApp.getState().saveCopy(activeId); useApp.getState().closeTab(activeId) })}>另存为新接口</Button>
+                </> : <>
+                  <Button size="small" onClick={() => modal.confirm({ title: '放弃本地编辑并加载最新版？', content: '本地尚未保存的内容将被替换。', okText: '加载最新版', cancelText: '取消', onOk: () => useApp.getState().loadLatest(activeId) })}>加载最新版</Button>
+                  <span className="muted">可保留草稿继续编辑；保存前需处理冲突</span>
+                </>}
+            </div> : null}
             {!active ? (
               <Welcome onCreate={() => void handleCreate('0', 'api')} />
             ) : active.target_type === 'folder' ? (
-              <FolderInfo target={active} />
+              <FolderInfo key={editorKey} target={active} />
             ) : (
               <div className="surface">
                 <div className="mode-row">
@@ -617,7 +644,7 @@ export default function ApisPage(): JSX.Element {
                       minSize={22}
                     >
                       <RequestEditor
-                        draft={active}
+                        key={editorKey} draft={active}
                         onChange={(patch) => patchDraft(active.target_id, patch)}
                       />
                     </Panel>
@@ -629,6 +656,8 @@ export default function ApisPage(): JSX.Element {
                     <Panel defaultSize={splitDir === 'vertical' ? 48 : 45} minSize={20}>
                       <div className="response-pane">
                         <ResponsePanel
+                          key={editorKey}
+                          targetId={active.target_id}
                           record={record}
                           examples={active.response?.example}
                           loading={sendingId === active.target_id}
@@ -660,13 +689,13 @@ export default function ApisPage(): JSX.Element {
                   </PanelGroup>
                 ) : mode === '设计' ? (
                   <DesignEditor
-                    draft={active}
+                    key={editorKey} draft={active}
                     projectId={projectId}
                     onChange={(patch) => patchDraft(active.target_id, patch)}
                   />
                 ) : mode === '接口用例' ? (
                   <CasesEditor
-                    draft={active}
+                    key={editorKey} draft={active}
                     projectId={projectId}
                     environmentId={currentEnvId}
                     onChange={(patch) => patchDraft(active.target_id, patch)}
@@ -742,6 +771,7 @@ export default function ApisPage(): JSX.Element {
       <DocShareLinkDialog share={shareLink} onClose={() => setShareLink(null)} />
 
       <ApiDescriptionDialog
+        key={editorKey}
         open={descOpen}
         value={active?.description ?? ''}
         onClose={() => setDescOpen(false)}
@@ -773,7 +803,7 @@ export default function ApisPage(): JSX.Element {
           setEnvModalInitial(undefined)
         }}
       />
-    </div>
+    </div></TargetEditScope>
   )
 }
 
@@ -849,6 +879,7 @@ function FolderInfo({ target }: { target: Target }): JSX.Element {
   const renameTarget = useApp((s) => s.renameTarget)
   const deleteTargets = useApp((s) => s.deleteTargets)
   const [editing, setEditing] = useState(false)
+  useTargetEditLock(editing)
   const [name, setName] = useState(target.name)
   const [selected, setSelected] = useState<string[]>([])
 

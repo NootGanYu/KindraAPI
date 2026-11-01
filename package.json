@@ -12,6 +12,7 @@
   },
   "scripts": {
     "test:documentation": "esbuild scripts/documentation-smoke.ts --bundle --platform=node --format=cjs --external:electron --external:postman-runtime --external:postman-collection --external:mqtt --external:aedes --alias:@shared=./src/shared --outfile=scripts/.documentation-smoke.cjs && electron scripts/.documentation-smoke.cjs",
+    "test:client-sync": "esbuild scripts/client-sync-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/client-sync-smoke.cjs && electron node_modules/.tmp/client-sync-smoke.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
@@ -21,6 +22,10 @@
     "smoke:bundle": "esbuild scripts/smoke.ts --bundle --platform=node --format=cjs --external:electron --external:postman-runtime --external:postman-collection --external:mqtt --external:aedes --alias:@shared=./src/shared --outfile=scripts/.smoke.cjs",
     "smoke": "npm run smoke:bundle && electron scripts/.smoke.cjs",
     "test:ui": "node scripts/ui-smoke.cjs",
+    "ui:inventory": "node ui-inventory/tools/static-scan.mjs && node ui-inventory/tools/capture.mjs && node ui-inventory/tools/compact-inventory.mjs && node ui-inventory/tools/generate-docs.mjs",
+    "ui:inventory:docs": "node ui-inventory/tools/static-scan.mjs && node ui-inventory/tools/compact-inventory.mjs && node ui-inventory/tools/generate-docs.mjs",
+    "ui:inventory:capture": "node ui-inventory/tools/capture.mjs",
+    "ui:inventory:compact": "node ui-inventory/tools/compact-inventory.mjs",
     "mcp": "node mcp-stdio.cjs",
     "demo": "node scripts/demo-server.cjs",
     "pack:mac": "npm run build && electron-builder --mac dmg zip",

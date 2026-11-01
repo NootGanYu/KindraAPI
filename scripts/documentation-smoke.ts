@@ -54,9 +54,17 @@ async function main(): Promise<void> {
     return JSON.parse(response.result.content[0].text)
   }
   try {
-    await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'documentation-smoke', version: '1' } })
+    const initialized = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'documentation-smoke', version: '1' } })
+    assert(initialized.result.instructions.includes('必须填写接口说明'))
+    assert(initialized.result.instructions.includes('目录说明'))
     const tools = await rpc('tools/list', {})
     assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.inputSchema.properties.success_response.properties.field_docs.items.properties.enum_descriptions))
+    assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.description.includes('每个已知')))
+    assert(tools.result.tools.some((t: any) => t.name === 'create_folder' && t.inputSchema.properties.description))
+    const folder = await call('create_folder', { name: '文档目录', description: '订单相关接口' })
+    assert.equal(folder.folder.description, '订单相关接口')
+    const moved = await call('move_target', { target_id: folder.folder.target_id, description: '订单与支付接口' })
+    assert.equal(moved.target.description, '订单与支付接口')
     const state = { path: 'data.items[].state', type: 'integer', required: true, nullable: false, description: '订单状态', enum: [0, 1, 2], enum_descriptions: ['待审核', '通过', '驳回'], default: 0, example: 1 }
     const created = await call('upsert_api', {
       source_key: 'smoke.order.detail', name: 'MCP 文档验证', method: 'GET', url: 'http://localhost/orders/detail?id=order_001',

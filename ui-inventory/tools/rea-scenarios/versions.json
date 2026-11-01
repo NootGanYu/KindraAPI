@@ -1,0 +1,13 @@
+{
+  "executable_path": "D:/agent-workspace/963656544/KindraAPI/github/KindraAPI/node_modules/electron/dist/electron.exe",
+  "application_path": "D:/agent-workspace/963656544/KindraAPI/github/KindraAPI",
+  "args": [],
+  "actions": [
+    { "step_id": "open-api", "kind": "click", "selector": ".main .ant-tree-treenode:has-text(\"获取专家审核数量\")" },
+    { "step_id": "settle", "kind": "wait", "duration_ms": 1200 },
+    { "step_id": "more", "kind": "click", "selector": ".api-meta button:has(.anticon-more)" },
+    { "step_id": "menu", "kind": "wait", "duration_ms": 400 },
+    { "step_id": "versions", "kind": "click", "selector": "text=版本管理" },
+    { "step_id": "settle2", "kind": "wait", "duration_ms": 1400 }
+  ]
+}

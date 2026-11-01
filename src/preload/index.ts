@@ -49,6 +49,11 @@ const api = {
   },
 
   targets: {
+    onChanged: (callback: (event: unknown) => void) => subscribe('target:changed', callback),
+    read: (projectId: string, targetId: string) => invoke('target:read', projectId, targetId),
+    saveChecked: (projectId: string, target: unknown, revision: string, operationId: string) =>
+      invoke('target:save-checked', projectId, target, revision, operationId),
+    saveCopy: (projectId: string, target: unknown) => invoke('target:save-copy', projectId, target),
     list: (projectId: string) => invoke('target:list', projectId),
     get: (projectId: string, targetId: string) => invoke('target:get', projectId, targetId),
     create: (projectId: string, parentId: string, type: 'folder' | 'api') =>

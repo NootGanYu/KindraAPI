@@ -30,6 +30,7 @@ import type {
   Target
 } from '@shared/types'
 import * as store from './storage/store'
+import { withTargetChanges } from './storage/changes'
 import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
@@ -87,10 +88,17 @@ async function saveExport(
   }
 }
 
-function handle<T>(channel: string, fn: (...args: any[]) => T | Promise<T>): void {
+/** trackTargetChanges 只用于可能写入接口或模型的通道，避免无关 IPC 也进入变更上下文。 */
+function handle<T>(
+  channel: string,
+  fn: (...args: any[]) => T | Promise<T>,
+  trackTargetChanges = false
+): void {
   ipcMain.handle(channel, async (_event, ...args): Promise<Result<T>> => {
     try {
-      return { ok: true, data: await fn(...args) }
+      const run = (): T | Promise<T> => fn(...args)
+      const data = trackTargetChanges ? await withTargetChanges('ui', undefined, run) : await run()
+      return { ok: true, data }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -134,10 +142,26 @@ export function registerIpc(): void {
 
   handle('target:list', (projectId: string) => store.listTargets(projectId))
   handle('target:get', (projectId: string, targetId: string) => store.getTarget(projectId, targetId))
-  handle('target:create', (projectId: string, parentId: string, type: 'folder' | 'api') =>
-    store.createTargetInProject(projectId, parentId, type)
+  handle('target:read', (projectId: string, targetId: string) => store.readTargetSnapshot(projectId, targetId))
+  handle('target:save-checked', (projectId: string, target: Target, revision: string, operationId: string) =>
+    withTargetChanges('ui', operationId, () => store.saveTargetChecked(projectId, target, revision))
   )
-  handle('target:save', (projectId: string, target: Target) => store.saveTarget(projectId, target))
+  handle(
+    'target:save-copy',
+    (projectId: string, input: Target) => store.saveTargetCopy(projectId, input),
+    true
+  )
+  handle(
+    'target:create',
+    (projectId: string, parentId: string, type: 'folder' | 'api') =>
+      store.createTargetInProject(projectId, parentId, type),
+    true
+  )
+  handle(
+    'target:save',
+    (projectId: string, target: Target) => store.saveTarget(projectId, target),
+    true
+  )
 
   handle('dialog:open-files', async () => {
     const picked = await dialog.showOpenDialog({
@@ -166,24 +190,35 @@ export function registerIpc(): void {
       const apiCase = (target.cases ?? []).find((item) => item.case_id === caseId)
       if (!apiCase) throw new Error('用例不存在')
       return runApiCase(projectId, target, apiCase, environmentId)
-    }
+    },
+    true
   )
 
   handle(
     'target:case:runAll',
     (projectId: string, target: Target, environmentId?: string) =>
-      runApiCases(projectId, target, environmentId)
+      runApiCases(projectId, target, environmentId),
+    true
   )
 
-  handle('target:delete', (projectId: string, targetId: string) => {
-    store.deleteTarget(projectId, targetId)
-    return true
-  })
-  handle('target:reorder', (projectId: string, parentId: string, orderedIds: string[]) =>
-    store.reorderTargets(projectId, parentId, orderedIds)
+  handle(
+    'target:delete',
+    (projectId: string, targetId: string) => {
+      store.deleteTarget(projectId, targetId)
+      return true
+    },
+    true
   )
-  handle('target:clone', (projectId: string, targetId: string) =>
-    store.cloneTarget(projectId, targetId)
+  handle(
+    'target:reorder',
+    (projectId: string, parentId: string, orderedIds: string[]) =>
+      store.reorderTargets(projectId, parentId, orderedIds),
+    true
+  )
+  handle(
+    'target:clone',
+    (projectId: string, targetId: string) => store.cloneTarget(projectId, targetId),
+    true
   )
   handle('target:versions:list', (projectId: string, targetId: string) =>
     store.listTargetVersions(projectId, targetId)
@@ -191,8 +226,11 @@ export function registerIpc(): void {
   handle('target:versions:get', (projectId: string, targetId: string, versionId: string) =>
     store.getTargetVersion(projectId, targetId, versionId)
   )
-  handle('target:versions:restore', (projectId: string, targetId: string, versionId: string) =>
-    store.restoreTargetVersion(projectId, targetId, versionId)
+  handle(
+    'target:versions:restore',
+    (projectId: string, targetId: string, versionId: string) =>
+      store.restoreTargetVersion(projectId, targetId, versionId),
+    true
   )
   handle(
     'target:versions:tag',
@@ -286,23 +324,39 @@ export function registerIpc(): void {
   handle('model:list', (projectId: string) => store.listModels(projectId))
   handle('model:listAll', (projectId: string) => store.listModelsAll(projectId))
   handle('model:get', (projectId: string, modelId: string) => store.getModel(projectId, modelId))
-  handle('model:save', (projectId: string, model: DataModel) => store.saveModel(projectId, model))
-  handle('model:delete', (projectId: string, modelId: string) =>
-    store.deleteModelWithReferences(projectId, modelId)
+  handle(
+    'model:save',
+    (projectId: string, model: DataModel) => store.saveModel(projectId, model),
+    true
   )
-  handle('model:create', (projectId: string, parentId: string, kind: ModelType) =>
-    store.createModelInProject(projectId, parentId, kind)
+  handle(
+    'model:delete',
+    (projectId: string, modelId: string) => store.deleteModelWithReferences(projectId, modelId),
+    true
   )
-  handle('model:copy', (projectId: string, modelId: string, destParentId: string) =>
-    store.copyModel(projectId, modelId, destParentId)
+  handle(
+    'model:create',
+    (projectId: string, parentId: string, kind: ModelType) =>
+      store.createModelInProject(projectId, parentId, kind),
+    true
+  )
+  handle(
+    'model:copy',
+    (projectId: string, modelId: string, destParentId: string) =>
+      store.copyModel(projectId, modelId, destParentId),
+    true
   )
   handle(
     'model:move',
     (projectId: string, modelId: string, destParentId: string, orderedIds?: string[]) =>
-      store.moveModel(projectId, modelId, destParentId, orderedIds)
+      store.moveModel(projectId, modelId, destParentId, orderedIds),
+    true
   )
-  handle('model:reorder', (projectId: string, parentId: string, orderedIds: string[]) =>
-    store.reorderModels(projectId, parentId, orderedIds)
+  handle(
+    'model:reorder',
+    (projectId: string, parentId: string, orderedIds: string[]) =>
+      store.reorderModels(projectId, parentId, orderedIds),
+    true
   )
   handle('model:references', (projectId: string, modelId: string) =>
     store.findModelReferences(projectId, modelId)

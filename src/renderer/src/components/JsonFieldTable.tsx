@@ -1,5 +1,6 @@
 import FieldRulesEditor from './FieldRulesEditor'
 import { RULE_KEYS } from '@shared/fieldRules'
+import { useTargetEditLock } from './TargetEditScope'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -86,6 +87,7 @@ function ValueCell({
 }): JSX.Element {
   const [text, setText] = useState(row.valueText)
   const [error, setError] = useState<string | null>(null)
+  useTargetEditLock(text !== row.valueText || !!error)
 
   useEffect(() => {
     setText(row.valueText)
@@ -191,6 +193,7 @@ export default function JsonFieldTable({
   const [remapPointer, setRemapPointer] = useState<string | null>(null)
   const [remapPath, setRemapPath] = useState('')
   const [remapError, setRemapError] = useState('')
+  useTargetEditLock(addOpen || remapPointer !== null)
 
   useEffect(() => {
     if (initialized.current) return

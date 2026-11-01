@@ -1,0 +1,1217 @@
+{
+  "generatedAt": "2026-11-01T07:07:38.405Z",
+  "screenshots": [
+    {
+      "id": "chrome-project-menu",
+      "route": "/global",
+      "kind": "menu",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ee582ccdd779fdeb8e4e23e6cfb1211c25e8b1df0a303a79a76107849cd62a1b",
+      "png": "ui-inventory/screenshots/png/chrome-project-menu.png",
+      "webp": "ui-inventory/screenshots/webp/chrome-project-menu.webp"
+    },
+    {
+      "id": "chrome-tooltip-git",
+      "route": "/global",
+      "kind": "tooltip",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "5eeb032aac9681e58fa18280ac980ce75e623cbde500227e82d9605ffa68b4f8",
+      "png": "ui-inventory/screenshots/png/chrome-tooltip-git.png",
+      "webp": "ui-inventory/screenshots/webp/chrome-tooltip-git.webp"
+    },
+    {
+      "id": "chrome-tooltip-trash",
+      "route": "/global",
+      "kind": "tooltip",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "e20f05d0482e49372811fce1fd4c6f7a8bb5cd7f727f1c652d8dc72bd9eef520",
+      "png": "ui-inventory/screenshots/png/chrome-tooltip-trash.png",
+      "webp": "ui-inventory/screenshots/webp/chrome-tooltip-trash.webp"
+    },
+    {
+      "id": "history-list-1180x760",
+      "route": "/history",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "32bcfb26056621125a02e0e656cfb9f94f82c1966b43bc70d314d86a32c3cfd0",
+      "png": "ui-inventory/screenshots/png/history-list-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/history-list-1180x760.webp"
+    },
+    {
+      "id": "history-list-1440x900",
+      "route": "/history",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "3b67fca84efecaf1e66cc6060f031bba5864e5baeec8dcb481002c9c841fc98d",
+      "png": "ui-inventory/screenshots/png/history-list-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/history-list-1440x900.webp"
+    },
+    {
+      "id": "history-detail-drawer",
+      "route": "/history",
+      "kind": "drawer",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "20a8d7670e22384fbe95a8fbbc15df0f4f229dbe61b4ce95b75e321c0f12938a",
+      "png": "ui-inventory/screenshots/png/history-detail-drawer.png",
+      "webp": "ui-inventory/screenshots/webp/history-detail-drawer.webp"
+    },
+    {
+      "id": "history-drawer-tab-headers",
+      "route": "/history",
+      "kind": "drawer-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "04c1b483cf9b5400a7d24c1783d771056db2445707b4ff615cfdcc4d1330e997",
+      "png": "ui-inventory/screenshots/png/history-drawer-tab-headers.png",
+      "webp": "ui-inventory/screenshots/webp/history-drawer-tab-headers.webp"
+    },
+    {
+      "id": "history-drawer-tab-cookie",
+      "route": "/history",
+      "kind": "drawer-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "0e4df0f6771cfa722e11fc7734693e0361cba0202211504ffecbf1405db5985b",
+      "png": "ui-inventory/screenshots/png/history-drawer-tab-cookie.png",
+      "webp": "ui-inventory/screenshots/webp/history-drawer-tab-cookie.webp"
+    },
+    {
+      "id": "history-drawer-tab-example",
+      "route": "/history",
+      "kind": "drawer-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "a2e69aa1f3a34e30c27b7defd58a2f6bee264a77c9eb1b92f82f59d6da6d1e17",
+      "png": "ui-inventory/screenshots/png/history-drawer-tab-example.png",
+      "webp": "ui-inventory/screenshots/webp/history-drawer-tab-example.webp"
+    },
+    {
+      "id": "history-drawer-tab-field-docs",
+      "route": "/history",
+      "kind": "drawer-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "0e78231966c1c16c3efbca9be74e016d5d64fc8ff9792dda3156151610d953e5",
+      "png": "ui-inventory/screenshots/png/history-drawer-tab-field-docs.png",
+      "webp": "ui-inventory/screenshots/webp/history-drawer-tab-field-docs.webp"
+    },
+    {
+      "id": "history-drawer-tab-actual-request",
+      "route": "/history",
+      "kind": "drawer-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ac6a49e72e01739082f2a8300b20ecb6940172c1f648fd0db74b1fa429a1bb14",
+      "png": "ui-inventory/screenshots/png/history-drawer-tab-actual-request.png",
+      "webp": "ui-inventory/screenshots/webp/history-drawer-tab-actual-request.webp"
+    },
+    {
+      "id": "history-drawer-tab-console",
+      "route": "/history",
+      "kind": "drawer-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "b44ad4c6a084429646276b8ab03108e6b54a6bf64aabf88ec2819c545d297dfb",
+      "png": "ui-inventory/screenshots/png/history-drawer-tab-console.png",
+      "webp": "ui-inventory/screenshots/webp/history-drawer-tab-console.webp"
+    },
+    {
+      "id": "history-empty-search",
+      "route": "/history",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "43a24f8896cedac147bc35fb9315377daaa5d14994597d3958e2615bca5b03f4",
+      "png": "ui-inventory/screenshots/png/history-empty-search.png",
+      "webp": "ui-inventory/screenshots/webp/history-empty-search.webp"
+    },
+    {
+      "id": "history-confirm-clear",
+      "route": "/history",
+      "kind": "confirm",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "0a9db0c07c2d8eee075e70fa68074d7566611d2f221ab2000670cee935778ae2",
+      "png": "ui-inventory/screenshots/png/history-confirm-clear.png",
+      "webp": "ui-inventory/screenshots/webp/history-confirm-clear.webp"
+    },
+    {
+      "id": "apis-welcome-1180x760",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "d980d38580ee33f4c6404c3338d2f980271df5de1af6eb8bc84e11fe61bb1212",
+      "png": "ui-inventory/screenshots/png/apis-welcome-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/apis-welcome-1180x760.webp"
+    },
+    {
+      "id": "apis-welcome-1440x900",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "2c3922e5958e0640e3d519408c920f9acf3617c6491513b36e49b8bd99aaff34",
+      "png": "ui-inventory/screenshots/png/apis-welcome-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/apis-welcome-1440x900.webp"
+    },
+    {
+      "id": "apis-tree-expanded",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "d980d38580ee33f4c6404c3338d2f980271df5de1af6eb8bc84e11fe61bb1212",
+      "png": "ui-inventory/screenshots/png/apis-tree-expanded.png",
+      "webp": "ui-inventory/screenshots/webp/apis-tree-expanded.webp"
+    },
+    {
+      "id": "apis-editor-debug-1180x760",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "0a1a403ea1c7a26d1b4ca0807855db622d07708c293d3d1c2ca8557f494376af",
+      "png": "ui-inventory/screenshots/png/apis-editor-debug-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/apis-editor-debug-1180x760.webp"
+    },
+    {
+      "id": "apis-editor-debug-1440x900",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "f73a57fa1532886a390736dd9429260c077b37b6708f33bcf036a4c7dff51bf3",
+      "png": "ui-inventory/screenshots/png/apis-editor-debug-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/apis-editor-debug-1440x900.webp"
+    },
+    {
+      "id": "apis-mode-design",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "b7009f7ee6fba55b3772855bc9e2dcf28e0e10e2620ee924b7bfe2d5b6ce259a",
+      "png": "ui-inventory/screenshots/png/apis-mode-design.png",
+      "webp": "ui-inventory/screenshots/webp/apis-mode-design.webp"
+    },
+    {
+      "id": "apis-mode-cases",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "49764628f61b9fcf948cd24a4ddddd00c68ded85acb4624f1b48032c0942d490",
+      "png": "ui-inventory/screenshots/png/apis-mode-cases.png",
+      "webp": "ui-inventory/screenshots/webp/apis-mode-cases.webp"
+    },
+    {
+      "id": "apis-mode-stress",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "e5ab90625e53ec04ac4baeebde82d2bf258b9f8effd5cc956d8256911e547920",
+      "png": "ui-inventory/screenshots/png/apis-mode-stress.png",
+      "webp": "ui-inventory/screenshots/webp/apis-mode-stress.webp"
+    },
+    {
+      "id": "apis-mode-mock",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "f8ce5758f56a57b260a853253596308de153844558663b43b7f558b3089844d2",
+      "png": "ui-inventory/screenshots/png/apis-mode-mock.png",
+      "webp": "ui-inventory/screenshots/webp/apis-mode-mock.webp"
+    },
+    {
+      "id": "apis-request-tab-header",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "bab2376443946f74032195cf189a22be7051b2dc3c40431c212c6e3b8b70e1b3",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-header.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-header.webp"
+    },
+    {
+      "id": "apis-request-tab-query",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "633bb7aae0012811a54bfdb997405b81af97eddf70a1773f6af8b6c617a770fa",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-query.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-query.webp"
+    },
+    {
+      "id": "apis-request-tab-path",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "9c72e6404d3cd8797880fa7d976756e9fbfd629f7536fc3ad9e856334ee48117",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-path.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-path.webp"
+    },
+    {
+      "id": "apis-request-tab-body",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "2e175062f08b8468fa647fbb34935a0146512d74234b01813d7882fea24c89d3",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-body.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-body.webp"
+    },
+    {
+      "id": "apis-request-tab-auth",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "443d28cf188eee0c5c2a69d15839b3119e492c3f3b87a0f7bcb337a983cf7230",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-auth.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-auth.webp"
+    },
+    {
+      "id": "apis-request-tab-cookie",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "2b9d14fa378b91b8b245229fea8a3ef9725d5445dfaedd733b4fc7bf7654c79e",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-cookie.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-cookie.webp"
+    },
+    {
+      "id": "apis-request-tab-pre-request",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "80fe607760b70e357788352cc3b53751990eea3d8eedaa7747b025367717ed6e",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-pre-request.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-pre-request.webp"
+    },
+    {
+      "id": "apis-request-tab-post-request",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "509a63a08f8b360d7719f04d9d1e2cd95e1d55c19b43bde52d9093542db63e72",
+      "png": "ui-inventory/screenshots/png/apis-request-tab-post-request.png",
+      "webp": "ui-inventory/screenshots/webp/apis-request-tab-post-request.webp"
+    },
+    {
+      "id": "apis-response-tab-response",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "509a63a08f8b360d7719f04d9d1e2cd95e1d55c19b43bde52d9093542db63e72",
+      "png": "ui-inventory/screenshots/png/apis-response-tab-response.png",
+      "webp": "ui-inventory/screenshots/webp/apis-response-tab-response.webp"
+    },
+    {
+      "id": "apis-response-tab-headers",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ed9f7c3b2aad10527624d63f5b6378cfd0efec27d5943a1b3489920076b9b492",
+      "png": "ui-inventory/screenshots/png/apis-response-tab-headers.png",
+      "webp": "ui-inventory/screenshots/webp/apis-response-tab-headers.webp"
+    },
+    {
+      "id": "apis-response-tab-example",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "420f1fe0575b40376096ffb48a815ab5980f09ed308dd6e8be49092222d3d580",
+      "png": "ui-inventory/screenshots/png/apis-response-tab-example.png",
+      "webp": "ui-inventory/screenshots/webp/apis-response-tab-example.webp"
+    },
+    {
+      "id": "apis-response-tab-field-docs",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "cf5da212be5819d1951bfe04d429597c15a9dab18ed705ad0078eefb97762874",
+      "png": "ui-inventory/screenshots/png/apis-response-tab-field-docs.png",
+      "webp": "ui-inventory/screenshots/webp/apis-response-tab-field-docs.webp"
+    },
+    {
+      "id": "apis-response-tab-actual-request",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "8dfbf890a0468cf4cfcb7d709803e0825966481580c751bc27ccbf7bf46ccec7",
+      "png": "ui-inventory/screenshots/png/apis-response-tab-actual-request.png",
+      "webp": "ui-inventory/screenshots/webp/apis-response-tab-actual-request.webp"
+    },
+    {
+      "id": "apis-response-tab-console",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "22236991365262ace34d7ab2acf51d3ec091df9c9878797256992bd34726261b",
+      "png": "ui-inventory/screenshots/png/apis-response-tab-console.png",
+      "webp": "ui-inventory/screenshots/webp/apis-response-tab-console.webp"
+    },
+    {
+      "id": "apis-more-menu",
+      "route": "/apis",
+      "kind": "menu",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ec1f40bfa7480f91f4a897c9afac601fa3e5ebd618f4d2201706434818674859",
+      "png": "ui-inventory/screenshots/png/apis-more-menu.png",
+      "webp": "ui-inventory/screenshots/webp/apis-more-menu.webp"
+    },
+    {
+      "id": "apis-dialog-codegen",
+      "route": "/apis",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "f16f0adad9a39e5a23bd7c2356662b272195492087a36d15ae66f6a4092b4fbf",
+      "png": "ui-inventory/screenshots/png/apis-dialog-codegen.png",
+      "webp": "ui-inventory/screenshots/webp/apis-dialog-codegen.webp"
+    },
+    {
+      "id": "apis-drawer-versions",
+      "route": "/apis",
+      "kind": "drawer",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ef82c28a49da5b54892b0487d87d08d3d55c936064620491e7da54eeab78cec4",
+      "png": "ui-inventory/screenshots/png/apis-drawer-versions.png",
+      "webp": "ui-inventory/screenshots/webp/apis-drawer-versions.webp"
+    },
+    {
+      "id": "apis-dialog-description",
+      "route": "/apis",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "9c7c6763069d5108d1ea7e1ab50aa47d498847bbcbd2084db6bdee100e2b3dcf",
+      "png": "ui-inventory/screenshots/png/apis-dialog-description.png",
+      "webp": "ui-inventory/screenshots/webp/apis-dialog-description.webp"
+    },
+    {
+      "id": "apis-dialog-share",
+      "route": "/apis",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "b26c5a388eb02e3f48a3f5ae719e8dfa6ad30bbf480e178304c0d169a766fd2e",
+      "png": "ui-inventory/screenshots/png/apis-dialog-share.png",
+      "webp": "ui-inventory/screenshots/webp/apis-dialog-share.webp"
+    },
+    {
+      "id": "apis-empty-search",
+      "route": "/apis",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "bffcf361959c627e1882ca55ce7ac6a52f2735d7c824710a42338bd1ae5af197",
+      "png": "ui-inventory/screenshots/png/apis-empty-search.png",
+      "webp": "ui-inventory/screenshots/webp/apis-empty-search.webp"
+    },
+    {
+      "id": "docs-list-1180x760",
+      "route": "/docs",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "6b568ad38579fb47930eeef74852966b83280f5e153c1378f3bfca7d9be30915",
+      "png": "ui-inventory/screenshots/png/docs-list-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/docs-list-1180x760.webp"
+    },
+    {
+      "id": "docs-list-1440x900",
+      "route": "/docs",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "43fc51fdd46409718cd0f1b98bc5e5b9a2d1dbdf44a80889f7dabb25098dfca5",
+      "png": "ui-inventory/screenshots/png/docs-list-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/docs-list-1440x900.webp"
+    },
+    {
+      "id": "docs-dialog-new-share",
+      "route": "/docs",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "3166495f1b95a185676ca1bbd65f95b26d9517bc5456d63b6a8765ca4ca584bc",
+      "png": "ui-inventory/screenshots/png/docs-dialog-new-share.png",
+      "webp": "ui-inventory/screenshots/webp/docs-dialog-new-share.webp"
+    },
+    {
+      "id": "docs-new-share-tab-project",
+      "route": "/docs",
+      "kind": "dialog-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "b24003171670a65ca81923acf4b68e8f7b4d2d2964f609285a21fc43a65f0083",
+      "png": "ui-inventory/screenshots/png/docs-new-share-tab-project.png",
+      "webp": "ui-inventory/screenshots/webp/docs-new-share-tab-project.webp"
+    },
+    {
+      "id": "docs-new-share-tab-folder",
+      "route": "/docs",
+      "kind": "dialog-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "a2452e467250c2f016b9a18b73288fff722d88e31822b90a88c54576764832f1",
+      "png": "ui-inventory/screenshots/png/docs-new-share-tab-folder.png",
+      "webp": "ui-inventory/screenshots/webp/docs-new-share-tab-folder.webp"
+    },
+    {
+      "id": "docs-new-share-tab-api",
+      "route": "/docs",
+      "kind": "dialog-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "a8858cec43393b0e8351893446009c86885eccf5cfbc4932f48d9695931afc4a",
+      "png": "ui-inventory/screenshots/png/docs-new-share-tab-api.png",
+      "webp": "ui-inventory/screenshots/webp/docs-new-share-tab-api.webp"
+    },
+    {
+      "id": "docs-new-share-tab-custom",
+      "route": "/docs",
+      "kind": "dialog-tab",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "02e9c86cec858dbb3a2a8eda60d5f09fcdadf37ccdf51e9c994e01d62077be36",
+      "png": "ui-inventory/screenshots/png/docs-new-share-tab-custom.png",
+      "webp": "ui-inventory/screenshots/webp/docs-new-share-tab-custom.webp"
+    },
+    {
+      "id": "docs-dialog-share-service",
+      "route": "/docs",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "44250c1cc09c26b200de2deca657a9b2e356aebf169ba6d340df3c6f6fcc3c86",
+      "png": "ui-inventory/screenshots/png/docs-dialog-share-service.png",
+      "webp": "ui-inventory/screenshots/webp/docs-dialog-share-service.webp"
+    },
+    {
+      "id": "docs-filter-http",
+      "route": "/docs",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "453a275790b3649fef3b3b7d1642dafe7613f2d6d80c929dc609e2025479795a",
+      "png": "ui-inventory/screenshots/png/docs-filter-http.png",
+      "webp": "ui-inventory/screenshots/webp/docs-filter-http.webp"
+    },
+    {
+      "id": "docs-filter-graphql",
+      "route": "/docs",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "0f919afce9f0d373dde38e775a0fc35f65a3085cd5e8cff1b9e4c08d8fc2f6df",
+      "png": "ui-inventory/screenshots/png/docs-filter-graphql.png",
+      "webp": "ui-inventory/screenshots/webp/docs-filter-graphql.webp"
+    },
+    {
+      "id": "schemas-landing-1180x760",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "9266ed139e0a58bc5485b667db1992d4909a202258069c95b561d7a8ef503966",
+      "png": "ui-inventory/screenshots/png/schemas-landing-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-landing-1180x760.webp"
+    },
+    {
+      "id": "schemas-landing-1440x900",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "6a51103fb543997586dcf6dd18351a9d43bb7dbc07d9853ffa5ad5aba370793a",
+      "png": "ui-inventory/screenshots/png/schemas-landing-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-landing-1440x900.webp"
+    },
+    {
+      "id": "schemas-dictionary",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "f39cd463b9d4e1da3a70a4c368f74e58504e195e84d945c6d62f4d09042d6ffe",
+      "png": "ui-inventory/screenshots/png/schemas-dictionary.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-dictionary.webp"
+    },
+    {
+      "id": "schemas-dictionary-new-field",
+      "route": "/schemas",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "f39cd463b9d4e1da3a70a4c368f74e58504e195e84d945c6d62f4d09042d6ffe",
+      "png": "ui-inventory/screenshots/png/schemas-dictionary-new-field.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-dictionary-new-field.webp"
+    },
+    {
+      "id": "schemas-database-empty",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "7a2882df4e89a9b8b970c93363fa88bc72450d2ca7ca1b51b976e074febd4284",
+      "png": "ui-inventory/screenshots/png/schemas-database-empty.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-database-empty.webp"
+    },
+    {
+      "id": "schemas-dialog-db-connection",
+      "route": "/schemas",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "574b8e0d69820f7a6f9e73c96dff20f4121c5f07270a36e75ef7e5188528b38e",
+      "png": "ui-inventory/screenshots/png/schemas-dialog-db-connection.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-dialog-db-connection.webp"
+    },
+    {
+      "id": "schemas-dialog-db-connection-filled",
+      "route": "/schemas",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "c440902b880d5cc4a00b8975599ac54e10aa3d861cb05667462691bf792f8388",
+      "png": "ui-inventory/screenshots/png/schemas-dialog-db-connection-filled.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-dialog-db-connection-filled.webp"
+    },
+    {
+      "id": "schemas-database-list",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "2080a7114faf523946a0cfb7307405b85eb900415165c78c1096306e8c2de728",
+      "png": "ui-inventory/screenshots/png/schemas-database-list.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-database-list.webp"
+    },
+    {
+      "id": "schemas-dialog-import-tables",
+      "route": "/schemas",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "5ad10ac619550dcd143c374d5abadb1150fc2b26aa65868b3802df23f908e8f3",
+      "png": "ui-inventory/screenshots/png/schemas-dialog-import-tables.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-dialog-import-tables.webp"
+    },
+    {
+      "id": "schemas-model-editor",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "b833c755c495baf1e019780ab1b7646fee0f0c0f0a9d4cc23f3e57565d3f3fef",
+      "png": "ui-inventory/screenshots/png/schemas-model-editor.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-editor.webp"
+    },
+    {
+      "id": "schemas-model-add-field",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "353020a315b835c5e1f4a30afb58ee317903b50b5ca57e9516054030ab16a6cc",
+      "png": "ui-inventory/screenshots/png/schemas-model-add-field.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-add-field.webp"
+    },
+    {
+      "id": "mqtt-empty-1180x760",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "267bc1d9a1cf8d65b59523a62464c95b119938a32b7559282fe9c5221f412cc1",
+      "png": "ui-inventory/screenshots/png/mqtt-empty-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-empty-1180x760.webp"
+    },
+    {
+      "id": "mqtt-empty-1440x900",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "bddef655da4045b8cea5f831ae811173dae9837e1a07a2013fa5da82cdef3da4",
+      "png": "ui-inventory/screenshots/png/mqtt-empty-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-empty-1440x900.webp"
+    },
+    {
+      "id": "mqtt-profile-editor-1180x760",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "f1ffc0b25e9e5a65d75926aa75e7e6bfdcdda582070d8cdd480773dcdc2c72af",
+      "png": "ui-inventory/screenshots/png/mqtt-profile-editor-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-profile-editor-1180x760.webp"
+    },
+    {
+      "id": "mqtt-profile-editor-1440x900",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "99454b4247e73329232b5bea1b9a79b69e3f1f466fbcd60347a4be776372a584",
+      "png": "ui-inventory/screenshots/png/mqtt-profile-editor-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-profile-editor-1440x900.webp"
+    },
+    {
+      "id": "mqtt-tab-messages",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "24bffccf2b4c5780229963b9fed677f71b6f797f4ad53c55a1238e1b3aff572c",
+      "png": "ui-inventory/screenshots/png/mqtt-tab-messages.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-tab-messages.webp"
+    },
+    {
+      "id": "mqtt-tab-publish",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "47fe8976c61f9ef7a970292052c62c4549a6474c25a4b9e17afde79f5611a306",
+      "png": "ui-inventory/screenshots/png/mqtt-tab-publish.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-tab-publish.webp"
+    },
+    {
+      "id": "mqtt-tab-attempts",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "db16e844476ed7c0b5b9f5ccace051527d7829c84094462217dbe5fcd6e497d4",
+      "png": "ui-inventory/screenshots/png/mqtt-tab-attempts.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-tab-attempts.webp"
+    },
+    {
+      "id": "mqtt-more-menu",
+      "route": "/mqtt",
+      "kind": "menu",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "341ee5caa2b1d371f04fdb76e924561e3db79894a51842f0c89954b3da631c53",
+      "png": "ui-inventory/screenshots/png/mqtt-more-menu.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-more-menu.webp"
+    },
+    {
+      "id": "mqtt-drawer-versions",
+      "route": "/mqtt",
+      "kind": "drawer",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "28417ae431d5153c6bb771062ed8df557801d897a4025c7f18216e0b43d262c8",
+      "png": "ui-inventory/screenshots/png/mqtt-drawer-versions.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-drawer-versions.webp"
+    },
+    {
+      "id": "mqtt-subscription-row",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "86422811675d3ee59b1a04bbd607b5779067100394be703d2c0916eb27d1c701",
+      "png": "ui-inventory/screenshots/png/mqtt-subscription-row.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-subscription-row.webp"
+    },
+    {
+      "id": "mqtt-advanced-tls",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "464d99147a82916fd63917833fa046a69f976b11f8bd7b7713fbcb455a4fdde3",
+      "png": "ui-inventory/screenshots/png/mqtt-advanced-tls.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-advanced-tls.webp"
+    },
+    {
+      "id": "mqtt-advanced-will",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "c72a6676b0418456a63acd69aaed3ae1b7cad58050b4423492907e5330762c52",
+      "png": "ui-inventory/screenshots/png/mqtt-advanced-will.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-advanced-will.webp"
+    },
+    {
+      "id": "mqtt-advanced-props",
+      "route": "/mqtt",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "53c700aba66432e7d8c38c23cc650327291c7ae4aa0d6448f3b77afb63750a86",
+      "png": "ui-inventory/screenshots/png/mqtt-advanced-props.png",
+      "webp": "ui-inventory/screenshots/webp/mqtt-advanced-props.webp"
+    },
+    {
+      "id": "automation-empty-1180x760",
+      "route": "/automation",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "023dbeb5aa86e12338cb261a05a6ae59a03a66d3bb84527702427707a25ece3f",
+      "png": "ui-inventory/screenshots/png/automation-empty-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/automation-empty-1180x760.webp"
+    },
+    {
+      "id": "automation-empty-1440x900",
+      "route": "/automation",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "ab32d3bc3d8f569ac8d30e945bb73f5051169edcea91eead25c2764a0a08347c",
+      "png": "ui-inventory/screenshots/png/automation-empty-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/automation-empty-1440x900.webp"
+    },
+    {
+      "id": "automation-flow-editor-1180x760",
+      "route": "/automation",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "d92874a25aa87dbc5086d3f1d6120ccbf2b8d75240709ddec9faf3e9708c5109",
+      "png": "ui-inventory/screenshots/png/automation-flow-editor-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/automation-flow-editor-1180x760.webp"
+    },
+    {
+      "id": "automation-flow-editor-1440x900",
+      "route": "/automation",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "29bcb062de4d092d6933575a2173995a67ae596b693b9c5aeafc2b986db0ad87",
+      "png": "ui-inventory/screenshots/png/automation-flow-editor-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/automation-flow-editor-1440x900.webp"
+    },
+    {
+      "id": "automation-event-menu",
+      "route": "/automation",
+      "kind": "menu",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "0de87fdf15f3bb1f17f74aeb80d807d4bb8dbfe261042014d4499d25662bfb95",
+      "png": "ui-inventory/screenshots/png/automation-event-menu.png",
+      "webp": "ui-inventory/screenshots/webp/automation-event-menu.webp"
+    },
+    {
+      "id": "automation-event-added",
+      "route": "/automation",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ae36f59f8b84b707f856508ba1e6354d3d79a661eb0b3171382680fe307cc960",
+      "png": "ui-inventory/screenshots/png/automation-event-added.png",
+      "webp": "ui-inventory/screenshots/webp/automation-event-added.webp"
+    },
+    {
+      "id": "automation-run-result-empty",
+      "route": "/automation",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ae36f59f8b84b707f856508ba1e6354d3d79a661eb0b3171382680fe307cc960",
+      "png": "ui-inventory/screenshots/png/automation-run-result-empty.png",
+      "webp": "ui-inventory/screenshots/webp/automation-run-result-empty.webp"
+    },
+    {
+      "id": "git-status-1180x760",
+      "route": "/git",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "fb339bd62007617b84c21992c190d40f2c7db6f4c8d1e557bc0eb0b3a5fd8177",
+      "png": "ui-inventory/screenshots/png/git-status-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/git-status-1180x760.webp"
+    },
+    {
+      "id": "git-status-1440x900",
+      "route": "/git",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "2a789186e19b501adc9ba8918a6982c24c4873872753b824537f79dba6b172ab",
+      "png": "ui-inventory/screenshots/png/git-status-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/git-status-1440x900.webp"
+    },
+    {
+      "id": "git-dialog-branches",
+      "route": "/git",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "cef4d382ceff74d6b6ca769b524f8e83a31f147eb11b8a05d8b9353f7f202b9a",
+      "png": "ui-inventory/screenshots/png/git-dialog-branches.png",
+      "webp": "ui-inventory/screenshots/webp/git-dialog-branches.webp"
+    },
+    {
+      "id": "git-dialog-remotes",
+      "route": "/git",
+      "kind": "dialog",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "61f476174000500d00c2002855943ded54d659eee1f66c7947080d5645a96399",
+      "png": "ui-inventory/screenshots/png/git-dialog-remotes.png",
+      "webp": "ui-inventory/screenshots/webp/git-dialog-remotes.webp"
+    },
+    {
+      "id": "settings-top-1180x760",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "6e2f63ac4536737cf05455c989d41f959cd24f8a3997fdfdf62e94806fc0a697",
+      "png": "ui-inventory/screenshots/png/settings-top-1180x760.png",
+      "webp": "ui-inventory/screenshots/webp/settings-top-1180x760.webp"
+    },
+    {
+      "id": "settings-top-1440x900",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "sha256": "0f54447ead28f5f93a9287da6095a64d6ce278a4b547dab0b818ef69583c182f",
+      "png": "ui-inventory/screenshots/png/settings-top-1440x900.png",
+      "webp": "ui-inventory/screenshots/webp/settings-top-1440x900.webp"
+    },
+    {
+      "id": "settings-section-env",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "6e2f63ac4536737cf05455c989d41f959cd24f8a3997fdfdf62e94806fc0a697",
+      "png": "ui-inventory/screenshots/png/settings-section-env.png",
+      "webp": "ui-inventory/screenshots/webp/settings-section-env.webp"
+    },
+    {
+      "id": "settings-section-global-vars",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "6e2f63ac4536737cf05455c989d41f959cd24f8a3997fdfdf62e94806fc0a697",
+      "png": "ui-inventory/screenshots/png/settings-section-global-vars.png",
+      "webp": "ui-inventory/screenshots/webp/settings-section-global-vars.webp"
+    },
+    {
+      "id": "settings-section-send",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "6e2f63ac4536737cf05455c989d41f959cd24f8a3997fdfdf62e94806fc0a697",
+      "png": "ui-inventory/screenshots/png/settings-section-send.png",
+      "webp": "ui-inventory/screenshots/webp/settings-section-send.webp"
+    },
+    {
+      "id": "settings-section-mcp",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "e6c2b8ec65882e8e25947ef687938bd418a4efffab5eddad5c6e4c183cdef415",
+      "png": "ui-inventory/screenshots/png/settings-section-mcp.png",
+      "webp": "ui-inventory/screenshots/webp/settings-section-mcp.webp"
+    },
+    {
+      "id": "settings-section-debug",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "342442cac879fecedc79a7863850eaa3badce44cb31029842f9a92d217c4c533",
+      "png": "ui-inventory/screenshots/png/settings-section-debug.png",
+      "webp": "ui-inventory/screenshots/webp/settings-section-debug.webp"
+    },
+    {
+      "id": "settings-variable-row-added",
+      "route": "/settings",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "158716bff18347c84d43e48d46bb73004b63af278bf1b9a974c9d13a57a18d63",
+      "png": "ui-inventory/screenshots/png/settings-variable-row-added.png",
+      "webp": "ui-inventory/screenshots/webp/settings-variable-row-added.webp"
+    },
+    {
+      "id": "schemas-model-visual",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "49f8d504d7f295dee001e6432472bdd54745d961aa1d2d9eb05239f5a76ff83e",
+      "png": "ui-inventory/screenshots/png/schemas-model-visual.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-visual.webp"
+    },
+    {
+      "id": "schemas-model-raw",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "f57201db65ef9ff18054cdb0d3eeac4475d4ada5703fc99d3ea1f6655d56b22f",
+      "png": "ui-inventory/screenshots/png/schemas-model-raw.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-raw.webp"
+    },
+    {
+      "id": "schemas-model-preview",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "ef22d257d0340605121a38b9130df8271f0055500d6df42b157540fe5e5bc35a",
+      "png": "ui-inventory/screenshots/png/schemas-model-preview.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-preview.webp"
+    },
+    {
+      "id": "schemas-model-codegen",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "fe4826cf9851a021ea57fa39583a185bb0df30a6d6e1f5b34e5e5abe9ecfeb8f",
+      "png": "ui-inventory/screenshots/png/schemas-model-codegen.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-codegen.webp"
+    },
+    {
+      "id": "schemas-model-smart-import",
+      "route": "/schemas",
+      "kind": "page",
+      "viewport": {
+        "width": 1180,
+        "height": 760
+      },
+      "sha256": "5b98ff5714fc7a9efeab8dd730f92b87e692b7d329ed1899d204313fea95c9fd",
+      "png": "ui-inventory/screenshots/png/schemas-model-smart-import.png",
+      "webp": "ui-inventory/screenshots/webp/schemas-model-smart-import.webp"
+    }
+  ]
+}

@@ -150,6 +150,10 @@ body {
   background: var(--color-primary-opacity);
 }
 
+.tab-sync { color: #2f8f62; font-size: 10px; white-space: nowrap; }
+.tab-sync.pending { color: #b57517; }
+.target-sync-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; background: #fff3d6; border-bottom: 1px solid #e8d4a5; color: #71521c; font-size: 12px; }
+
 .header-mcp {
   display: flex;
   align-items: center;

@@ -1,4 +1,5 @@
 import { rulesFromSchema } from '@shared/fieldRules'
+import { withTargetChanges } from '../storage/changes'
 import type {
   ApiCase,
   CaseAssertion,
@@ -323,7 +324,7 @@ function executeSummary(record: Awaited<ReturnType<typeof sendRequest>>): Record
 const TOOLS: ToolDefinition[] = [
   {
     name: 'upsert_api',
-    description: '编码 Agent 首选：一次创建或增量更新完整接口文档（请求参数、成功响应、示例、枚举含义）。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单。',
+    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义；同时尽量写明 type、required、nullable、enum 及枚举含义。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单；写入后应继续处理 documentation.issues。',
     requires_write: true, requires_execute: false,
     input_schema: schema(apiDocumentationProperties, ['project_id']),
     handler: args => writeApiDocumentation(args)
@@ -353,7 +354,7 @@ const TOOLS: ToolDefinition[] = [
     input_schema: schema(
       {
         name: { type: 'string', description: '项目名称（≤64）' },
-        description: { type: 'string', description: '项目说明（≤1024）' }
+        description: { type: 'string', description: '项目说明（≤1024）。Agent 应填写项目用途与范围；无法确定时向用户确认' }
       },
       ['name']
     ),
@@ -408,6 +409,7 @@ const TOOLS: ToolDefinition[] = [
           parent_id: item.parent_id,
           target_type: item.target_type,
           name: item.name,
+          description: item.description,
           method: item.method,
           url: item.url,
           sort: item.sort
@@ -417,7 +419,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_folder',
-    description: '在项目中创建目录，可指定父目录（根为 0）。',
+    description: '在项目中创建目录，可指定父目录（根为 0）。Agent 必须填写目录说明 description，说明该目录组织哪些接口或业务模块。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -425,6 +427,7 @@ const TOOLS: ToolDefinition[] = [
         project_id: S.project,
         parent_id: { type: 'string', description: '父目录 ID，根为 0' },
         name: { type: 'string', description: '目录名称' },
+        description: { type: 'string', description: '目录说明（必填）。说明目录用途、包含的接口或业务范围' },
         sort: { type: 'number', description: '排序值（可选）' }
       },
       ['project_id', 'name']
@@ -434,6 +437,8 @@ const TOOLS: ToolDefinition[] = [
       const parentId = str(args, 'parent_id') || '0'
       const folder = store.createTargetInProject(projectId, parentId, 'folder')
       folder.name = requiredStr(args, 'name')
+      const description = str(args, 'description').trim()
+      if (description) folder.description = description
       if (typeof args.sort === 'number' && Number.isFinite(args.sort)) folder.sort = args.sort
       return { folder: store.saveTarget(projectId, folder) }
     }
@@ -595,7 +600,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'move_target',
-    description: '移动接口或目录到指定父目录，并可同时重命名；根为 0。',
+    description: '移动接口或目录到指定父目录，可同时重命名或补充说明。用于维护目录说明时，必须传入有业务含义的 description。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -604,9 +609,10 @@ const TOOLS: ToolDefinition[] = [
         target_id: { type: 'string', description: '接口或目录的 target_id' },
         parent_id: {
           type: 'string',
-          description: '目标父目录 ID，根为 0；不传则保持原目录（仅重命名）'
+          description: '目标父目录 ID，根为 0；不传则保持原目录（仅重命名或补充说明）'
         },
-        name: { type: 'string', description: '新名称（可选）' }
+        name: { type: 'string', description: '新名称（可选）' },
+        description: { type: 'string', description: '接口或目录说明（可选）。更新目录说明时填写' }
       },
       ['project_id', 'target_id']
     ),
@@ -643,6 +649,7 @@ const TOOLS: ToolDefinition[] = [
       }
       const name = str(args, 'name').trim()
       if (name) target.name = name
+      if (typeof args.description === 'string') target.description = args.description.trim()
       return { target: store.saveTarget(projectId, target) }
     }
   },
@@ -1671,7 +1678,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_data_model',
-    description: '创建数据模型或模型目录。',
+    description: '创建数据模型或模型目录。Agent 必须填写模型/目录说明，并为 schema 中每个已知字段填写 description 业务含义。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -1681,8 +1688,11 @@ const TOOLS: ToolDefinition[] = [
         parent_id: { type: 'string', description: '父目录，默认 0' },
         model_type: { type: 'string', enum: ['model', 'folder'] },
         alias: { type: 'string' },
-        description: { type: 'string' },
-        schema: { type: 'object', description: 'JSON Schema' }
+        description: { type: 'string', description: '模型或模型目录说明（必填）。说明业务范围与用途' },
+        schema: {
+          type: 'object',
+          description: 'JSON Schema。每个已知字段应在 properties.*.description 中填写业务含义；无法确定时保留未知'
+        }
       },
       ['project_id', 'name']
     ),
@@ -1709,7 +1719,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'update_data_model',
-    description: '更新数据模型名称、别名、目录、描述或 schema。',
+    description: '更新数据模型名称、别名、目录、说明或 schema。修改 schema 时应同时补齐每个已知字段的 description 业务含义。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -1719,8 +1729,11 @@ const TOOLS: ToolDefinition[] = [
         name: { type: 'string' },
         alias: { type: 'string' },
         parent_id: { type: 'string' },
-        description: { type: 'string' },
-        schema: { type: 'object' }
+        description: { type: 'string', description: '模型或模型目录说明' },
+        schema: {
+          type: 'object',
+          description: 'JSON Schema。每个已知字段应在 properties.*.description 中填写业务含义'
+        }
       },
       ['project_id', 'model_id']
     ),
@@ -2609,8 +2622,8 @@ for (const name of ['create_api', 'update_api']) {
     const legacyCreate = tool.handler
     tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies
       ? writeApiDocumentation(args, true) : legacyCreate(args, config)
-    tool.description += '完整文档推荐 upsert_api；也可传入 body、success_response 和参数列表一次创建。'
-  } else tool.description = '增量更新接口与字段文档；未传保留，remove/unset 显式删除。字段结构同 upsert_api。'
+    tool.description += '必须填写接口说明 description；完整文档推荐 upsert_api，也可传入 body、success_response 和参数列表一次创建。每个已知字段都应填写 description。'
+  } else tool.description = '增量更新接口与字段文档。必须填写或保留接口说明 description，并为每个已知字段填写业务含义；未传保留，remove/unset 显式删除。字段结构同 upsert_api，写入后检查 documentation.issues。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))
@@ -2653,7 +2666,7 @@ export async function callTool(
   const denied = checkPermission(tool, config, args)
   if (denied) return { ok: false, error: denied }
   try {
-    const result = await tool.handler(args, config)
+    const result = await withTargetChanges('mcp', undefined, () => tool.handler(args, config))
     return { ok: true, result }
   } catch (error) {
     return { ok: false, error: (error as Error).message }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button, Input, Modal, Select } from 'antd'
 import type { FieldRules } from '@shared/types'
 import { FIELD_TYPES, validateRules } from '@shared/fieldRules'
+import { useTargetEditLock } from './TargetEditScope'
 
 interface Props {
   value: FieldRules & { type?: string }
@@ -10,6 +11,7 @@ interface Props {
 }
 export default function FieldRulesEditor({ value, onChange, disabled }: Props): JSX.Element {
   const [open, setOpen] = useState(false)
+  useTargetEditLock(open)
   const [draft, setDraft] = useState(value)
   const [enumMode, setEnumMode] = useState('unknown')
   const [enumText, setEnumText] = useState('')

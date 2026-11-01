@@ -21,6 +21,7 @@ import {
   UnorderedListOutlined
 } from '@ant-design/icons'
 import { countRichText, descriptionToHtml, sanitizeRichHtml } from '@shared/richText'
+import { useTargetEditLock } from './TargetEditScope'
 
 interface Props {
   open: boolean
@@ -42,6 +43,7 @@ export default function ApiDescriptionDialog({
   const [html, setHtml] = useState('')
   const [initialHtml, setInitialHtml] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
+  useTargetEditLock(open)
 
   useEffect(() => {
     if (!open) return
@@ -98,7 +100,8 @@ export default function ApiDescriptionDialog({
   }
 
   const handleClose = (): void => {
-    onCommit(sanitizeRichHtml(html))
+    const next = sanitizeRichHtml(html)
+    if (next !== sanitizeRichHtml(initialHtml)) onCommit(next)
     onClose()
   }
 

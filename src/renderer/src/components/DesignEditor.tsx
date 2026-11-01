@@ -31,6 +31,7 @@ export default function DesignEditor({ draft, projectId, onChange }: Props): JSX
       </div>
       <div style={{ height: 380, border: '1px solid var(--line, #e8e2d7)', borderRadius: 8, overflow: 'hidden' }}>
         <ResponsePanel
+          targetId={draft.target_id}
           record={null}
           examples={draft.response?.example}
           projectId={projectId}

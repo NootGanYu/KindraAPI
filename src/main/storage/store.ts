@@ -54,6 +54,14 @@ import {
   createTarget
 } from '@shared/factories'
 import { BUILTIN_DICTIONARY } from '@shared/dictionary'
+import {
+  preserveCaseRuns,
+  stableJson,
+  targetDefinition,
+  type TargetSaveOutcome,
+  type TargetSnapshot
+} from '@shared/targetSync'
+import { recordModelChange, recordTargetChange } from './changes'
 
 const DEFAULT_SETTINGS: AppSettings = {
   send_timeout: 60000,
@@ -444,6 +452,32 @@ export function cloneTarget(projectId: string, targetId: string): Target {
   return saveTarget(projectId, cloned)
 }
 
+/** 把客户端草稿另存为新接口；失效的父目录回退到根目录。 */
+export function saveTargetCopy(projectId: string, input: Target): Target {
+  const index = readTargetIndex(projectId)
+  const parentId =
+    input.parent_id !== '0' &&
+    index.items.find((item) => item.target_id === input.parent_id)?.target_type === 'folder'
+      ? input.parent_id
+      : '0'
+  const siblings = index.items.filter((item) => item.parent_id === parentId)
+  const maxSort = siblings.reduce((max, item) => Math.max(max, item.sort), 0)
+  const now = new Date().toISOString()
+  const copied: Target = {
+    ...cloneJson(input),
+    target_id: createId('t'),
+    project_id: projectId,
+    source_key: undefined,
+    parent_id: parentId,
+    sort: maxSort + 100,
+    name: uniqueTargetName(projectId, parentId, `${input.name} 副本`),
+    version: 1,
+    created_at: now,
+    updated_at: now
+  }
+  return saveTarget(projectId, copied)
+}
+
 // ---------------------------------------------------------------------------
 // Cookie 管理器（本地作用域，可能包含凭据）
 // ---------------------------------------------------------------------------
@@ -549,7 +583,26 @@ export function saveTarget(projectId: string, target: Target): Target {
   if (idx >= 0) index.items[idx] = summary
   else index.items.push(summary)
   writeTargetIndex(projectId, index)
+  recordTargetChange(projectId, target.target_id, 'definition')
   return target
+}
+
+export function readTargetSnapshot(projectId: string, targetId: string): TargetSnapshot {
+  const target = getTarget(projectId, targetId)
+  return { target, revision: target ? targetRevision(target) : null }
+}
+
+function targetRevision(target: Target): string {
+  return crypto.createHash('sha256').update(stableJson(targetDefinition(target))).digest('hex')
+}
+
+/** 比较和写入均同步执行，主进程中的其他写入不能插入两者之间。 */
+export function saveTargetChecked(projectId: string, target: Target, expectedRevision: string): TargetSaveOutcome {
+  const current = readTargetSnapshot(projectId, target.target_id)
+  if (!current.target) return { status: 'deleted', ...current }
+  if (!expectedRevision || current.revision !== expectedRevision) return { status: 'conflict', ...current }
+  const saved = saveTarget(projectId, preserveCaseRuns(target, current.target))
+  return { status: 'saved', target: saved, revision: targetRevision(saved) }
 }
 
 /**
@@ -571,6 +624,7 @@ export function saveCaseRun(
     path.join(projectDir(projectId), 'apis', `${assertId(targetId, 'target_id')}.json`),
     target
   )
+  recordTargetChange(projectId, targetId, 'runtime')
   return target
 }
 
@@ -594,6 +648,7 @@ export function deleteTarget(projectId: string, targetId: string): void {
   }
   index.items = index.items.filter((i) => !toDelete.has(i.target_id))
   writeTargetIndex(projectId, index)
+  for (const id of toDelete) recordTargetChange(projectId, id, 'deleted')
 }
 
 export function reorderTargets(
@@ -620,8 +675,10 @@ export function reorderTargets(
     target.sort = summary.sort
     target.updated_at = new Date().toISOString()
     writeJson(file, target)
+    summary.updated_at = target.updated_at
   })
   writeTargetIndex(projectId, index)
+  for (const id of ids) recordTargetChange(projectId, id, 'definition')
   return listTargets(projectId)
 }
 
@@ -1216,6 +1273,7 @@ export function saveModel(projectId: string, input: DataModel): DataModel {
   if (position >= 0) index.items[position] = summary
   else index.items.push(summary)
   writeModelIndex(projectId, index)
+  recordModelChange(projectId)
   return model
 }
 
@@ -1253,6 +1311,7 @@ export function deleteModel(projectId: string, modelId: string): void {
   for (const id of toDelete) fs.rmSync(modelPath(projectId, id), { force: true })
   index.items = index.items.filter((item) => !toDelete.has(item.model_id))
   writeModelIndex(projectId, index)
+  recordModelChange(projectId)
 }
 
 export function deleteModelWithReferences(
@@ -1381,6 +1440,7 @@ export function reorderModels(
     writeJson(modelPath(projectId, id), model)
   })
   writeModelIndex(projectId, index)
+  if (ids.length > 0) recordModelChange(projectId)
   return listModels(projectId)
 }
 

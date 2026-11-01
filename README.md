@@ -139,6 +139,8 @@ npx electron-builder --win nsis zip --x64
 }
 ```
 
+- `url` 必须填写完整的 `http://` 或 `https://` 地址，包含主机名和路径，不能只写 `/path`。项目使用环境前缀时可写 `{{baseUrl}}/path`，但 `baseUrl` 必须解析为完整地址。
+- 创建或更新接口、目录、数据模型时，应同时填写对应说明；每个已知请求/响应字段都应提供 `description` 业务含义。无法确定时保留待补充，不能根据字段名或示例猜测。
 - 字段路径支持 `data.items[].id` 或 JSON Pointer `/data/items/*/id`；无需先在示例中填入该字段。
 - `required` 表示请求必填或响应必有，与 `nullable` 分开；嵌套字段的必填仅在父对象存在时生效。
 - `enum: null` 明确表示无限制；不提供规则表示待补充。枚举值保留 JSON 类型，`enum_descriptions` 按顺序对应。
@@ -151,6 +153,8 @@ npx electron-builder --win nsis zip --x64
 字段文档同步用于应用内查看、在线分享、离线 HTML、Markdown 和 OpenAPI。OpenAPI 用 `x-enum-descriptions` 保存枚举含义，用 `x-kindra-rules` 保留未说明状态；其他工具可能忽略扩展字段。
 
 运行 `npm run test:documentation` 验证 stdio MCP 编写及文档导出流程；测试使用隔离的临时数据目录。
+
+运行 `npm run test:client-sync` 验证外部变更同步、冲突保护与标签刷新；测试同样使用隔离的临时数据目录。
 
 上述完整字段编写能力自 0.2.4 提供。升级应用后重启 KindraAPI，并让 Agent 重新连接 MCP 以刷新工具列表；原来的 `mcp-stdio.cjs` 和 `KINDRAAPI_MCP_INFO` 配置路径不变。旧接口缺少的业务说明、必填及枚举规则会标为“待补充”，需由 Agent 根据业务代码补齐。
 

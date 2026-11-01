@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { App as AntApp, Button, Modal, Spin } from 'antd'
-import { useApp } from './store'
+import { connectTargetSync, useApp } from './store'
+import TargetSyncGuard from './components/TargetSyncGuard'
 import TopBar from './components/TopBar'
 import LeftNav from './components/LeftNav'
 import ApisPage from './pages/ApisPage'
@@ -111,7 +112,9 @@ export default function App(): JSX.Element {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const off = connectTargetSync()
     init().catch((e: Error) => setError(e.message))
+    return off
   }, [init])
 
   if (error) {
@@ -130,6 +133,7 @@ export default function App(): JSX.Element {
     <AntApp>
       <Shell />
       <QuitGuard />
+      <TargetSyncGuard />
     </AntApp>
   )
 }

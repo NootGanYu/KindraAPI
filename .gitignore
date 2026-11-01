@@ -16,3 +16,10 @@ Apipost Offline
 .DS_Store
 *.log
 .claude/settings.local.json
+
+# UI inventory: keep WebP + docs in git, keep originals/local state out
+ui-inventory/screenshots/png/
+ui-inventory/tools/.cache/
+ui-inventory/tools/.runs/
+ui-inventory/.user-data/
+ui-inventory/.env.local

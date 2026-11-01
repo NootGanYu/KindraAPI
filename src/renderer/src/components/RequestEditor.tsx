@@ -21,7 +21,7 @@ import type {
   Target
 } from '@shared/types'
 import { createBody } from '@shared/factories'
-import { useApp } from '../store'
+import { hasLocalEdits, useApp, useModelEpoch } from '../store'
 import ParamTable from './ParamTable'
 import JsonFieldTable from './JsonFieldTable'
 import ModelPickerModal from './schemas/ModelPickerModal'
@@ -98,6 +98,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   const saveTarget = useApp((s) => s.saveTarget)
   const sendActive = useApp((s) => s.sendActive)
   const sending = useApp((s) => s.sendingId === draft.target_id)
+  const modelEpoch = useModelEpoch(draft.target_id)
   const [activeTab, setActiveTab] = useState('Body')
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
@@ -140,7 +141,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     return () => {
       active = false
     }
-  }, [projectId])
+  }, [projectId, modelEpoch])
 
   const bodyModel = (request.body ?? createBody()).model_id
   const referencedModel = useMemo(
@@ -153,10 +154,13 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     if (!bodyModel || !projectId) return
     let active = true
     modelDocumentation(projectId, bodyModel).then(documentation => {
-      if (active) setBody(documentation)
+      if (active && !hasLocalEdits(draft.target_id)) {
+        const current = latestRequest.current
+        useApp.getState().applyDerivedPatch(draft.target_id, { request: { ...current, body: { ...current.body, ...documentation } } })
+      }
     }).catch(error => { if (active) message.error(error.message) })
     return () => { active = false }
-  }, [bodyModel, projectId])
+  }, [bodyModel, projectId, modelEpoch])
 
   const clearModelRef = (): void => {
     const current = request.body ?? createBody()

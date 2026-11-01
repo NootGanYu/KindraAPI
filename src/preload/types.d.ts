@@ -76,6 +76,7 @@ import type {
   MqttSubscription,
   MqttTestOptions
 } from '@shared/mqtt'
+import type { TargetChangeEvent, TargetSnapshot, TargetSaveOutcome } from '@shared/targetSync'
 
 export interface SelectedFile {
   path: string
@@ -111,6 +112,10 @@ export interface ApiBridge {
     ensureDefault(): Promise<Result<Project>>
   }
   targets: {
+    onChanged(callback: (event: TargetChangeEvent) => void): () => void
+    read(projectId: string, targetId: string): Promise<Result<TargetSnapshot>>
+    saveChecked(projectId: string, target: Target, revision: string, operationId: string): Promise<Result<TargetSaveOutcome>>
+    saveCopy(projectId: string, target: Target): Promise<Result<Target>>
     list(projectId: string): Promise<Result<TargetSummary[]>>
     get(projectId: string, targetId: string): Promise<Result<Target | null>>
     create(
