@@ -1827,18 +1827,9 @@ export function resolveDocShareTargets(projectId: string, share: DocShare): Reso
     }
     ids.add(root.target_id)
   } else {
-    // custom：固定成员，剔除已删除项，并保留祖先目录以便呈现完整树。
+    // custom：只保留固定成员；未选父节点由渲染层挂到根，避免泄露祖先正文。
     for (const id of share.target_ids) {
       if (byId.has(id)) ids.add(id)
-    }
-    for (const id of [...ids]) {
-      let current = byId.get(id)
-      let guard = 0
-      while (current && current.parent_id !== '0' && guard < 200) {
-        ids.add(current.parent_id)
-        current = byId.get(current.parent_id)
-        guard += 1
-      }
     }
   }
 

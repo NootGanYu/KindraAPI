@@ -49,6 +49,7 @@ import {
   saveTarget
 } from '../src/main/storage/store'
 import {
+  createApiCase,
   createCaseAssertion,
   createDbConnection,
   createDocSettings,
@@ -66,7 +67,7 @@ import {
   generateSchemaExample
 } from '../src/main/schema/example'
 import { importDbTables, listDbTables, mapMysqlType, testDbConnection } from '../src/main/db/mysql'
-import { startDocServer, stopDocServer } from '../src/main/docs/server'
+import { produceShareContent, startDocServer, stopDocServer } from '../src/main/docs/server'
 import * as mqttStore from '../src/main/mqtt/store'
 import * as mqttSessions from '../src/main/mqtt/sessionManager'
 import {
@@ -86,6 +87,24 @@ const createAedes = require('aedes') as () => any
 
 function assert(condition: unknown, label: string): void {
   if (!condition) throw new Error(`断言失败：${label}`)
+}
+
+function zipEntryNames(bytes: Buffer): string[] {
+  let eocd = bytes.length - 22
+  while (eocd >= 0 && bytes.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1
+  assert(eocd >= 0, 'zip end record exists')
+  const count = bytes.readUInt16LE(eocd + 10)
+  let offset = bytes.readUInt32LE(eocd + 16)
+  const names: string[] = []
+  for (let index = 0; index < count; index += 1) {
+    assert(bytes.readUInt32LE(offset) === 0x02014b50, 'zip central entry exists')
+    const nameLength = bytes.readUInt16LE(offset + 28)
+    const extraLength = bytes.readUInt16LE(offset + 30)
+    const commentLength = bytes.readUInt16LE(offset + 32)
+    names.push(bytes.subarray(offset + 46, offset + 46 + nameLength).toString('utf8'))
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  return names
 }
 
 function bridgeCall(
@@ -1091,6 +1110,522 @@ async function main(): Promise<void> {
   assert(!bodySchema?.properties?.removed, 'openapi excludes orphan field docs')
   assert(bodySchema?.properties?.tags?.items?.type === 'string', 'openapi array items')
 
+  const customAncestor = createTargetInProject(project.project_id, '0', 'folder')
+  customAncestor.name = '未选祖先目录'
+  customAncestor.description = '<p>祖先保密正文</p>'
+  saveTarget(project.project_id, customAncestor)
+  const customLeaf = createTargetInProject(project.project_id, customAncestor.target_id, 'api')
+  customLeaf.name = '自定义叶子接口'
+  saveTarget(project.project_id, customLeaf)
+  const customShare = createDocShare(project.project_id, {
+    name: 'custom 文档',
+    scope: 'custom',
+    target_ids: [customLeaf.target_id],
+    settings: createDocSettings()
+  })
+  const customPage = produceShareContent(customShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(customPage.kind === 'success', 'custom page produced')
+  if (customPage.kind !== 'success') throw new Error('custom page unavailable')
+  const customHtml = customPage.bytes.toString('utf8')
+  assert(customHtml.includes('自定义叶子接口'), 'custom includes selected leaf')
+  assert(
+    !customHtml.includes('未选祖先目录') && !customHtml.includes('祖先保密正文'),
+    'custom excludes unselected ancestor body and navigation'
+  )
+
+  const zipFolder = createTargetInProject(project.project_id, '0', 'folder')
+  zipFolder.name = 'ZIP 根目录'
+  saveTarget(project.project_id, zipFolder)
+  const indexApi = createTargetInProject(project.project_id, zipFolder.target_id, 'api')
+  indexApi.name = 'index'
+  saveTarget(project.project_id, indexApi)
+  const caseDuplicateApi = createTargetInProject(project.project_id, zipFolder.target_id, 'api')
+  caseDuplicateApi.name = 'INDEX'
+  saveTarget(project.project_id, caseDuplicateApi)
+  const nestedZipFolder = createTargetInProject(project.project_id, zipFolder.target_id, 'folder')
+  nestedZipFolder.name = '包内子目录'
+  saveTarget(project.project_id, nestedZipFolder)
+  const nestedZipApi = createTargetInProject(project.project_id, nestedZipFolder.target_id, 'api')
+  nestedZipApi.name = '包内接口'
+  saveTarget(project.project_id, nestedZipApi)
+  const zipShare = createDocShare(project.project_id, {
+    name: '布局文档',
+    scope: 'folder',
+    target_ids: [zipFolder.target_id],
+    settings: createDocSettings()
+  })
+  const zipContent = produceShareContent(zipShare, {
+    type: 'zip',
+    selection: { type: 'share' }
+  })
+  assert(zipContent.kind === 'success', 'zip content produced')
+  if (zipContent.kind !== 'success') throw new Error('zip content unavailable')
+  const layoutZipPath = path.join(tmp, 'layout.zip')
+  fs.writeFileSync(layoutZipPath, zipContent.bytes)
+  const layoutDir = fs.mkdtempSync(path.join(tmp, 'layout-'))
+  execFileSync('ditto', ['-x', '-k', layoutZipPath, layoutDir])
+  const layoutEntries = zipEntryNames(zipContent.bytes)
+  assert(
+    new Set(layoutEntries.map((entry) => entry.toLowerCase())).size === layoutEntries.length,
+    'zip paths unique case-insensitively'
+  )
+  assert(
+    layoutEntries.some((entry) => entry.endsWith('/index (2).html')),
+    'zip reserves root index filename'
+  )
+  const htmlFiles = layoutEntries.filter((entry) => entry.endsWith('.html'))
+  for (const entry of htmlFiles) {
+    const html = fs.readFileSync(path.join(layoutDir, entry), 'utf8')
+    for (const match of html.matchAll(/href="([^"]+)"/g)) {
+      const href = match[1]
+      if (/^(?:[a-z]+:|#|\/)/i.test(href)) continue
+      const linked = path.posix.normalize(
+        path.posix.join(path.posix.dirname(entry), decodeURIComponent(href.split('#')[0]))
+      )
+      assert(fs.existsSync(path.join(layoutDir, linked)), `zip link closes: ${entry} -> ${href}`)
+    }
+  }
+  const nestedZipContent = produceShareContent(zipShare, {
+    type: 'zip',
+    selection: { type: 'folder', targetId: nestedZipFolder.target_id }
+  })
+  assert(nestedZipContent.kind === 'success', 'folder zip content produced')
+  if (nestedZipContent.kind !== 'success') throw new Error('folder zip content unavailable')
+  assert(
+    !nestedZipContent.bytes.includes(Buffer.from('自定义叶子接口', 'utf8')) &&
+      !nestedZipContent.bytes.includes(Buffer.from('INDEX', 'utf8')),
+    'folder zip excludes out-of-scope content and navigation'
+  )
+
+  const completeHtmlContent = produceShareContent(zipShare, {
+    type: 'html',
+    selection: { type: 'share' }
+  })
+  assert(completeHtmlContent.kind === 'success', 'complete html produced')
+  if (completeHtmlContent.kind !== 'success') throw new Error('complete html unavailable')
+  const completeHtml = completeHtmlContent.bytes.toString('utf8')
+  assert(
+    completeHtml.includes('包内接口') &&
+      completeHtml.includes(`id="api-${nestedZipApi.target_id}"`) &&
+      completeHtml.includes(`href="#api-${nestedZipApi.target_id}"`),
+    'complete html contains nested bodies and page anchors'
+  )
+  const singleApiContent = produceShareContent(zipShare, {
+    type: 'html',
+    selection: { type: 'api', targetId: nestedZipApi.target_id }
+  })
+  assert(singleApiContent.kind === 'success', 'single api html produced')
+  if (singleApiContent.kind !== 'success') throw new Error('single api html unavailable')
+  const singleApiHtml = singleApiContent.bytes.toString('utf8')
+  assert(singleApiHtml.includes('包内接口'), 'single api html includes selected api')
+  assert(
+    !singleApiHtml.includes('包内子目录') && !singleApiHtml.includes('INDEX'),
+    'single api html excludes other content and navigation'
+  )
+
+  product.data.schema.properties!.id.example = 42
+  saveModel(pid, product)
+  refTarget.request!.body.raw = '{"id":7}'
+  refTarget.response!.example![0].raw = '{"id":7}'
+  saveTarget(pid, refTarget)
+  const modelShare = createDocShare(pid, {
+    name: '模型文档',
+    scope: 'api',
+    target_ids: [refTarget.target_id],
+    settings: createDocSettings()
+  })
+  const targetFile = path.join(
+    getPaths().projectRoot,
+    pid,
+    'apis',
+    `${refTarget.target_id}.json`
+  )
+  const targetBeforeProduce = fs.readFileSync(targetFile)
+  const liveModelPage = produceShareContent(modelShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(liveModelPage.kind === 'success', 'live model page produced')
+  if (liveModelPage.kind !== 'success') throw new Error('live model page unavailable')
+  const liveModelHtml = liveModelPage.bytes.toString('utf8')
+  assert(liveModelHtml.includes('42'), 'share regenerates model on next result')
+  assert(!liveModelHtml.includes('模型警告'), 'valid model has no warning')
+  assert(fs.readFileSync(targetFile).equals(targetBeforeProduce), 'content generation has no writes')
+
+  deleteModel(pid, product.model_id)
+  const fallbackModelPage = produceShareContent(modelShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(fallbackModelPage.kind === 'success', 'fallback model page produced')
+  if (fallbackModelPage.kind !== 'success') throw new Error('fallback model page unavailable')
+  const fallbackModelHtml = fallbackModelPage.bytes.toString('utf8')
+  assert(
+    fallbackModelHtml.includes('&quot;id&quot;: 7') && fallbackModelHtml.includes('模型警告'),
+    'missing model keeps old raw and shows warning'
+  )
+
+  refTarget.request!.body.raw = ''
+  refTarget.response!.example![0].raw = ''
+  saveTarget(pid, refTarget)
+  const emptyModelPage = produceShareContent(modelShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(emptyModelPage.kind === 'success', 'empty fallback page produced')
+  if (emptyModelPage.kind !== 'success') throw new Error('empty fallback page unavailable')
+  const emptyModelHtml = emptyModelPage.bytes.toString('utf8')
+  assert(
+    emptyModelHtml.includes('模型警告') && emptyModelHtml.includes('（空响应体）'),
+    'missing model without old raw uses empty example and warning'
+  )
+
+  refTarget.request!.body = {
+    ...refTarget.request!.body,
+    model_id: cycleA.model_id,
+    raw: '{"fallback":"cycle"}'
+  }
+  refTarget.response!.example![0].expect!.model_id = cycleA.model_id
+  refTarget.response!.example![0].raw = '{"fallback":"cycle"}'
+  saveTarget(pid, refTarget)
+  const cycleModelPage = produceShareContent(modelShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(cycleModelPage.kind === 'success', 'cycle fallback page produced')
+  if (cycleModelPage.kind !== 'success') throw new Error('cycle fallback page unavailable')
+  const cycleModelHtml = cycleModelPage.bytes.toString('utf8')
+  assert(
+    cycleModelHtml.includes('fallback') && cycleModelHtml.includes('模型警告'),
+    'cycle keeps old raw and shows warning'
+  )
+  const modelContractShare = createDocShare(pid, {
+    name: '模型契约文档',
+    scope: 'api',
+    target_ids: [refTarget.target_id],
+    settings: createDocSettings({ openapi: true })
+  })
+  const modelMarkdownResult = produceShareContent(modelContractShare, {
+    type: 'markdown',
+    selection: { type: 'share' }
+  })
+  assert(modelMarkdownResult.kind === 'success', 'model markdown produced')
+  if (modelMarkdownResult.kind !== 'success') throw new Error('model markdown unavailable')
+  const modelMd = modelMarkdownResult.bytes.toString('utf8')
+  assert(
+    modelMd.includes('模型警告') && modelMd.includes('fallback'),
+    'markdown includes model warning and fallback'
+  )
+  const modelOpenApiResult = produceShareContent(modelContractShare, {
+    type: 'openapi',
+    selection: { type: 'share' }
+  })
+  assert(modelOpenApiResult.kind === 'success', 'model openapi produced')
+  if (modelOpenApiResult.kind !== 'success') throw new Error('model openapi unavailable')
+  const modelOpenApi = JSON.parse(modelOpenApiResult.bytes.toString('utf8')) as any
+  const modelOperation = modelOpenApi.paths['/'].get
+  assert(
+    modelOperation.description.includes('模型警告') &&
+      modelOperation.responses['200'].description.includes('模型警告') &&
+      modelOperation.requestBody.content['application/json'].example.fallback === 'cycle',
+    'openapi writes warnings to descriptions and keeps fallback example'
+  )
+  const hiddenModelContractShare = createDocShare(pid, {
+    name: '隐藏模型契约文档',
+    scope: 'api',
+    target_ids: [refTarget.target_id],
+    settings: createDocSettings({
+      openapi: true,
+      show_request: false,
+      show_response: false
+    })
+  })
+  const hiddenModelOpenApiResult = produceShareContent(hiddenModelContractShare, {
+    type: 'openapi',
+    selection: { type: 'share' }
+  })
+  assert(hiddenModelOpenApiResult.kind === 'success', 'hidden model openapi produced')
+  if (hiddenModelOpenApiResult.kind !== 'success') {
+    throw new Error('hidden model openapi unavailable')
+  }
+  const hiddenModelOpenApiText = hiddenModelOpenApiResult.bytes.toString('utf8')
+  assert(
+    !hiddenModelOpenApiText.includes('模型警告') &&
+      !hiddenModelOpenApiText.includes('fallback'),
+    'openapi hides warnings associated with hidden content'
+  )
+  const hiddenModelShare = createDocShare(pid, {
+    name: '隐藏模型文档',
+    scope: 'api',
+    target_ids: [refTarget.target_id],
+    settings: createDocSettings({ show_request: false, show_response: false })
+  })
+  const hiddenModelPage = produceShareContent(hiddenModelShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(hiddenModelPage.kind === 'success', 'hidden model page produced')
+  if (hiddenModelPage.kind !== 'success') throw new Error('hidden model page unavailable')
+  const hiddenModelHtml = hiddenModelPage.bytes.toString('utf8')
+  assert(
+    !hiddenModelHtml.includes('模型警告') &&
+      !hiddenModelHtml.includes('检测到模型循环引用') &&
+      !hiddenModelHtml.includes('fallback'),
+    'hidden model content and warnings stay hidden'
+  )
+
+  const visibilityApi = createTargetInProject(pid, '0', 'api')
+  visibilityApi.name = '可见性接口'
+  visibilityApi.method = 'POST'
+  visibilityApi.url = '/visibility'
+  visibilityApi.description = '<p><img src="https://example.test/remote.png"></p>'
+  visibilityApi.request!.restful.parameter = [
+    createParam({ key: 'path_visible', value: 'path' })
+  ]
+  visibilityApi.request!.query.parameter = [
+    createParam({ key: 'query_visible', value: 'query' })
+  ]
+  visibilityApi.request!.header.parameter = [
+    createParam({ key: 'X-Request', value: 'REQUEST_HEADER_VISIBLE' })
+  ]
+  visibilityApi.request!.cookie.parameter = [
+    createParam({ key: 'cookie_visible', value: 'cookie' })
+  ]
+  visibilityApi.request!.body = {
+    ...visibilityApi.request!.body,
+    mode: 'json',
+    raw: '{"body_visible":true}'
+  }
+  visibilityApi.request!.pre_script = 'SCRIPT_VISIBLE'
+  visibilityApi.design = {
+    errors: [{ code: 'DESIGN_VISIBLE', message: '设计错误可见' }]
+  }
+  visibilityApi.cases = [
+    createApiCase({
+      name: 'CASE_VISIBLE',
+      description: 'CASE_DESCRIPTION_VISIBLE',
+      override: {
+        headers: [createParam({ key: 'X-Override', value: 'OVERRIDE_SECRET' })],
+        body: 'OVERRIDE_BODY_SECRET'
+      },
+      assertions: [createCaseAssertion({ kind: 'status', op: 'equals', expected: '200' })],
+      last_run: {
+        ran_at: '2026-11-01T00:00:00.000Z',
+        status: 'passed',
+        error: 'LAST_RUN_SECRET'
+      }
+    })
+  ]
+  visibilityApi.response = {
+    example: [
+      {
+        example_id: 'visibility_example',
+        expect: { code: 200, name: 'RESPONSE_VISIBLE', content_type: 'application/json' },
+        raw: '{"response_visible":true}',
+        headers: [createParam({ key: 'X-Response', value: 'RESPONSE_HEADER_VISIBLE' })],
+        cookies: [createParam({ key: 'response_cookie', value: 'RESPONSE_COOKIE_VISIBLE' })],
+        request: {
+          method: 'POST',
+          url: '/snapshot',
+          headers: [createParam({ key: 'X-Snapshot', value: 'SNAPSHOT_HEADER_VISIBLE' })],
+          body: 'SNAPSHOT_BODY_VISIBLE'
+        }
+      }
+    ]
+  }
+  saveTarget(pid, visibilityApi)
+  const visibilityShare = createDocShare(pid, {
+    name: '可见性文档',
+    scope: 'api',
+    target_ids: [visibilityApi.target_id],
+    settings: createDocSettings({ openapi: true, show_scripts: true })
+  })
+  const visibilityMarkdown = produceShareContent(visibilityShare, {
+    type: 'markdown',
+    selection: { type: 'share' }
+  })
+  assert(visibilityMarkdown.kind === 'success', 'markdown content produced')
+  if (visibilityMarkdown.kind !== 'success') throw new Error('markdown content unavailable')
+  const visibilityMd = visibilityMarkdown.bytes.toString('utf8')
+  for (const marker of [
+    'body_visible',
+    'response_visible',
+    'SNAPSHOT_HEADER_VISIBLE',
+    'SNAPSHOT_BODY_VISIBLE',
+    'DESIGN_VISIBLE',
+    'CASE_VISIBLE',
+    'CASE_DESCRIPTION_VISIBLE',
+    '状态码 等于 200'
+  ]) {
+    assert(visibilityMd.includes(marker), `markdown includes visible content: ${marker}`)
+  }
+  assert(
+    visibilityMd.includes('https://example.test/remote.png'),
+    'markdown preserves remote image links'
+  )
+  assert(
+    !visibilityMd.includes('OVERRIDE_SECRET') &&
+      !visibilityMd.includes('OVERRIDE_BODY_SECRET') &&
+      !visibilityMd.includes('LAST_RUN_SECRET'),
+    'markdown excludes override secrets and last_run'
+  )
+  const visibilityOpenApiResult = produceShareContent(visibilityShare, {
+    type: 'openapi',
+    selection: { type: 'share' }
+  })
+  assert(visibilityOpenApiResult.kind === 'success', 'openapi content produced')
+  if (visibilityOpenApiResult.kind !== 'success') throw new Error('openapi content unavailable')
+  const visibilityOpenApi = JSON.parse(visibilityOpenApiResult.bytes.toString('utf8')) as any
+  const visibilityOperation = visibilityOpenApi.paths['/visibility'].post
+  assert(
+    visibilityOperation.parameters.length === 4 && visibilityOperation.requestBody,
+    'openapi includes visible request contract'
+  )
+  assert(
+    visibilityOperation.responses['200'].content['application/json'].example.response_visible ===
+      true && visibilityOperation.responses['200'].headers['X-Response'],
+    'openapi includes visible response contract and headers'
+  )
+  const visibilityOpenApiText = JSON.stringify(visibilityOpenApi)
+  assert(
+    !visibilityOpenApiText.includes('CASE_VISIBLE') &&
+      !visibilityOpenApiText.includes('DESIGN_VISIBLE') &&
+      !visibilityOpenApiText.includes('OVERRIDE_SECRET') &&
+      !visibilityOpenApiText.includes('LAST_RUN_SECRET'),
+    'openapi contains contract only'
+  )
+  const visibilityPage = produceShareContent(visibilityShare, {
+    type: 'page',
+    selection: { type: 'share' }
+  })
+  assert(visibilityPage.kind === 'success', 'remote image page produced')
+  if (visibilityPage.kind !== 'success') throw new Error('remote image page unavailable')
+  assert(
+    visibilityPage.bytes.toString('utf8').includes('https://example.test/remote.png'),
+    'remote image stays an external link'
+  )
+  const remoteImageResponse = await fetch(`${docBase}/share/${visibilityShare.share_id}`)
+  assert(
+    remoteImageResponse.headers.get('content-security-policy')?.includes('img-src data: http: https:'),
+    'csp permits remote images without fetching them'
+  )
+
+  const hiddenShare = createDocShare(pid, {
+    name: '父级开关文档',
+    scope: 'api',
+    target_ids: [visibilityApi.target_id],
+    settings: createDocSettings({
+      openapi: true,
+      show_request: false,
+      show_body: true,
+      show_response: false,
+      show_headers: true,
+      show_scripts: false,
+      show_design: false,
+      show_cases: false
+    })
+  })
+  const hiddenMarkdownResult = produceShareContent(hiddenShare, {
+    type: 'markdown',
+    selection: { type: 'share' }
+  })
+  assert(hiddenMarkdownResult.kind === 'success', 'hidden markdown produced')
+  if (hiddenMarkdownResult.kind !== 'success') throw new Error('hidden markdown unavailable')
+  const hiddenMd = hiddenMarkdownResult.bytes.toString('utf8')
+  for (const marker of [
+    'query_visible',
+    'body_visible',
+    'response_visible',
+    'SNAPSHOT_HEADER_VISIBLE',
+    'DESIGN_VISIBLE',
+    'CASE_VISIBLE',
+    'SCRIPT_VISIBLE'
+  ]) {
+    assert(!hiddenMd.includes(marker), `parent switches hide markdown content: ${marker}`)
+  }
+  const hiddenOpenApiResult = produceShareContent(hiddenShare, {
+    type: 'openapi',
+    selection: { type: 'share' }
+  })
+  assert(hiddenOpenApiResult.kind === 'success', 'hidden openapi produced')
+  if (hiddenOpenApiResult.kind !== 'success') throw new Error('hidden openapi unavailable')
+  const hiddenOperation = JSON.parse(hiddenOpenApiResult.bytes.toString('utf8')).paths[
+    '/visibility'
+  ].post
+  assert(
+    !hiddenOperation.requestBody &&
+      hiddenOperation.parameters.length === 0 &&
+      !hiddenOperation.responses['200'].content &&
+      !JSON.stringify(hiddenOperation).includes('RESPONSE_HEADER_VISIBLE'),
+    'openapi obeys parent request and response switches'
+  )
+
+  const childSwitchShare = createDocShare(pid, {
+    name: '子级开关文档',
+    scope: 'api',
+    target_ids: [visibilityApi.target_id],
+    settings: createDocSettings({ show_body: false, show_headers: false })
+  })
+  const childSwitchResult = produceShareContent(childSwitchShare, {
+    type: 'markdown',
+    selection: { type: 'share' }
+  })
+  assert(childSwitchResult.kind === 'success', 'child switch markdown produced')
+  if (childSwitchResult.kind !== 'success') throw new Error('child switch markdown unavailable')
+  const childSwitchMd = childSwitchResult.bytes.toString('utf8')
+  assert(
+    childSwitchMd.includes('query_visible') &&
+      childSwitchMd.includes('response_visible') &&
+      childSwitchMd.includes('SNAPSHOT_HEADER_VISIBLE'),
+    'enabled parent content remains visible'
+  )
+  assert(
+    !childSwitchMd.includes('body_visible') &&
+      !childSwitchMd.includes('SNAPSHOT_BODY_VISIBLE') &&
+      !childSwitchMd.includes('RESPONSE_HEADER_VISIBLE') &&
+      !childSwitchMd.includes('RESPONSE_COOKIE_VISIBLE'),
+    'body and response header switches hide only their children'
+  )
+  const disabledOpenApi = produceShareContent(customShare, {
+    type: 'openapi',
+    selection: { type: 'share' }
+  })
+  assert(disabledOpenApi.kind === 'openapi-disabled', 'openapi feature gate result')
+  const outOfScopeContent = produceShareContent(zipShare, {
+    type: 'html',
+    selection: { type: 'api', targetId: customLeaf.target_id }
+  })
+  assert(outOfScopeContent.kind === 'not-found', 'out-of-scope target returns not-found')
+  const disabledOpenApiResponse = await fetch(
+    `${docBase}/share/${customShare.share_id}/download?format=openapi`
+  )
+  assert(disabledOpenApiResponse.status === 403, 'http openapi feature gate')
+
+  const routedCompleteResponse = await fetch(
+    `${docBase}/share/${zipShare.share_id}/download?format=html`
+  )
+  const routedCompleteHtml = await routedCompleteResponse.text()
+  assert(
+    routedCompleteResponse.status === 200 &&
+      routedCompleteHtml.includes('包内接口') &&
+      routedCompleteHtml.includes(`href="#api-${nestedZipApi.target_id}"`),
+    'http complete html uses unified content entry'
+  )
+  const routedSingleResponse = await fetch(
+    `${docBase}/share/${zipShare.share_id}/a/${nestedZipApi.target_id}/download?format=html`
+  )
+  const routedSingleHtml = await routedSingleResponse.text()
+  assert(
+    routedSingleResponse.status === 200 &&
+      routedSingleHtml.includes('包内接口') &&
+      !routedSingleHtml.includes('包内子目录') &&
+      !routedSingleHtml.includes('INDEX'),
+    'http single api download uses scoped navigation'
+  )
+
   const passwordShare = createDocShare(project.project_id, {
     name: '密码文档',
     scope: 'api',
@@ -1099,6 +1634,23 @@ async function main(): Promise<void> {
   })
   const locked = await fetch(`${docBase}/share/${passwordShare.share_id}`)
   assert(locked.status === 401, 'doc password required')
+  const lockedTarget = createTargetInProject(pid, '0', 'api')
+  saveTarget(pid, lockedTarget)
+  const lockedMissingShare = createDocShare(pid, {
+    name: '鉴权短路文档',
+    scope: 'api',
+    target_ids: [lockedTarget.target_id],
+    settings: createDocSettings({ password: 'secret' })
+  })
+  deleteTarget(pid, lockedTarget.target_id)
+  const lockedMissingPage = await fetch(`${docBase}/share/${lockedMissingShare.share_id}`)
+  const lockedMissingDownload = await fetch(
+    `${docBase}/share/${lockedMissingShare.share_id}/download?format=html`
+  )
+  assert(
+    lockedMissingPage.status === 401 && lockedMissingDownload.status === 401,
+    'authentication runs before content resolution'
+  )
   const wrong = await fetch(`${docBase}/share/${passwordShare.share_id}/auth`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },

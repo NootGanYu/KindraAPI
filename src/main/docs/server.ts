@@ -18,6 +18,7 @@ import * as store from '../storage/store'
 import { descriptionToHtml, htmlToText } from '@shared/richText'
 import { buildFieldRows, buildFieldSchema, typeLabel, type JsonFieldRow } from '@shared/jsonFields'
 import { createZip } from './zip'
+import { generateModelExample, type ExampleWarning } from '../schema/example'
 
 const DOC_HOST = '0.0.0.0'
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000
@@ -193,7 +194,7 @@ function setSecurityHeaders(res: http.ServerResponse): void {
   res.setHeader('Referrer-Policy', 'no-referrer')
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data: http: https:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
   )
   res.setHeader('Cache-Control', 'no-store')
 }
@@ -430,6 +431,7 @@ details.raw-request summary{cursor:pointer;color:var(--gold);font-size:12.5px}
 .nav-desc{color:var(--muted);font-size:11.5px;line-height:1.5;margin:2px 8px 6px 20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .folder-desc{margin:8px 0 18px}
 .offline-note{margin-top:16px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:12px;background:var(--soft)}
+.content-warning{margin:10px 0;padding:10px 12px;border:1px solid #dc9a32;border-radius:7px;background:#fff3d6;color:#7b4614;font-size:12.5px;white-space:pre-wrap}
 .gate-wrap{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(160deg,#faf8f4 0%,#f1e8d7 100%)}
 .gate{width:100%;max-width:380px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:32px 30px;box-shadow:0 18px 60px rgba(70,55,30,.10)}
 .gate .logo{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#c8a25e,#8a6b3b);font-weight:700;margin-bottom:18px}
@@ -529,7 +531,34 @@ function renderFieldDocsTable(rows: JsonFieldRow[], title = '请求体字段说�
   return '<h4>' + escapeHtml(title) + '</h4>' + renderDocumentationTable(['字段', '类型', ...RULE_HEADINGS], rows.map(row => [row.path || row.name, row.type, ...ruleCells({ ...row.doc, example: row.doc?.example !== undefined ? row.doc.example : row.value })]))
 }
 
-function renderResponseExample(example: ResponseExample, settings: DocSettings): string {
+interface ShareWarnings {
+  requestBodies: Map<string, ExampleWarning[]>
+  responseExamples: Map<string, ExampleWarning[]>
+}
+
+function responseWarningKey(targetId: string, exampleId: string): string {
+  return `${targetId}:${exampleId}`
+}
+
+function warningText(warnings: ExampleWarning[], raw: string): string {
+  const fallback = raw ? '已保留旧示例' : '使用空示例'
+  return `模型警告：内容未完整生成，${fallback}。${warnings
+    .map((warning) => warning.message)
+    .join('；')}`
+}
+
+function renderWarning(warnings: ExampleWarning[], raw: string): string {
+  if (warnings.length === 0) return ''
+  return `<div class="content-warning" role="alert"><strong>模型警告</strong> · ${escapeHtml(
+    warningText(warnings, raw).replace(/^模型警告：/, '')
+  )}</div>`
+}
+
+function renderResponseExample(
+  example: ResponseExample,
+  settings: DocSettings,
+  warnings: ExampleWarning[] = []
+): string {
   const code = example.expect?.code ?? 200
   const name = example.expect?.name || ''
   const contentType = example.expect?.content_type || ''
@@ -549,7 +578,7 @@ function renderResponseExample(example: ResponseExample, settings: DocSettings):
 
   const snapshotHeaders = activeParams(request?.headers ?? [])
   const snapshotHeaderBlock =
-    settings.show_request && settings.show_headers && snapshotHeaders.length
+    settings.show_request && snapshotHeaders.length
       ? `<h4>请求头</h4>${renderParamTable(snapshotHeaders)}`
       : ''
   const snapshotBodyBlock =
@@ -574,14 +603,19 @@ ${name ? `<span class="name">${escapeHtml(name)}</span>` : ''}
 ${contentType ? `<span class="ctype mono">${escapeHtml(contentType)}</span>` : ''}
 </div>
 <div class="example-body">
+${renderWarning(warnings, raw)}
 ${raw ? `<pre>${escapeHtml(pretty(raw))}</pre>` : '<span class="muted">暂未提供响应体示例</span>'}
 ${renderFieldDocsTable(buildFieldRows(raw, example.field_docs ?? []).exportedRows, '响应字段说明')}${headerBlock}${cookieBlock}${requestBlock}
 </div>
 </div>`
 }
 
-function renderBody(target: Target, settings: DocSettings): string {
-  if (!settings.show_body) return ''
+function renderBody(
+  target: Target,
+  settings: DocSettings,
+  warnings: ExampleWarning[] = []
+): string {
+  if (!settings.show_request || !settings.show_body) return ''
   const body = target.request?.body
   if (!body) return ''
   const mode = body.mode || 'none'
@@ -604,9 +638,10 @@ function renderBody(target: Target, settings: DocSettings): string {
       ? buildFieldRows(raw ?? '', body.field_docs ?? []).exportedRows
       : []
   const fieldTable = renderFieldDocsTable(fieldRows)
-  if (!raw && !fieldTable) return ''
+  const warningBlock = renderWarning(warnings, raw ?? '')
+  if (!raw && !fieldTable) return warningBlock
   const prettyBody = raw ? `<h4>请求体</h4><pre>${escapeHtml(pretty(raw))}</pre>` : ''
-  return `${prettyBody}${fieldTable}`
+  return `${warningBlock}${prettyBody}${fieldTable}`
 }
 
 function renderScripts(target: Target, settings: DocSettings): string {
@@ -678,7 +713,12 @@ function renderCasesSection(target: Target): string {
 </div>`
 }
 
-function renderApi(target: Target, settings: DocSettings, apiHref?: string): string {
+function renderApi(
+  target: Target,
+  settings: DocSettings,
+  apiHref?: string,
+  warnings?: ShareWarnings
+): string {
   const requestExample = documentedRequestExample(target)
   const modelWarnings = modelDocumentationWarnings(target)
   target = resolveDocumentedTarget(target)
@@ -696,7 +736,11 @@ function renderApi(target: Target, settings: DocSettings, apiHref?: string): str
       ].join('')
     : ''
 
-  const bodyBlock = renderBody(target, settings)
+  const bodyBlock = renderBody(
+    target,
+    settings,
+    warnings?.requestBodies.get(target.target_id) ?? []
+  )
   const requestSection =
     paramBlock || bodyBlock
       ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}</div>`
@@ -706,7 +750,17 @@ function renderApi(target: Target, settings: DocSettings, apiHref?: string): str
     ? `<div class="api-block"><h3>响应示例</h3>
 ${
   examples.length
-    ? examples.map((example) => renderResponseExample(example, settings)).join('')
+    ? examples
+        .map((example) =>
+          renderResponseExample(
+            example,
+            settings,
+            warnings?.responseExamples.get(
+              responseWarningKey(target.target_id, example.example_id)
+            ) ?? []
+          )
+        )
+        .join('')
     : '<div class="empty" style="padding:20px">暂无响应示例</div>'
 }
 </div>`
@@ -745,16 +799,90 @@ interface ShareView {
   byParent: Map<string, Target[]>
   byId: Map<string, Target>
   lastUpdated: string
+  warnings: ShareWarnings
 }
+
+export type ShareSelection =
+  | { type: 'share' }
+  | { type: 'folder'; targetId: string }
+  | { type: 'api'; targetId: string }
+
+export type ShareContentIntent =
+  | { type: 'page'; selection: ShareSelection }
+  | { type: 'zip'; selection: { type: 'share' } | { type: 'folder'; targetId: string } }
+  | {
+      type: 'html' | 'markdown'
+      selection: { type: 'share' } | { type: 'api'; targetId: string }
+    }
+  | { type: 'openapi'; selection: { type: 'share' } }
+
+export type ShareContentResult =
+  | { kind: 'success'; bytes: Buffer; contentType: string; filename?: string }
+  | { kind: 'not-found' }
+  | { kind: 'openapi-disabled' }
 
 interface RenderCtx {
   share: DocShare
   view: ShareView
   offline: boolean
+  /** 完整 HTML / 单 API HTML 使用页内锚点，不引用包外文件。 */
+  singleFile?: boolean
   /** 当前页面在 ZIP 内的路径，仅离线渲染使用 */
   currentFile: string
   /** target_id → ZIP 内路径，仅离线渲染使用 */
   fileOf: ((targetId: string) => string | null) | null
+}
+
+function prepareShareTargets(
+  share: DocShare,
+  source: Target[]
+): { targets: Target[]; warnings: ShareWarnings } {
+  const warnings: ShareWarnings = {
+    requestBodies: new Map(),
+    responseExamples: new Map()
+  }
+  const targets = source.map((target) => {
+    if (target.target_type !== 'api') return target
+    let next = target
+    const body = target.request?.body
+    if (share.settings.show_request && share.settings.show_body && body?.model_id) {
+      const raw = body.raw ?? body.json ?? ''
+      const generated = generateModelExample(share.project_id, body.model_id)
+      const nextRaw = generated.warnings.length
+        ? raw
+        : JSON.stringify(generated.value, null, 2)
+      next = {
+        ...next,
+        request: { ...next.request!, body: { ...body, raw: nextRaw } }
+      }
+      if (generated.warnings.length) {
+        warnings.requestBodies.set(target.target_id, generated.warnings)
+      }
+    }
+    if (share.settings.show_response && target.response?.example) {
+      let changed = false
+      const examples = target.response.example.map((example) => {
+        const modelId = example.expect?.model_id
+        if (!modelId) return example
+        const raw = example.raw ?? ''
+        const generated = generateModelExample(share.project_id, modelId)
+        changed = true
+        if (generated.warnings.length) {
+          warnings.responseExamples.set(
+            responseWarningKey(target.target_id, example.example_id),
+            generated.warnings
+          )
+        }
+        return {
+          ...example,
+          raw: generated.warnings.length ? raw : JSON.stringify(generated.value, null, 2)
+        }
+      })
+      if (changed) next = { ...next, response: { ...target.response, example: examples } }
+    }
+    return next
+  })
+  return { targets, warnings }
 }
 
 function buildShareView(
@@ -762,11 +890,12 @@ function buildShareView(
   resolved: store.ResolvedDocShare
 ): ShareView | null {
   if (!resolved.project || resolved.notFound) return null
-  const ids = new Set(resolved.targets.map((target) => target.target_id))
+  const prepared = prepareShareTargets(share, resolved.targets)
+  const ids = new Set(prepared.targets.map((target) => target.target_id))
   const byParent = new Map<string, Target[]>()
   const byId = new Map<string, Target>()
   let lastUpdated = share.updated_at
-  for (const target of resolved.targets) {
+  for (const target of prepared.targets) {
     byId.set(target.target_id, target)
     if (!lastUpdated || target.updated_at > lastUpdated) lastUpdated = target.updated_at
     const parent = ids.has(target.parent_id) ? target.parent_id : '0'
@@ -777,7 +906,16 @@ function buildShareView(
   for (const list of byParent.values()) {
     list.sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-Hans-CN'))
   }
-  return { share, project: resolved.project, targets: resolved.targets, rootId: resolved.rootId, byParent, byId, lastUpdated }
+  return {
+    share,
+    project: resolved.project,
+    targets: prepared.targets,
+    rootId: resolved.rootId,
+    byParent,
+    byId,
+    lastUpdated,
+    warnings: prepared.warnings
+  }
 }
 
 function shareBase(share: DocShare): string {
@@ -785,7 +923,9 @@ function shareBase(share: DocShare): string {
 }
 
 function navRoot(view: ShareView): string {
-  return view.share.scope === 'folder' && view.rootId ? view.rootId : '0'
+  return view.rootId && view.byId.get(view.rootId)?.target_type === 'folder'
+    ? view.rootId
+    : '0'
 }
 
 function relativeHref(fromFile: string, toFile: string): string {
@@ -795,6 +935,9 @@ function relativeHref(fromFile: string, toFile: string): string {
 }
 
 function hrefFor(ctx: RenderCtx, target: Target): string {
+  if (ctx.offline && ctx.singleFile) {
+    return `#${target.target_type === 'folder' ? 'folder' : 'api'}-${target.target_id}`
+  }
   if (!ctx.offline) {
     return target.target_type === 'folder'
       ? `${shareBase(ctx.share)}/f/${encodeURIComponent(target.target_id)}`
@@ -806,6 +949,7 @@ function hrefFor(ctx: RenderCtx, target: Target): string {
 }
 
 function indexHref(ctx: RenderCtx): string {
+  if (ctx.offline && ctx.singleFile) return '#top'
   return ctx.offline ? relativeHref(ctx.currentFile, 'index.html') : shareBase(ctx.share)
 }
 
@@ -874,9 +1018,9 @@ ${desc}
       })
       .join('')
 
-  if (ctx.view.share.scope === 'folder' && ctx.view.rootId) {
+  if (ctx.view.rootId) {
     const root = ctx.view.byId.get(ctx.view.rootId)
-    if (root) return folderNode(root)
+    if (root?.target_type === 'folder') return folderNode(root)
   }
   return walk(navRoot(ctx.view))
 }
@@ -893,7 +1037,7 @@ function renderShareShell(
   const expire = store.docShareExpireInfo(share)
   const nav = renderNav(ctx, currentFolderId, currentApiId)
   const body = `
-<header class="doc-top">
+<header class="doc-top" id="top">
   <div class="brand"><span class="logo">K</span> KindraAPI 文档</div>
   <div class="top-crumb">${escapeHtml(view.project.name)} / ${escapeHtml(share.name)}</div>
   <div class="top-badges">${shareChips(share)}</div>
@@ -941,7 +1085,7 @@ function renderListing(ctx: RenderCtx, parentId: string): string {
   return `${folders.map((folder) => renderFolderCard(ctx, folder)).join('')}${
     apis.length
       ? `<div class="section-title">接口（${apis.length}）</div>${apis
-          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api)))
+          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api), ctx.view.warnings))
           .join('')}`
       : ''
   }`
@@ -978,11 +1122,10 @@ ${renderOfflineNote(ctx)}
 }
 
 function renderShareIndexPage(ctx: RenderCtx): string | null {
-  if (ctx.share.scope === 'folder' && ctx.view.rootId) {
-    return renderFolderPage(ctx, ctx.view.rootId)
-  }
-  if (ctx.share.scope === 'api' && ctx.view.rootId) {
-    return renderApiPage(ctx, ctx.view.rootId)
+  if (ctx.view.rootId) {
+    const root = ctx.view.byId.get(ctx.view.rootId)
+    if (root?.target_type === 'folder') return renderFolderPage(ctx, root.target_id)
+    if (root?.target_type === 'api') return renderApiPage(ctx, root.target_id)
   }
   const main = `${renderHero(ctx, {
     title: ctx.share.name,
@@ -1016,7 +1159,7 @@ function renderApiPage(ctx: RenderCtx, apiId: string): string | null {
   const api = ctx.view.byId.get(apiId)
   if (!api || api.target_type !== 'api') return null
   const main = `${renderHero(ctx, { current: api, downloadApiId: api.target_id })}
-${renderApi(api, ctx.share.settings)}`
+${renderApi(api, ctx.share.settings, undefined, ctx.view.warnings)}`
   return renderShareShell(
     ctx,
     `${api.name} · ${ctx.share.name}`,
@@ -1024,6 +1167,43 @@ ${renderApi(api, ctx.share.settings)}`
     undefined,
     api.target_id
   )
+}
+
+function renderCompleteListing(ctx: RenderCtx, parentId: string): string {
+  const items = ctx.view.byParent.get(parentId) ?? []
+  return items
+    .map((target) => {
+      if (target.target_type === 'api') {
+        return renderApi(target, ctx.share.settings, undefined, ctx.view.warnings)
+      }
+      return `<section class="folder-card" id="folder-${escapeHtml(target.target_id)}">
+<h2>${escapeHtml(target.name)}</h2>
+${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
+<div class="folder-count">${escapeHtml(folderCounts(ctx.view, target.target_id))}</div>
+${renderCompleteListing(ctx, target.target_id)}
+</section>`
+    })
+    .join('')
+}
+
+function renderCompleteHtmlPage(ctx: RenderCtx): string | null {
+  if (ctx.view.rootId) {
+    const root = ctx.view.byId.get(ctx.view.rootId)
+    if (root?.target_type === 'api') return renderApiPage(ctx, root.target_id)
+    if (root?.target_type === 'folder') {
+      const main = `<div id="folder-${escapeHtml(root.target_id)}">${renderHero(ctx, {
+        current: root,
+        title: root.name,
+        introHtml: root.description ? descriptionToHtml(root.description) : ''
+      })}${renderCompleteListing(ctx, root.target_id)}</div>`
+      return renderShareShell(ctx, `${root.name} · ${ctx.share.name}`, main, root.target_id)
+    }
+  }
+  const main = `${renderHero(ctx, {
+    title: ctx.share.name,
+    introHtml: descriptionToHtml(ctx.view.project.intro)
+  })}${renderCompleteListing(ctx, '0')}`
+  return renderShareShell(ctx, `${ctx.share.name} · KindraAPI 文档`, main)
 }
 
 function renderPasswordPage(share: DocShare, error = false): string {
@@ -1112,6 +1292,16 @@ function mdCell(value: unknown): string {
 function mdDocumentationTable(headings: string[], rows: string[][]): string {
   return '| ' + headings.map(mdCell).join(' | ') + ' |\n| ' + headings.map(() => '---').join(' | ') + ' |\n' + rows.map(row => '| ' + row.map(mdCell).join(' | ') + ' |').join('\n') + '\n'
 }
+
+function descriptionToMarkdown(value: string): string {
+  const html = descriptionToHtml(value)
+  const text = htmlToText(html)
+  const images = [...html.matchAll(/<img\b[^>]*\bsrc=(?:"([^"]+)"|'([^']+)')[^>]*>/gi)].map(
+    (match) => `![](${htmlToText(match[1] ?? match[2])})`
+  )
+  return [text, ...images].filter(Boolean).join('\n\n')
+}
+
 function mdParams(title: string, params: Param[]): string {
   const list = activeParams(params)
   return list.length ? '\n**' + title + '**\n\n' + mdDocumentationTable(['参数', '类型', '值', ...RULE_HEADINGS], list.map(p => [p.key, p.field_type || '待补充', p.field_type === 'file' ? fileNameOf(p.value) : p.value, ...ruleCells(p)])) : ''
@@ -1136,7 +1326,7 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
     lines.push('```http')
     lines.push(documentedRequestExample(stored))
     lines.push('```', '')
-    const descriptionText = htmlToText(descriptionToHtml(api.description ?? ''))
+    const descriptionText = descriptionToMarkdown(api.description ?? '')
     if (descriptionText) lines.push(descriptionText, '')
     for (const warning of modelDocumentationWarnings(stored)) lines.push(`> 模型定义待修复，相关字段可能不完整：${mdCell(warning.message)}`, '')
 
@@ -1148,8 +1338,12 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
       lines.push(mdParams('Cookie 参数', request?.cookie?.parameter ?? []))
     }
 
-    if (settings.show_body && request?.body) {
+    if (settings.show_request && settings.show_body && request?.body) {
       const body = request.body
+      const warnings = view.warnings.requestBodies.get(api.target_id) ?? []
+      if (warnings.length) {
+        lines.push(`> **${mdCell(warningText(warnings, body.raw ?? body.json ?? ''))}**`, '')
+      }
       if (body.mode === 'none') lines.push('**请求体**：无请求体', '')
       if (body.mode === 'urlencoded' || body.mode === 'formdata') {
         lines.push(
@@ -1179,12 +1373,57 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
         const code = example.expect?.code ?? 200
         const name = example.expect?.name || ''
         lines.push(`### 响应 ${code}${name ? ` · ${name}` : ''}`, '')
+        const warnings =
+          view.warnings.responseExamples.get(
+            responseWarningKey(api.target_id, example.example_id)
+          ) ?? []
+        if (warnings.length) {
+          lines.push(`> **${mdCell(warningText(warnings, example.raw ?? ''))}**`, '')
+        }
         if (settings.show_headers) {
           lines.push(mdParams('响应头', example.headers ?? example.raw_parameter ?? []))
           lines.push(mdParams('Cookie', example.cookies ?? []))
         }
         lines.push('```json', pretty(example.raw ?? '') || '', '```', '')
         lines.push(mdFieldDocs(buildFieldRows(example.raw ?? '', example.field_docs ?? []).exportedRows, '响应字段说明'))
+        if (settings.show_request && example.request) {
+          lines.push('**示例请求**', '', '```http')
+          lines.push(`${example.request.method || ''} ${example.request.url || ''}`.trim(), '```')
+          lines.push(mdParams('请求头', example.request.headers ?? []))
+          if (settings.show_body && example.request.body) {
+            lines.push('**请求体**', '', '```json', pretty(example.request.body), '```', '')
+          }
+        }
+      }
+    }
+
+    if (settings.show_design) {
+      const errors = api.design?.errors ?? []
+      if (errors.length) {
+        lines.push('### 设计 · 错误码', '', '| Code | 说明 | 备注 |', '| --- | --- | --- |')
+        for (const error of errors) {
+          lines.push(
+            `| ${mdCell(error.code)} | ${mdCell(error.message)} | ${mdCell(error.description)} |`
+          )
+        }
+        lines.push('')
+      }
+    }
+
+    if (settings.show_cases) {
+      const cases = (api.cases ?? []).filter((item) => item.is_enabled !== 0)
+      if (cases.length) {
+        lines.push('### 接口用例', '', '| 用例 | 说明 | 断言 |', '| --- | --- | --- |')
+        for (const item of cases) {
+          const assertions = (item.assertions ?? [])
+            .filter((assertion) => assertion.is_enabled !== 0)
+            .map(assertionText)
+            .join('；')
+          lines.push(
+            `| ${mdCell(item.name)} | ${mdCell(item.description)} | ${mdCell(assertions || '—')} |`
+          )
+        }
+        lines.push('')
       }
     }
 
@@ -1239,9 +1478,9 @@ function urlToOpenApiPath(raw?: string): string {
   return value || '/'
 }
 
-function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown> | null {
-  if (!share.settings.openapi) return null
+function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown> {
   const apis = view.targets.filter((target) => target.target_type === 'api')
+  const settings = share.settings
   const paths: Record<string, Record<string, unknown>> = {}
   const servers = new Set<string>()
 
@@ -1257,9 +1496,22 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
       }
     }
     const path = urlToOpenApiPath(api.url)
+    const description = htmlToText(descriptionToHtml(api.description ?? ''))
+    const requestWarnings =
+      settings.show_request && settings.show_body
+        ? (view.warnings.requestBodies.get(api.target_id) ?? [])
+        : []
     const operation: Record<string, unknown> = {
       summary: api.name || path,
-      description: htmlToText(descriptionToHtml(api.description ?? '')) || undefined,
+      description:
+        [
+          description,
+          requestWarnings.length
+            ? warningText(requestWarnings, api.request?.body?.raw ?? api.request?.body?.json ?? '')
+            : ''
+        ]
+          .filter(Boolean)
+          .join('\n\n') || undefined,
       parameters: [] as Record<string, unknown>[],
       responses: {} as Record<string, unknown>
     }
@@ -1280,13 +1532,15 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
         })
       }
     }
-    addParams(api.request?.restful?.parameter, 'path')
-    addParams(api.request?.query?.parameter, 'query')
-    addParams(api.request?.header?.parameter, 'header')
-    addParams(api.request?.cookie?.parameter, 'cookie')
+    if (settings.show_request) {
+      addParams(api.request?.restful?.parameter, 'path')
+      addParams(api.request?.query?.parameter, 'query')
+      addParams(api.request?.header?.parameter, 'header')
+      addParams(api.request?.cookie?.parameter, 'cookie')
+    }
 
     const body = api.request?.body
-    if (body) {
+    if (settings.show_request && settings.show_body && body) {
       if (body.mode === 'urlencoded' || body.mode === 'formdata') {
         const params = activeParams(body.mode === 'formdata' ? body.formdata : body.urlencoded)
         if (params.length) {
@@ -1310,9 +1564,9 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
           }
         }
       } else if (body.mode !== 'none' && body.mode !== 'binary') {
-        const raw = body.mode === 'json' ? body.raw ?? body.json : body.raw
+        const raw = (body.mode === 'json' ? body.raw ?? body.json : body.raw) ?? ''
         const fieldDocs = body.field_docs ?? []
-        if (raw && raw.trim()) {
+        if ((raw && raw.trim()) || requestWarnings.length) {
           let example: unknown = raw
           let schema: Record<string, unknown> = { type: 'string' }
           try {
@@ -1344,15 +1598,16 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
 
     const examples = api.response?.example ?? []
     const responses = operation.responses as Record<string, unknown>
-    if (examples.length === 0) {
+    if (!settings.show_response || examples.length === 0) {
       responses['200'] = { description: 'Successful response' }
     } else {
       for (const example of examples) {
         const code = String(example.expect?.code ?? 200)
-        let bodyValue: unknown = example.raw ?? ''
+        const raw = example.raw ?? ''
+        let bodyValue: unknown = raw
         let schema: Record<string, unknown> = { type: 'string' }
         try {
-          bodyValue = JSON.parse(example.raw ?? '')
+          bodyValue = JSON.parse(raw)
           schema = schemaForExample(bodyValue)
         } catch {
           // keep string
@@ -1360,9 +1615,35 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
         const built = buildFieldSchema(example.raw ?? '', example.field_docs ?? [])
         if (built.ok && built.hasFields) schema = built.schema
         const contentType = example.expect?.content_type || 'application/json'
+        const warnings =
+          view.warnings.responseExamples.get(
+            responseWarningKey(api.target_id, example.example_id)
+          ) ?? []
+        const headers = settings.show_headers
+          ? Object.fromEntries(
+              activeParams(example.headers ?? example.raw_parameter ?? [])
+                .filter((param) => param.key)
+                .map((param) => [
+                  param.key,
+                  {
+                    description: param.description || undefined,
+                    schema: { type: 'string' },
+                    example: param.value || undefined
+                  }
+                ])
+            )
+          : {}
         const response = (responses[code] ??= {
-          description: example.expect?.name || 'Response', content: {}
-        }) as { content: Record<string, Record<string, any>> }
+          description: [example.expect?.name || 'Response', warnings.length ? warningText(warnings, raw) : '']
+            .filter(Boolean)
+            .join('\n\n'),
+          ...(Object.keys(headers).length ? { headers } : {}),
+          content: {}
+        }) as {
+          description: string
+          headers?: Record<string, unknown>
+          content: Record<string, Record<string, any>>
+        }
         const media = response.content[contentType]
         if (!media) response.content[contentType] = { schema, ...(example.raw !== undefined ? { example: bodyValue } : {}) }
         else {
@@ -1416,6 +1697,8 @@ function buildZipLayout(view: ShareView, rootFolderId?: string): ZipLayout {
   const files = new Map<string, string>()
   const pages: Array<{ target: Target; file: string }> = []
   const used = new Map<string, Set<string>>()
+  // 每份 ZIP 都有根 index.html，接口不能占用这个路径（含大小写变体）。
+  used.set('', new Set(['index']))
 
   const unique = (dir: string, base: string): string => {
     const set = used.get(dir) ?? new Set<string>()
@@ -1520,12 +1803,129 @@ function buildZip(
   return createZip(entries.map((entry) => ({ path: `${root}/${entry.path}`, data: entry.data })))
 }
 
-function buildSingleApiHtml(share: DocShare, view: ShareView, apiId: string): string | null {
-  const layout = buildZipLayout(view)
-  const ctx = offlineCtx(share, view, layout, 'index.html')
-  return renderApiPage(ctx, apiId)
+function folderSelectionView(view: ShareView, folderId: string): ShareView | null {
+  const root = view.byId.get(folderId)
+  if (!root || root.target_type !== 'folder') return null
+  const ids = new Set<string>()
+  const walk = (id: string): void => {
+    if (ids.has(id)) return
+    ids.add(id)
+    for (const child of view.byParent.get(id) ?? []) walk(child.target_id)
+  }
+  walk(folderId)
+  return buildShareView(view.share, {
+    project: view.project,
+    targets: view.targets.filter((target) => ids.has(target.target_id)),
+    rootId: folderId,
+    notFound: false
+  })
 }
 
+function apiSelectionView(view: ShareView, apiId: string): ShareView | null {
+  const api = view.byId.get(apiId)
+  if (!api || api.target_type !== 'api') return null
+  return buildShareView(view.share, {
+    project: view.project,
+    targets: [api],
+    rootId: apiId,
+    notFound: false
+  })
+}
+
+export function produceShareContent(
+  share: DocShare,
+  intent: ShareContentIntent
+): ShareContentResult {
+  const view = loadShareView(share)
+  if (!view) return { kind: 'not-found' }
+  if (intent.type === 'zip') {
+    const scoped =
+      intent.selection.type === 'folder'
+        ? folderSelectionView(view, intent.selection.targetId)
+        : view
+    if (!scoped) return { kind: 'not-found' }
+    return {
+      kind: 'success',
+      bytes: buildZip(
+        share,
+        scoped,
+        intent.selection.type === 'folder' ? intent.selection.targetId : undefined
+      ),
+      contentType: 'application/zip',
+      filename: downloadName(share, 'zip')
+    }
+  }
+  if (intent.type === 'html') {
+    const scoped =
+      intent.selection.type === 'api'
+        ? apiSelectionView(view, intent.selection.targetId)
+        : view
+    if (!scoped) return { kind: 'not-found' }
+    const html = renderCompleteHtmlPage({
+      share,
+      view: scoped,
+      offline: true,
+      singleFile: true,
+      currentFile: 'index.html',
+      fileOf: null
+    })
+    if (!html) return { kind: 'not-found' }
+    return {
+      kind: 'success',
+      bytes: Buffer.from(html, 'utf8'),
+      contentType: 'text/html; charset=utf-8',
+      filename:
+        intent.selection.type === 'api'
+          ? `${sanitizeSegment(scoped.targets[0].name, 'api')}.html`
+          : downloadName(share, 'html')
+    }
+  }
+  if (intent.type === 'markdown') {
+    const scoped =
+      intent.selection.type === 'api'
+        ? apiSelectionView(view, intent.selection.targetId)
+        : view
+    if (!scoped) return { kind: 'not-found' }
+    return {
+      kind: 'success',
+      bytes: Buffer.from(buildMarkdown(share, scoped), 'utf8'),
+      contentType: 'text/markdown; charset=utf-8',
+      filename:
+        intent.selection.type === 'api'
+          ? `${sanitizeSegment(scoped.targets[0].name, 'api')}.md`
+          : downloadName(share, 'md')
+    }
+  }
+  if (intent.type === 'openapi') {
+    if (!share.settings.openapi) return { kind: 'openapi-disabled' }
+    const spec = buildOpenApi(share, view)
+    return {
+      kind: 'success',
+      bytes: Buffer.from(JSON.stringify(spec, null, 2), 'utf8'),
+      contentType: 'application/json; charset=utf-8',
+      filename: downloadName(share, 'openapi.json')
+    }
+  }
+  const ctx: RenderCtx = {
+    share,
+    view,
+    offline: false,
+    currentFile: '',
+    fileOf: null
+  }
+  const html =
+    intent.selection.type === 'share'
+      ? renderShareIndexPage(ctx)
+      : intent.selection.type === 'folder'
+        ? renderFolderPage(ctx, intent.selection.targetId)
+        : renderApiPage(ctx, intent.selection.targetId)
+  if (!html) return { kind: 'not-found' }
+  return {
+    kind: 'success',
+    bytes: Buffer.from(html, 'utf8'),
+    contentType: 'text/html; charset=utf-8'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Routing
@@ -1572,6 +1972,24 @@ function loadShareView(share: DocShare): ShareView | null {
   return buildShareView(share, store.resolveDocShareTargets(share.project_id, share))
 }
 
+function sendContentResult(res: http.ServerResponse, result: ShareContentResult): void {
+  if (result.kind === 'not-found') {
+    sendHtml(res, 404, renderMessagePage('分享内容不存在', '该目标不存在或不在分享范围内。', 404))
+    return
+  }
+  if (result.kind === 'openapi-disabled') {
+    sendText(res, 403, '该分享未开启 OpenAPI 访问')
+    return
+  }
+  if (result.filename) {
+    sendAttachment(res, result.bytes, result.contentType, result.filename)
+    return
+  }
+  res.statusCode = 200
+  res.setHeader('Content-Type', result.contentType)
+  res.end(result.bytes)
+}
+
 function handleDownload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -1587,120 +2005,43 @@ function handleDownload(
     sendHtml(res, 401, renderPasswordPage(share))
     return
   }
-  const view = loadShareView(share)
-  if (!view) {
-    sendHtml(res, 404, renderMessagePage('分享内容不存在', '该分享的目标可能已被删除。', 404))
-    return
-  }
 
+  let intent: ShareContentIntent
   if (scope.folderId) {
-    const folder = view.byId.get(scope.folderId)
-    if (!folder || folder.target_type !== 'folder') {
-      sendHtml(res, 404, renderMessagePage('目录不存在', '该目录可能已被删除。', 404))
-      return
-    }
     if ((url.searchParams.get('format') || 'zip').toLowerCase() !== 'zip') {
       sendText(res, 400, '文件夹仅支持 ZIP 下载')
       return
     }
-    sendAttachment(
-      res,
-      buildZip(share, view, folder.target_id),
-      'application/zip',
-      downloadName(share, 'zip')
-    )
-    return
-  }
-
-  if (scope.apiId) {
-    const api = view.byId.get(scope.apiId)
-    if (!api || api.target_type !== 'api') {
-      sendHtml(res, 404, renderMessagePage('接口不存在', '该接口可能已被删除。', 404))
-      return
-    }
+    intent = { type: 'zip', selection: { type: 'folder', targetId: scope.folderId } }
+  } else if (scope.apiId) {
     const format = (url.searchParams.get('format') || 'html').toLowerCase()
-    if (format === 'md' || format === 'markdown') {
-      const subView: ShareView = {
-        ...view,
-        targets: [api],
-        byParent: new Map([['0', [api]]]),
-        byId: new Map([[api.target_id, api]])
-      }
-      sendAttachment(
-        res,
-        buildMarkdown(share, subView),
-        'text/markdown; charset=utf-8',
-        `${sanitizeSegment(api.name, 'api')}.md`
-      )
+    if (format !== 'html' && format !== 'md' && format !== 'markdown') {
+      sendText(res, 400, '不支持的导出格式')
       return
     }
-    if (format === 'html') {
-      const html = buildSingleApiHtml(share, view, api.target_id)
-      if (!html) {
-        sendHtml(res, 404, renderMessagePage('接口不存在', '该接口可能已被删除。', 404))
-        return
-      }
-      sendAttachment(
-        res,
-        html,
-        'text/html; charset=utf-8',
-        `${sanitizeSegment(api.name, 'api')}.html`
-      )
+    intent = {
+      type: format === 'html' ? 'html' : 'markdown',
+      selection: { type: 'api', targetId: scope.apiId }
+    }
+  } else {
+    const format = (
+      url.searchParams.get('format') ||
+      (url.searchParams.get('scope') === 'all' ? 'zip' : 'md')
+    ).toLowerCase()
+    if (!['zip', 'html', 'md', 'markdown', 'openapi'].includes(format)) {
+      sendText(res, 400, '不支持的导出格式')
       return
     }
-    sendText(res, 400, '不支持的导出格式')
-    return
+    intent =
+      format === 'zip'
+        ? { type: 'zip', selection: { type: 'share' } }
+        : format === 'html'
+          ? { type: 'html', selection: { type: 'share' } }
+          : format === 'openapi'
+            ? { type: 'openapi', selection: { type: 'share' } }
+            : { type: 'markdown', selection: { type: 'share' } }
   }
-
-  const format = (
-    url.searchParams.get('format') ||
-    (url.searchParams.get('scope') === 'all' ? 'zip' : 'md')
-  ).toLowerCase()
-
-  if (format === 'zip') {
-    sendAttachment(
-      res,
-      buildZip(share, view),
-      'application/zip',
-      downloadName(share, 'zip')
-    )
-    return
-  }
-  if (format === 'openapi') {
-    const spec = buildOpenApi(share, view)
-    if (!spec) {
-      sendText(res, 403, '该分享未开启 OpenAPI 访问')
-      return
-    }
-    sendAttachment(
-      res,
-      JSON.stringify(spec, null, 2),
-      'application/json; charset=utf-8',
-      downloadName(share, 'openapi.json')
-    )
-    return
-  }
-  if (format === 'html') {
-    const layout = buildZipLayout(view)
-    const html = renderShareIndexPage(offlineCtx(share, view, layout, 'index.html'))
-    sendAttachment(
-      res,
-      html ?? '',
-      'text/html; charset=utf-8',
-      downloadName(share, 'html')
-    )
-    return
-  }
-  if (format === 'md' || format === 'markdown') {
-    sendAttachment(
-      res,
-      buildMarkdown(share, view),
-      'text/markdown; charset=utf-8',
-      downloadName(share, 'md')
-    )
-    return
-  }
-  sendText(res, 400, '不支持的导出格式')
+  sendContentResult(res, produceShareContent(share, intent))
 }
 
 async function handleShare(
@@ -1751,28 +2092,12 @@ async function handleShare(
     sendHtml(res, 401, renderPasswordPage(share, url.searchParams.get('e') === '1'))
     return
   }
-  const view = loadShareView(share)
-  if (!view) {
-    sendHtml(res, 404, renderMessagePage('分享内容不存在', '该分享的目标可能已被删除。', 404))
-    return
-  }
-  const ctx: RenderCtx = {
-    share,
-    view,
-    offline: false,
-    currentFile: '',
-    fileOf: null
-  }
-  const html = isIndex
-    ? renderShareIndexPage(ctx)
+  const selection: ShareSelection = isIndex
+    ? { type: 'share' }
     : folderMatch
-      ? renderFolderPage(ctx, folderMatch[1])
-      : renderApiPage(ctx, apiMatch![1])
-  if (!html) {
-    sendHtml(res, 404, renderMessagePage('页面不存在', '该页面可能已被删除。', 404))
-    return
-  }
-  sendHtml(res, 200, html)
+      ? { type: 'folder', targetId: folderMatch[1] }
+      : { type: 'api', targetId: apiMatch![1] }
+  sendContentResult(res, produceShareContent(share, { type: 'page', selection }))
 }
 
 async function handleRequest(
