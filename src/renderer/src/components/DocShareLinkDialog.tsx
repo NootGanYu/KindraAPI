@@ -99,6 +99,13 @@ export default function DocShareLinkDialog({ share, onClose }: Props): JSX.Eleme
             >
               HTML
             </Button>
+            <Button
+              icon={<DownloadOutlined />}
+              disabled={!url}
+              onClick={() => void open(`${url}/download?format=zip`)}
+            >
+              ZIP
+            </Button>
             {share.openapi ? (
               <Button
                 icon={<DownloadOutlined />}

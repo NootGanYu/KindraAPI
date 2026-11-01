@@ -21,6 +21,11 @@
 `target_type = "folder"` 的 Target，只用于组织与继承。
 目录实体与接口实体的 `target_type` 必须各自一致。
 
+**DocShare（文档分享）**
+按选定 Target 集合对外发布文档的实体；分享范围与所选目标共同决定可访问及可导出的内容边界。
+字段标识：`share_id`、`scope`、`target_ids`。
+_Avoid_: 项目文档（指单个分享时）、导出范围（指分享范围时）
+
 **Request（请求定义）**
 API 上的 `request` 对象：auth / header / query / restful / cookie / body / 前后置任务。
 
