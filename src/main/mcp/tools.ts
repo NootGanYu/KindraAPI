@@ -29,7 +29,7 @@ import {
   createRequest
 } from '@shared/factories'
 import * as store from '../storage/store'
-import { apiDocumentationProperties, successSchema, writeApiDocumentation, patchSuccessResponse, patchParams, patchBody, documentationIssues } from './apiDocumentation'
+import { apiDocumentationProperties, HTTP_URL_DESCRIPTION, successSchema, writeApiDocumentation, patchSuccessResponse, patchParams, patchBody, documentationIssues } from './apiDocumentation'
 import { resolveDocumentedTarget, responseDocs } from '../docs/definition'
 import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
@@ -324,7 +324,7 @@ function executeSummary(record: Awaited<ReturnType<typeof sendRequest>>): Record
 const TOOLS: ToolDefinition[] = [
   {
     name: 'upsert_api',
-    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义；同时尽量写明 type、required、nullable、enum 及枚举含义。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单；写入后应继续处理 documentation.issues。',
+    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义；同时尽量写明 type、required、nullable、enum 及枚举含义。url 必须填写完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单；写入后应继续处理 documentation.issues。',
     requires_write: true, requires_execute: false,
     input_schema: schema(apiDocumentationProperties, ['project_id']),
     handler: args => writeApiDocumentation(args)
@@ -454,7 +454,7 @@ const TOOLS: ToolDefinition[] = [
         parent_id: { type: 'string', description: '父目录 ID，根为 0' },
         name: { type: 'string', description: '接口名称' },
         method: { type: 'string', description: 'HTTP 方法，默认 GET' },
-        url: { type: 'string', description: '接口地址，可含 {{baseUrl}}' },
+        url: { type: 'string', description: HTTP_URL_DESCRIPTION },
         description: { type: 'string', description: '接口说明' }
       },
       ['project_id', 'name']
@@ -497,7 +497,7 @@ const TOOLS: ToolDefinition[] = [
         target_id: S.target,
         name: { type: 'string' },
         method: { type: 'string', description: 'GET / POST / PUT / PATCH / DELETE 等' },
-        url: { type: 'string', description: '完整地址，或含 {{baseUrl}} 的地址' },
+        url: { type: 'string', description: HTTP_URL_DESCRIPTION },
         headers: {
           type: 'array',
           description: '覆盖 Header 参数列表',
@@ -2622,8 +2622,8 @@ for (const name of ['create_api', 'update_api']) {
     const legacyCreate = tool.handler
     tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies
       ? writeApiDocumentation(args, true) : legacyCreate(args, config)
-    tool.description += '必须填写接口说明 description；完整文档推荐 upsert_api，也可传入 body、success_response 和参数列表一次创建。每个已知字段都应填写 description。'
-  } else tool.description = '增量更新接口与字段文档。必须填写或保留接口说明 description，并为每个已知字段填写业务含义；未传保留，remove/unset 显式删除。字段结构同 upsert_api，写入后检查 documentation.issues。'
+    tool.description += '必须填写接口说明 description；URL 必须是完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。完整文档推荐 upsert_api，也可传入 body、success_response 和参数列表一次创建。每个已知字段都应填写 description。'
+  } else tool.description = '增量更新接口与字段文档。必须填写或保留接口说明 description，并为每个已知字段填写业务含义；URL 必须使用完整的 http:// 或 https:// 地址。未传保留，remove/unset 显式删除。字段结构同 upsert_api，写入后检查 documentation.issues。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))

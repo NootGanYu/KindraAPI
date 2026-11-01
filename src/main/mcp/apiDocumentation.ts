@@ -46,10 +46,13 @@ export const successSchema = { type: 'object', properties: {
   content_type: { type: 'string' }, raw: { description: '可选响应示例；对象或 JSON 字符串' },
   field_docs: fieldDocsSchema, model_id: { type: ['string', 'null'] }
 }, additionalProperties: false }
+export const HTTP_URL_DESCRIPTION =
+  '完整 HTTP(S) 请求地址，必须包含 http:// 或 https://、主机名和路径；不要只填写 /path。项目使用环境前缀时可写 {{baseUrl}}/path，但要确保 baseUrl 会解析为完整地址。'
 export const apiDocumentationProperties = {
   project_id: { type: 'string' }, target_id: { type: 'string', description: '更新已有接口的 ID' },
   source_key: { type: 'string', description: '项目内稳定且唯一的代码标识，如 OrderController.detail；重复调用更新同一接口。新建必需。' },
-  name: { type: 'string' }, method: { type: 'string' }, url: { type: 'string' },
+  name: { type: 'string' }, method: { type: 'string' },
+  url: { type: 'string', description: HTTP_URL_DESCRIPTION },
   description: { type: 'string', description: '接口说明。新建接口时必须填写；更新时省略保留原值' },
   parent_id: { type: 'string' },
   headers: paramsSchema, query: paramsSchema, paths: paramsSchema, cookies: paramsSchema,

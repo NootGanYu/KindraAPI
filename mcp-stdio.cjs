@@ -140,7 +140,8 @@ async function handle(message) {
         '2. 创建目录时必须填写目录说明 description；补充已有目录或接口说明时，可使用 move_target 的 description。\n' +
         '3. 字段应尽量明确 type、required、nullable、enum 及 enum_descriptions。不要根据字段名或示例值猜测业务含义；无法确定时保留未知并向用户说明待补充。\n' +
         '4. 写入后检查返回的 documentation.complete 与 documentation.issues，补齐能从现有信息确定的项；仍有未知项时在最终回复中逐项列出。\n' +
-        '5. 创建或更新数据模型时，同样填写模型说明与每个 schema 字段的 description。'
+        '5. 创建或更新数据模型时，同样填写模型说明与每个 schema 字段的 description。\n' +
+        '6. 接口 URL 必须填写完整的 http:// 或 https:// 地址，包含主机名与路径，不要只写 /path。项目使用环境前缀时可写 {{baseUrl}}/path，但必须确保 baseUrl 会解析为完整地址。'
     })
     return
   }
