@@ -1,7 +1,7 @@
 {
   "name": "kindraapi",
   "productName": "KindraAPI",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "KindraAPI — local-first API client with request history, flow automation and MCP",
   "main": "./out/main/index.js",
   "author": "KindraAPI",
@@ -11,6 +11,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "test:documentation": "esbuild scripts/documentation-smoke.ts --bundle --platform=node --format=cjs --external:electron --external:postman-runtime --external:postman-collection --external:mqtt --external:aedes --alias:@shared=./src/shared --outfile=scripts/.documentation-smoke.cjs && electron scripts/.documentation-smoke.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",

@@ -390,6 +390,14 @@ function NodeRow({
               maxTagCount={1}
             />
           )}
+          {enumValues.length > 0 && <Input.TextArea
+            aria-label="枚举值含义"
+            placeholder="每个枚举值的含义，每行一条"
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            disabled={disabled}
+            value={Array.isArray(schema['x-enum-descriptions']) ? schema['x-enum-descriptions'].join('\n') : ''}
+            onChange={event => patch({ 'x-enum-descriptions': event.target.value.split('\n') })}
+          />}
         </span>
         <span style={{ flex: 1, minWidth: 160 }}>
           <DictionarySuggest

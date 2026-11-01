@@ -5,6 +5,7 @@ release/
 
 # Generated smoke-test bundle
 scripts/.smoke.cjs
+scripts/.documentation-smoke.cjs
 scripts/.ui-artifacts/
 
 # Local analysis artifacts extracted from the original app

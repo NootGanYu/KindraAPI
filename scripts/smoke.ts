@@ -464,7 +464,7 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 70, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 71, 'mcp tool list')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -651,10 +651,8 @@ async function main(): Promise<void> {
     Record<string, unknown>
   >
   assert(
-    writtenDocs.length === 1 &&
-      writtenDocs[0].path === 'meta.note' &&
-      writtenDocs[0].doc_only === true,
-    'mcp field docs full replace'
+    writtenDocs.some(doc => doc.path === 'meta.note' && doc.doc_only === true) && writtenDocs.length > 1,
+    'mcp field docs incremental merge'
   )
 
   // MCP · 目录 / 接口结构管理
@@ -993,7 +991,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 70, 'stdio tools/list')
+  assert(stdioTools.result?.tools?.length === 71, 'stdio tools/list')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}
@@ -1086,9 +1084,9 @@ async function main(): Promise<void> {
   )
   assert(
     Array.isArray(bodySchema?.required) &&
-      bodySchema.required.includes('user') &&
+      !bodySchema.required.includes('user') &&
       bodySchema.required.includes('amount'),
-    'openapi required propagation'
+    'openapi required only applies within the containing object'
   )
   assert(!bodySchema?.properties?.removed, 'openapi excludes orphan field docs')
   assert(bodySchema?.properties?.tags?.items?.type === 'string', 'openapi array items')
@@ -1187,8 +1185,10 @@ async function main(): Promise<void> {
   )
   const zipPath = path.join(tmp, 'share.zip')
   fs.writeFileSync(zipPath, zipBuf)
-  const unzipTest = execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' })
-  assert(unzipTest.includes('No errors detected'), 'zip integrity')
+  const unzipTest = process.platform === 'win32'
+    ? execFileSync('tar', ['-tf', zipPath], { encoding: 'utf8' })
+    : execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' })
+  assert(process.platform === 'win32' ? unzipTest.includes('index.html') : unzipTest.includes('No errors detected'), 'zip integrity')
   assert(zipBuf.includes(Buffer.from('index.html', 'utf8')), 'zip index entry')
   assert(
     zipBuf.includes(Buffer.from('改名接口.html', 'utf8')),

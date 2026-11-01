@@ -558,7 +558,7 @@ export async function sendRequest(
   const runtimeUrl = runtimeRequest?.url?.toString?.() ?? resolved.url
   const method = runtimeRequest?.method ?? resolved.method
   const requestBody =
-    runtimeRequest?.body?.mode === 'raw' ? runtimeRequest.body.raw : runtimeRequest?.body?.toJSON?.()
+    !runtimeRequest?.body?.mode ? undefined : runtimeRequest.body.mode === 'raw' ? runtimeRequest.body.raw : runtimeRequest.body.toJSON?.()
 
   let responseSnapshot: SendRecord['response'] = null
   if (runtimeResponse) {

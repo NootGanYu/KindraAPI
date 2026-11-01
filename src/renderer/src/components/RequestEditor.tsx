@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { modelDocumentation } from './schemas/modelDocumentation'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
   Button,
@@ -117,12 +118,14 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     test: ''
   } as RequestModel)
 
+  const latestRequest = useRef(request)
+  latestRequest.current = request
   const setRequest = (patch: Partial<RequestModel>): void => {
-    onChange({ request: { ...request, ...patch } })
+    onChange({ request: { ...latestRequest.current, ...patch } })
   }
 
   const setBody = (patch: Partial<RequestModel['body']>): void => {
-    setRequest({ body: { ...(request.body ?? createBody()), ...patch } })
+    setRequest({ body: { ...(latestRequest.current.body ?? createBody()), ...patch } })
   }
 
   useEffect(() => {
@@ -146,6 +149,15 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   )
   const modelMissing = Boolean(bodyModel) && !referencedModel
 
+  useEffect(() => {
+    if (!bodyModel || !projectId) return
+    let active = true
+    modelDocumentation(projectId, bodyModel).then(documentation => {
+      if (active) setBody(documentation)
+    }).catch(error => { if (active) message.error(error.message) })
+    return () => { active = false }
+  }, [bodyModel, projectId])
+
   const clearModelRef = (): void => {
     const current = request.body ?? createBody()
     const next = { ...current }
@@ -164,6 +176,8 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   }
 
   const selectModel = async (model: ModelSummary): Promise<void> => {
+    const documentation = await modelDocumentation(projectId, model.model_id).catch(error => { message.error(error.message); return null })
+    if (!documentation) return
     const result = await window.api.models.generateExample(projectId, model.model_id)
     if (!result.ok) {
       message.error(result.error)
@@ -174,7 +188,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     }
     setBody({
       mode: 'json',
-      raw: JSON.stringify(result.data.value, null, 2),
+      ...documentation,
       model_id: model.model_id
     })
     setPickerOpen(false)

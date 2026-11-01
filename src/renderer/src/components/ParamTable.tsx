@@ -1,3 +1,4 @@
+import FieldRulesEditor from './FieldRulesEditor'
 import { useState } from 'react'
 import type { DragEvent } from 'react'
 import { App as AntApp, Button, Checkbox, Input, Select, Tooltip } from 'antd'
@@ -159,6 +160,7 @@ export default function ParamTable({
                 />
               </div>
               <div className="param-td param-name" style={{ display: 'flex', gap: 4 }}>
+                {showDescription && <FieldRulesEditor value={{ ...param, type: param.field_type }} onChange={({ type, ...rules }) => update(index, { ...rules, field_type: type })} />}
                 {allowFile ? (
                   <Select
                     size="small"

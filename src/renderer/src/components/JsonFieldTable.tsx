@@ -1,3 +1,5 @@
+import FieldRulesEditor from './FieldRulesEditor'
+import { RULE_KEYS } from '@shared/fieldRules'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -42,7 +44,7 @@ const TYPE_OPTIONS: Array<{ value: JsonFieldType | '__auto__'; label: string }> 
 ]
 
 function docHasMeaning(doc: FieldDoc): boolean {
-  return Boolean(doc.type || doc.required || (doc.description && doc.description.trim()) || doc.doc_only)
+  return Boolean(doc.type || doc.doc_only || RULE_KEYS.some(key => doc[key] !== undefined))
 }
 
 function upsertDoc(
@@ -91,7 +93,7 @@ function ValueCell({
   }, [row.pointer, row.valueText, row.type])
 
   if (!row.present) {
-    return <span className="muted">（未出现在请求体）</span>
+    return <span className="muted">（未出现在示例中）</span>
   }
   if (row.wildcard) {
     if (row.sameValue && row.type !== 'object' && row.type !== 'array') {
@@ -423,7 +425,7 @@ export default function JsonFieldTable({
         </div>
 
         {visibleRows.map((row) => {
-          const items = menuItems(row)
+          const items = valuesReadOnly ? [] : menuItems(row)
           return (
             <div
               className={`json-field-row${row.orphan ? ' is-orphan' : ''}${
@@ -481,6 +483,8 @@ export default function JsonFieldTable({
               </div>
               <div className="json-field-cell json-field-required">
                 <Checkbox
+                  disabled={valuesReadOnly}
+                  indeterminate={row.doc?.required === undefined}
                   checked={row.required}
                   onChange={(event) => updateDoc(row.pointer, { required: event.target.checked })}
                 />
@@ -489,12 +493,14 @@ export default function JsonFieldTable({
                 <Input.TextArea
                   variant="borderless"
                   autoSize={{ minRows: 1, maxRows: 4 }}
+                  disabled={valuesReadOnly}
                   value={row.description}
                   placeholder="字段含义"
                   onChange={(event) => updateDoc(row.pointer, { description: event.target.value })}
                 />
               </div>
-              <div className="json-field-cell json-field-actions">
+              <div className="json-field-cell json-field-actions" style={{ minWidth: 80 }}>
+                <FieldRulesEditor value={{ ...row.doc, type: row.type }} disabled={valuesReadOnly} onChange={rules => updateDoc(row.pointer, rules as Partial<FieldDoc>)} />
                 {items.length > 0 ? (
                   <Dropdown
                     trigger={['click']}

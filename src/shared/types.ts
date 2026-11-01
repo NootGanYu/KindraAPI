@@ -2,7 +2,18 @@ export type TargetType = 'folder' | 'api'
 
 export type BodyMode = 'none' | 'raw' | 'json' | 'urlencoded' | 'formdata' | 'binary'
 
-export interface Param {
+export interface FieldRules {
+  required?: boolean
+  nullable?: boolean
+  description?: string
+  /** null 明确表示没有枚举限制；未提供表示待补充。 */
+  enum?: unknown[] | null
+  enum_descriptions?: string[]
+  default?: unknown
+  example?: unknown
+}
+
+export interface Param extends FieldRules {
   param_id: string
   key: string
   value: string
@@ -53,7 +64,7 @@ export type JsonFieldType =
  * JSON 请求体的字段文档。pointer 使用内部 JSON Pointer，数组任意下标记为 `*`。
  * 值与原始结构仍以 body.raw 为准，这里只保存无法从 JSON 推导的信息。
  */
-export interface FieldDoc {
+export interface FieldDoc extends FieldRules {
   pointer: string
   type?: JsonFieldType
   required?: boolean
@@ -91,6 +102,7 @@ export interface RequestModel {
 }
 
 export interface ResponseExampleRequest {
+  body_mode?: string
   method?: string
   url?: string
   headers?: Param[]
@@ -99,6 +111,8 @@ export interface ResponseExampleRequest {
 
 export interface ResponseExample {
   example_id: string
+  /** 成功响应字段定义，独立于 raw 示例保存。 */
+  field_docs?: FieldDoc[]
   expect?: {
     name?: string
     code?: string | number
@@ -191,6 +205,8 @@ export interface CaseRunSummary {
 }
 
 export interface Target {
+  /** 编码 Agent 提供的项目内稳定标识，用于重复写入。 */
+  source_key?: string
   target_id: string
   target_type: TargetType
   parent_id: string

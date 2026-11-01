@@ -1,3 +1,5 @@
+import { ruleCells, rulesToSchema } from '@shared/fieldRules'
+import { documentedRequestExample, modelDocumentationWarnings, resolveDocumentedTarget } from './definition'
 import crypto from 'node:crypto'
 import http from 'node:http'
 import os from 'node:os'
@@ -319,7 +321,7 @@ function pretty(raw: string | undefined): string {
 }
 
 function activeParams(params?: Param[]): Param[] {
-  return (params ?? []).filter((param) => param.is_checked !== 0 && (param.key || param.value))
+  return (params ?? []).filter((param) => (param.key || param.value))
 }
 
 // ---------------------------------------------------------------------------
@@ -508,21 +510,12 @@ function fileNameOf(filePath: string): string {
   return parts[parts.length - 1] || filePath
 }
 
+function renderDocumentationTable(headings: string[], rows: string[][]): string {
+  return '<div style="overflow-x:auto"><table><thead><tr>' + headings.map(h => '<th>' + escapeHtml(h) + '</th>').join('') + '</tr></thead><tbody>' + rows.map(row => '<tr>' + row.map(cell => '<td>' + escapeHtml(cell).replace(/\n/g, '<br>') + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>'
+}
+const RULE_HEADINGS = ['必填/必有', '可为 null', '说明', '枚举及含义', '默认值', '示例值']
 function renderParamTable(params: Param[], showValue = true): string {
-  const rows = params
-    .map((param) => {
-      const value =
-        param.field_type === 'file' && param.value
-          ? fileNameOf(param.value)
-          : param.value
-      return `<tr>
-<td class="mono">${escapeHtml(param.key)}</td>
-${showValue ? `<td class="mono">${value ? escapeHtml(value) : '<span class="muted">—</span>'}</td>` : ''}
-<td>${escapeHtml(param.description || '')}</td>
-</tr>`
-    })
-    .join('')
-  return `<table><thead><tr><th>参数名</th>${showValue ? '<th>值</th>' : ''}<th>说明</th></tr></thead><tbody>${rows}</tbody></table>`
+  return renderDocumentationTable(['参数名', '类型', ...(showValue ? ['值'] : []), ...RULE_HEADINGS], params.map(p => [p.key, p.field_type || '待补充', ...(showValue ? [p.field_type === 'file' ? fileNameOf(p.value) : p.value] : []), ...ruleCells(p)]))
 }
 
 function renderParamGroup(title: string, params: Param[]): string {
@@ -531,19 +524,9 @@ function renderParamGroup(title: string, params: Param[]): string {
   return `<h4>${escapeHtml(title)}</h4>${renderParamTable(list)}`
 }
 
-function renderFieldDocsTable(rows: JsonFieldRow[]): string {
-  if (rows.length === 0) return ''
-  const body = rows
-    .map(
-      (row) => `<tr>
-<td class="mono">${escapeHtml(row.path || row.name)}</td>
-<td>${escapeHtml(typeLabel(row))}</td>
-<td>${row.effectiveRequired ? '是' : '否'}</td>
-<td>${escapeHtml(row.description || '').replace(/\n/g, '<br>')}</td>
-</tr>`
-    )
-    .join('')
-  return `<h4>请求体字段说明</h4><table><thead><tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr></thead><tbody>${body}</tbody></table>`
+function renderFieldDocsTable(rows: JsonFieldRow[], title = '请求体字段说明'): string {
+  if (!rows.length) return ''
+  return '<h4>' + escapeHtml(title) + '</h4>' + renderDocumentationTable(['字段', '类型', ...RULE_HEADINGS], rows.map(row => [row.path || row.name, row.type, ...ruleCells({ ...row.doc, example: row.doc?.example !== undefined ? row.doc.example : row.value })]))
 }
 
 function renderResponseExample(example: ResponseExample, settings: DocSettings): string {
@@ -570,12 +553,14 @@ function renderResponseExample(example: ResponseExample, settings: DocSettings):
       ? `<h4>请求头</h4>${renderParamTable(snapshotHeaders)}`
       : ''
   const snapshotBodyBlock =
-    settings.show_request && settings.show_body && request?.body
-      ? `<h4>请求体</h4><pre>${escapeHtml(pretty(request.body))}</pre>`
+    settings.show_request && settings.show_body && request
+      ? request.body_mode === 'none' || !request.body
+        ? '<h4>请求体</h4><p class="muted">无请求体</p>'
+        : `<h4>请求体${request.body_mode === undefined ? '（历史记录）' : ''}</h4><pre>${escapeHtml(pretty(request.body))}</pre>`
       : ''
   const requestBlock =
     settings.show_request && request
-      ? `<details class="raw-request"><summary>查看示例请求</summary>
+      ? `<details class="raw-request"><summary>查看历史调用（字段规则以上方定义为准）</summary>
 <p class="muted mono" style="margin:8px 0 0">${escapeHtml(
           `${request.method || ''} ${request.url || ''}`.trim()
         )}</p>
@@ -589,8 +574,8 @@ ${name ? `<span class="name">${escapeHtml(name)}</span>` : ''}
 ${contentType ? `<span class="ctype mono">${escapeHtml(contentType)}</span>` : ''}
 </div>
 <div class="example-body">
-${raw ? `<pre>${escapeHtml(pretty(raw))}</pre>` : '<span class="muted">（空响应体）</span>'}
-${headerBlock}${cookieBlock}${requestBlock}
+${raw ? `<pre>${escapeHtml(pretty(raw))}</pre>` : '<span class="muted">暂未提供响应体示例</span>'}
+${renderFieldDocsTable(buildFieldRows(raw, example.field_docs ?? []).exportedRows, '响应字段说明')}${headerBlock}${cookieBlock}${requestBlock}
 </div>
 </div>`
 }
@@ -600,6 +585,7 @@ function renderBody(target: Target, settings: DocSettings): string {
   const body = target.request?.body
   if (!body) return ''
   const mode = body.mode || 'none'
+  if (mode === 'none') return '<h4>请求体</h4><p class="muted">无请求体</p>'
 
   if (mode === 'urlencoded' || mode === 'formdata') {
     const params = activeParams(mode === 'formdata' ? body.formdata : body.urlencoded)
@@ -614,7 +600,7 @@ function renderBody(target: Target, settings: DocSettings): string {
   }
   const raw = mode === 'json' ? body.raw ?? body.json : body.raw
   const fieldRows =
-    mode === 'json' && (body.field_docs?.length ?? 0) > 0
+    mode === 'json'
       ? buildFieldRows(raw ?? '', body.field_docs ?? []).exportedRows
       : []
   const fieldTable = renderFieldDocsTable(fieldRows)
@@ -693,6 +679,9 @@ function renderCasesSection(target: Target): string {
 }
 
 function renderApi(target: Target, settings: DocSettings, apiHref?: string): string {
+  const requestExample = documentedRequestExample(target)
+  const modelWarnings = modelDocumentationWarnings(target)
+  target = resolveDocumentedTarget(target)
   const method = methodClass(target.method)
   const label = methodText(target.method)
   const request = target.request
@@ -710,7 +699,7 @@ function renderApi(target: Target, settings: DocSettings, apiHref?: string): str
   const bodyBlock = renderBody(target, settings)
   const requestSection =
     paramBlock || bodyBlock
-      ? `<div class="api-block"><h3>请求</h3>${paramBlock}${bodyBlock}</div>`
+      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}</div>`
       : ''
 
   const responseSection = settings.show_response
@@ -743,6 +732,7 @@ ${target.description ? `<div class="api-desc">${descriptionToHtml(target.descrip
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
     target.url || '（未设置 URL）'
   )}</div>
+${modelWarnings.length ? `<div class="api-block"><h3>模型定义待修复</h3><p>以下引用暂时无法解析，相关字段可能不完整：</p>${modelWarnings.map(warning => `<p>${escapeHtml(warning.message)}</p>`).join('')}</div>` : ''}
 ${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}
 </section>`
 }
@@ -1119,31 +1109,15 @@ function mdCell(value: unknown): string {
     .replace(/\r?\n/g, '<br>')
 }
 
+function mdDocumentationTable(headings: string[], rows: string[][]): string {
+  return '| ' + headings.map(mdCell).join(' | ') + ' |\n| ' + headings.map(() => '---').join(' | ') + ' |\n' + rows.map(row => '| ' + row.map(mdCell).join(' | ') + ' |').join('\n') + '\n'
+}
 function mdParams(title: string, params: Param[]): string {
   const list = activeParams(params)
-  if (list.length === 0) return ''
-  return `\n**${title}**\n\n| 参数 | 值 | 说明 |\n| --- | --- | --- |\n${list
-    .map((param) => {
-      const value =
-        param.field_type === 'file' && param.value
-          ? fileNameOf(param.value)
-          : param.value
-      return `| ${mdCell(param.key)} | ${mdCell(value)} | ${mdCell(param.description)} |`
-    })
-    .join('\n')}\n`
+  return list.length ? '\n**' + title + '**\n\n' + mdDocumentationTable(['参数', '类型', '值', ...RULE_HEADINGS], list.map(p => [p.key, p.field_type || '待补充', p.field_type === 'file' ? fileNameOf(p.value) : p.value, ...ruleCells(p)])) : ''
 }
-
-function mdFieldDocs(rows: JsonFieldRow[]): string {
-  if (rows.length === 0) return ''
-  const body = rows
-    .map(
-      (row) =>
-        `| ${mdCell(row.path || row.name)} | ${mdCell(typeLabel(row))} | ${
-          row.effectiveRequired ? '是' : '否'
-        } | ${mdCell(row.description || '')} |`
-    )
-    .join('\n')
-  return `\n**请求体字段说明**\n\n| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | --- | --- |\n${body}\n`
+function mdFieldDocs(rows: JsonFieldRow[], title = '请求体字段说明'): string {
+  return rows.length ? '\n**' + title + '**\n\n' + mdDocumentationTable(['字段', '类型', ...RULE_HEADINGS], rows.map(row => [row.path || row.name, row.type, ...ruleCells({ ...row.doc, example: row.doc?.example !== undefined ? row.doc.example : row.value })])) : ''
 }
 
 function buildMarkdown(share: DocShare, view: ShareView): string {
@@ -1155,14 +1129,16 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
   lines.push(`> 有效期：${store.docShareExpireInfo(share).expire_label}`, '')
 
   const apis = view.targets.filter((target) => target.target_type === 'api')
-  for (const api of apis) {
+  for (const stored of apis) {
+    const api = resolveDocumentedTarget(stored)
     const method = methodText(api.method)
     lines.push(`## ${method} ${api.name}`, '')
     lines.push('```http')
-    lines.push(`${method} ${api.url || ''}`)
+    lines.push(documentedRequestExample(stored))
     lines.push('```', '')
     const descriptionText = htmlToText(descriptionToHtml(api.description ?? ''))
     if (descriptionText) lines.push(descriptionText, '')
+    for (const warning of modelDocumentationWarnings(stored)) lines.push(`> 模型定义待修复，相关字段可能不完整：${mdCell(warning.message)}`, '')
 
     const request = api.request
     if (settings.show_request) {
@@ -1174,6 +1150,7 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
 
     if (settings.show_body && request?.body) {
       const body = request.body
+      if (body.mode === 'none') lines.push('**请求体**：无请求体', '')
       if (body.mode === 'urlencoded' || body.mode === 'formdata') {
         lines.push(
           mdParams(
@@ -1186,7 +1163,7 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
       } else {
         const raw = body.mode === 'json' ? body.raw ?? body.json : body.raw
         if (raw) lines.push('**请求体**', '', '```json', pretty(raw), '```', '')
-        if (body.mode === 'json' && (body.field_docs?.length ?? 0) > 0) {
+        if (body.mode === 'json') {
           const result = buildFieldRows(raw ?? '', body.field_docs ?? [])
           if (result.ok) lines.push(mdFieldDocs(result.exportedRows))
         }
@@ -1207,6 +1184,7 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
           lines.push(mdParams('Cookie', example.cookies ?? []))
         }
         lines.push('```json', pretty(example.raw ?? '') || '', '```', '')
+        lines.push(mdFieldDocs(buildFieldRows(example.raw ?? '', example.field_docs ?? []).exportedRows, '响应字段说明'))
       }
     }
 
@@ -1267,7 +1245,8 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
   const paths: Record<string, Record<string, unknown>> = {}
   const servers = new Set<string>()
 
-  for (const api of apis) {
+  for (const stored of apis) {
+    const api = resolveDocumentedTarget(stored)
     const method = (api.method || 'GET').toLowerCase()
     if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method)) continue
     if (api.url && /^https?:\/\//i.test(api.url)) {
@@ -1294,10 +1273,10 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
         parameters.push({
           name: param.key,
           in: where,
-          required: where === 'path',
+          required: where === 'path' ? true : param.required,
           description: param.description || undefined,
-          schema: { type: 'string' },
-          example: param.value || undefined
+          schema: { type: param.field_type || 'string', ...rulesToSchema(param) },
+          example: param.example !== undefined ? param.example : param.value || undefined
         })
       }
     }
@@ -1318,10 +1297,11 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
                 : 'application/x-www-form-urlencoded']: {
                 schema: {
                   type: 'object',
+                  required: params.filter(p => p.required).map(p => p.key),
                   properties: Object.fromEntries(
                     params.map((param) => [
                       param.key,
-                      { type: 'string', description: param.description || undefined }
+                      { type: param.field_type === 'file' ? 'string' : param.field_type || 'string', ...(param.field_type === 'file' ? { format: 'binary' } : {}), ...rulesToSchema(param) }
                     ])
                   )
                 }
@@ -1337,7 +1317,7 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
           let schema: Record<string, unknown> = { type: 'string' }
           try {
             example = JSON.parse(raw)
-            if (body.mode === 'json' && fieldDocs.length > 0) {
+            if (body.mode === 'json') {
               const built = buildFieldSchema(raw, fieldDocs)
               schema = built.ok ? built.schema : schemaForExample(example)
             } else {
@@ -1355,7 +1335,7 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
           const built = buildFieldSchema('', fieldDocs)
           if (built.ok && built.hasFields) {
             operation.requestBody = {
-              content: { 'application/json': { schema: built.schema, example: {} } }
+              content: { 'application/json': { schema: built.schema } }
             }
           }
         }
@@ -1377,10 +1357,20 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
         } catch {
           // keep string
         }
+        const built = buildFieldSchema(example.raw ?? '', example.field_docs ?? [])
+        if (built.ok && built.hasFields) schema = built.schema
         const contentType = example.expect?.content_type || 'application/json'
-        responses[code] = {
-          description: example.expect?.name || 'Response',
-          content: { [contentType]: { schema, example: bodyValue } }
+        const response = (responses[code] ??= {
+          description: example.expect?.name || 'Response', content: {}
+        }) as { content: Record<string, Record<string, any>> }
+        const media = response.content[contentType]
+        if (!media) response.content[contentType] = { schema, ...(example.raw !== undefined ? { example: bodyValue } : {}) }
+        else {
+          if (!media.examples) {
+            media.examples = { default: { value: media.example } }
+            delete media.example
+          }
+          media.examples[example.example_id] = { summary: example.expect?.name, value: bodyValue }
         }
       }
     }

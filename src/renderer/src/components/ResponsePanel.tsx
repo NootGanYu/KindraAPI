@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { App as AntApp, Tag, Tooltip } from 'antd'
+import JsonFieldTable from './JsonFieldTable'
+import { fieldDocsFromSchema, mergeFieldDocs } from '@shared/jsonFields'
+import { exampleFromRecord } from '../store'
+import { modelDocumentation } from './schemas/modelDocumentation'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { App as AntApp, Input, Select, Tag, Tooltip } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
 import type { ModelSummary, Param, ResponseExample, SendRecord } from '@shared/types'
 import { createId } from '@shared/factories'
@@ -15,7 +19,7 @@ interface Props {
   onChangeExamples?: (examples: ResponseExample[]) => void
 }
 
-const TABS = ['实时响应', '响应头', 'Cookie', '响应示例', '实际请求', '控制台']
+const TABS = ['实时响应', '响应头', 'Cookie', '响应示例', '字段说明', '实际请求', '控制台']
 
 function pretty(text: string): string {
   try {
@@ -95,6 +99,7 @@ export default function ResponsePanel({
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelWarning, setModelWarning] = useState('')
+  const [selectedExample, setSelectedExample] = useState<string>()
 
   const response = record?.response ?? null
   const ok = response && !record?.error
@@ -115,7 +120,9 @@ export default function ResponsePanel({
     }
   }
   const example =
-    (examples ?? []).find((item) => item.expect?.is_default === 1) ?? (examples ?? [])[0] ?? null
+    (examples ?? []).find(item => item.example_id === selectedExample) ?? (examples ?? []).find((item) => item.expect?.is_default === 1) ?? (examples ?? [])[0] ?? null
+  const latestExamples = useRef(examples)
+  latestExamples.current = examples
   const toRows = (params?: Param[]): Array<[string, string]> =>
     (params ?? []).map((item) => [item.key, item.value])
 
@@ -143,25 +150,15 @@ export default function ResponsePanel({
   useEffect(() => {
     if (!exampleModelId || !projectId || !onChangeExamples || !example) return
     let active = true
-    window.api.models
-      .generateExample(projectId, exampleModelId)
+    modelDocumentation(projectId, exampleModelId)
       .then((result) => {
         if (!active) return
-        if (!result.ok) {
-          setModelWarning(result.error)
-          return
-        }
-        setModelWarning(result.data.warnings[0]?.message ?? '')
-        const raw = JSON.stringify(result.data.value, null, 2)
-        if (raw !== (example.raw ?? '')) {
-          onChangeExamples(
-            (examples ?? []).map((item) =>
-              item.example_id === example.example_id ? { ...item, raw } : item
-            )
-          )
+        setModelWarning('')
+        if (result.raw !== (example.raw ?? '') || JSON.stringify(result.field_docs) !== JSON.stringify(example.field_docs)) {
+          onChangeExamples((latestExamples.current ?? []).map(item => item.example_id === example.example_id ? { ...item, ...result } : item))
         }
       })
-      .catch(() => undefined)
+      .catch(error => setModelWarning(error.message))
     return () => {
       active = false
     }
@@ -170,6 +167,8 @@ export default function ResponsePanel({
 
   const selectExampleModel = async (model: ModelSummary): Promise<void> => {
     if (!projectId) return
+    const documentation = await modelDocumentation(projectId, model.model_id).catch(error => { message.error(error.message); return null })
+    if (!documentation) return
     const result = await window.api.models.generateExample(projectId, model.model_id)
     if (!result.ok) {
       message.error(result.error)
@@ -196,7 +195,7 @@ export default function ResponsePanel({
         is_default: 1,
         model_id: model.model_id
       },
-      raw: JSON.stringify(result.data.value, null, 2)
+      ...documentation
     }
     const nextList = example
       ? (examples ?? []).map((item) =>
@@ -230,7 +229,38 @@ export default function ResponsePanel({
     })
   }
 
+  const changeExample = (patch: Partial<ResponseExample>): void => {
+    const next: ResponseExample = { ...(example ?? { example_id: createId('ex'), expect: { name: '成功', code: 200, content_type: 'application/json', is_default: 1 } }), ...patch }
+    if (patch.field_docs && next.expect) {
+      next.expect = { ...next.expect }
+      delete next.expect.schema
+    }
+    onChangeExamples?.(example ? (examples ?? []).map(item => item.example_id === example.example_id ? next : item) : [...(examples ?? []), next])
+    setSelectedExample(next.example_id)
+  }
+  const saveRecordedExample = (replace: boolean): void => {
+    if (!record?.response || !onChangeExamples) return
+    if (record.response.code < 200 || record.response.code >= 300) { message.warning('当前仅维护成功响应'); return }
+    if (replace && exampleModelId) { message.warning('请先解除模型引用，再更新示例'); return }
+    const captured = exampleFromRecord(record)
+    captured.field_docs = mergeFieldDocs(fieldDocsFromSchema(example?.expect?.schema), example?.field_docs).map(doc => ({ ...doc, doc_only: true }))
+    if (replace && example) {
+      const next = { ...example, ...captured, example_id: example.example_id, expect: { ...example.expect, ...captured.expect } }
+      onChangeExamples((examples ?? []).map(item => item.example_id === example.example_id ? next : item))
+      setSelectedExample(example.example_id)
+    } else { onChangeExamples([...(examples ?? []), captured]); setSelectedExample(captured.example_id) }
+    setActiveTab('响应示例')
+  }
+
   const renderContent = (): JSX.Element => {
+    if (activeTab === '字段说明') {
+      return <div className="resp-filled">
+        {modelWarning && <div role="alert">{modelWarning}</div>}
+        {exampleModelId && <div>字段规则继承数据模型。<button className="mini" onClick={editExampleModel}>解除并编辑</button></div>}
+        <JsonFieldTable raw={example?.raw ?? ''} docs={mergeFieldDocs(fieldDocsFromSchema(example?.expect?.schema), example?.field_docs)} valuesReadOnly={Boolean(exampleModelId) || !onChangeExamples}
+          onChangeRaw={raw => changeExample({ raw })} onChangeDocs={field_docs => changeExample({ field_docs })} />
+      </div>
+    }
     if (activeTab === '响应示例') {
       const referenceBar =
         projectId && onChangeExamples ? (
@@ -270,7 +300,7 @@ export default function ResponsePanel({
             {referenceBar}
             <div className="resp-empty" style={{ paddingBottom: 0, minHeight: 180 }}>
               <RocketIllustration />
-              <span>暂无响应示例</span>
+              <span>暂无响应示例</span>{onChangeExamples && <button className="mini" onClick={() => { changeExample({ raw: '{}' }); setViewMode('raw') }}>新增成功响应</button>}
             </div>
           </div>
         )
@@ -292,7 +322,7 @@ export default function ResponsePanel({
           {viewMode === 'pretty' ? (
             <pre className="resp-code">{pretty(raw) || '(空响应示例)'}</pre>
           ) : viewMode === 'raw' ? (
-            <pre className="resp-code">{raw || '(空响应示例)'}</pre>
+            <Input.TextArea aria-label="响应示例 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={raw} readOnly={Boolean(exampleModelId) || !onChangeExamples} onChange={event => changeExample({ raw: event.target.value })} />
           ) : viewMode === 'preview' ? (
             <PreviewView mime={String(example.expect?.content_type ?? '')} body={raw} />
           ) : (
@@ -487,6 +517,8 @@ export default function ResponsePanel({
           </button>
         </div>
       ) : null}
+      {(activeTab === '响应示例' || activeTab === '字段说明') && (examples?.length ?? 0) > 0 && <Select aria-label="选择响应示例" value={example?.example_id} onChange={setSelectedExample} options={(examples ?? []).map(item => ({ value: item.example_id, label: (item.expect?.name ?? '成功') + ' · ' + (item.expect?.code ?? 200) }))} />}
+      {record?.response && onChangeExamples && activeTab === '实时响应' && <div className="resp-toolbar"><span>保存为响应示例：</span><button onClick={() => saveRecordedExample(false)}>新增</button><button disabled={!example} onClick={() => saveRecordedExample(true)}>更新当前示例（保留字段规则）</button></div>}
       {renderContent()}
 
       {projectId ? (

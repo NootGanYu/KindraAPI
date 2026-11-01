@@ -432,6 +432,7 @@ export function cloneTarget(projectId: string, targetId: string): Target {
   const now = new Date().toISOString()
   const cloned: Target = {
     ...cloneJson(source),
+    source_key: undefined,
     target_id: createId('t'),
     parent_id: source.parent_id,
     name: uniqueTargetName(projectId, source.parent_id, `${source.name} 副本`),

@@ -1,4 +1,5 @@
 import type { FieldDoc, JsonFieldType } from './types'
+import { RULE_KEYS, rulesFromSchema, rulesToSchema } from './fieldRules'
 
 const JSON_FIELD_TYPES: JsonFieldType[] = [
   'string',
@@ -244,6 +245,7 @@ export function collectJsonPaths(root: unknown): Map<string, JsonPathEntry> {
 // ---------------------------------------------------------------------------
 
 export interface JsonFieldRow {
+  doc?: FieldDoc
   pointer: string
   path: string
   name: string
@@ -507,21 +509,13 @@ function buildFieldModel(raw: string, docsInput: FieldDoc[]): FieldModel {
   for (const node of nodes.values()) {
     node.effectiveRequired = node.required
   }
-  for (const node of nodes.values()) {
-    if (!node.required) continue
-    let parent = node.parent
-    while (parent) {
-      const parentNode = nodes.get(parent)
-      if (parentNode) parentNode.effectiveRequired = true
-      parent = parentPointer(parent)
-    }
-  }
 
   const rows: JsonFieldRow[] = []
   const walk = (children: FieldNode[], depth: number): void => {
     const sorted = [...children].sort((left, right) => left.order - right.order)
     for (const node of sorted) {
       rows.push({
+        doc: node.doc,
         pointer: node.pointer,
         path: pointerToPath(node.pointer),
         name: node.token === '*' ? '[]' : node.token,
@@ -582,7 +576,6 @@ function selectExportRows(rows: JsonFieldRow[]): JsonFieldRow[] {
   const byPointer = new Map(rows.map((row) => [row.pointer, row]))
   for (const row of rows) {
     if (row.orphan) continue
-    if (!row.description.trim()) continue
     if (!(row.present || row.docOnly || row.synthetic)) continue
     selected.add(row.pointer)
     let parent = row.parent
@@ -705,6 +698,9 @@ export function normalizeFieldDocs(value: unknown): FieldDoc[] | null {
     }
     if (!pointer) continue
     const doc: FieldDoc = { pointer }
+    for (const key of RULE_KEYS) {
+      if (Object.hasOwn(source, key)) (doc as unknown as Record<string, unknown>)[key] = source[key]
+    }
     if (isJsonFieldType(source.type)) doc.type = source.type
     if (typeof source.required === 'boolean') doc.required = source.required
     if (typeof source.description === 'string') doc.description = source.description
@@ -794,12 +790,13 @@ export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDo
       seen.add(pointer)
       const source = node as Record<string, unknown>
       const doc = ensure(pointer)
+      Object.assign(doc, rulesFromSchema(source))
       const type = normalizeSchemaType(source)
       if (type) doc.type = type
       if (typeof source.description === 'string' && source.description.trim()) {
         doc.description = source.description.trim()
       }
-      if (rawPaths && !rawPaths.has(pointer)) doc.doc_only = true
+      doc.doc_only = true
     }
     const source = node as Record<string, unknown>
     const properties = source.properties
@@ -810,9 +807,9 @@ export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDo
       for (const [key, child] of Object.entries(properties as Record<string, unknown>)) {
         const childParts = [...parts, key]
         const childPointer = joinPointer(childParts)
-        if (required.has(key)) {
+        if (required.has(key) || !(child as Record<string, unknown>)?.['x-kindra-rules']) {
           const childDoc = ensure(childPointer)
-          childDoc.required = true
+          childDoc.required = required.has(key)
           if (rawPaths && !rawPaths.has(childPointer)) childDoc.doc_only = true
         }
         walk(child, childParts)
@@ -898,6 +895,7 @@ function schemaForNode(node: FieldNode, requiredSet: Set<string>): Record<string
   else schema = { anyOf: variants }
   if (nullable && !('nullable' in schema)) schema.nullable = true
   if (node.doc?.description?.trim()) schema.description = node.doc.description
+  Object.assign(schema, rulesToSchema(node.doc ?? {}))
   return schema
 }
 
@@ -927,11 +925,6 @@ export function buildFieldSchema(raw: string, docs: FieldDoc[]): FieldSchemaResu
   for (const node of model.nodes.values()) {
     if (node.orphan || !node.required) continue
     requiredSet.add(node.pointer)
-    let parent = node.parent
-    while (parent) {
-      requiredSet.add(parent)
-      parent = parentPointer(parent)
-    }
   }
   const schema = schemaForNode(model.rootNode, requiredSet)
   const hasFields = [...model.nodes.values()].some((node) => !node.orphan)

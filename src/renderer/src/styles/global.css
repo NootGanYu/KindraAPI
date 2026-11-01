@@ -4634,7 +4634,7 @@ button {
 }
 
 .json-field-actions {
-  width: 38px;
+  width: 80px;
   flex: none;
   justify-content: center;
 }

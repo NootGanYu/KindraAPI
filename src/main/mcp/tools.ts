@@ -1,3 +1,4 @@
+import { rulesFromSchema } from '@shared/fieldRules'
 import type {
   ApiCase,
   CaseAssertion,
@@ -23,9 +24,12 @@ import {
   createFlowEvent,
   createId,
   createParam,
+  createTarget,
   createRequest
 } from '@shared/factories'
 import * as store from '../storage/store'
+import { apiDocumentationProperties, successSchema, writeApiDocumentation, patchSuccessResponse, patchParams, patchBody, documentationIssues } from './apiDocumentation'
+import { resolveDocumentedTarget, responseDocs } from '../docs/definition'
 import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { applyRequestInput, runFlow } from '../flow/engine'
@@ -93,20 +97,10 @@ function apiTargetOf(args: Args): Target {
 
 /** 返回给 MCP 调用方时，为每个字段文档附带可读 path。 */
 function withDisplayFieldDocs(target: Target): Target {
-  const body = target.request?.body
-  if (!body?.field_docs?.length) return target
-  return {
-    ...target,
-    request: target.request
-      ? {
-          ...target.request,
-          body: {
-            ...body,
-            field_docs: body.field_docs.map((doc) => withDisplayPath(doc))
-          }
-        }
-      : target.request
-  }
+  const next = resolveDocumentedTarget(target)
+  if (next.request?.body.field_docs) next.request.body.field_docs = next.request.body.field_docs.map(withDisplayPath)
+  for (const example of next.response?.example ?? []) if (example.field_docs) example.field_docs = example.field_docs.map(withDisplayPath)
+  return next
 }
 
 function caseOf(target: Target, caseId: string): ApiCase {
@@ -327,6 +321,13 @@ function executeSummary(record: Awaited<ReturnType<typeof sendRequest>>): Record
 }
 
 const TOOLS: ToolDefinition[] = [
+  {
+    name: 'upsert_api',
+    description: '编码 Agent 首选：一次创建或增量更新完整接口文档（请求参数、成功响应、示例、枚举含义）。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单。',
+    requires_write: true, requires_execute: false,
+    input_schema: schema(apiDocumentationProperties, ['project_id']),
+    handler: args => writeApiDocumentation(args)
+  },
   {
     name: 'list_projects',
     description: '列出已在 MCP 授权列表中的项目。',
@@ -590,117 +591,7 @@ const TOOLS: ToolDefinition[] = [
       },
       ['project_id', 'target_id']
     ),
-    handler: (args) => {
-      const projectId = projectIdOf(args)
-      const target = store.getTarget(projectId, requiredStr(args, 'target_id'))
-      if (!target || target.target_type !== 'api') throw new Error('接口不存在')
-      const name = str(args, 'name')
-      if (name) target.name = name
-      const method = str(args, 'method').toUpperCase()
-      if (method) target.method = method
-      const url = str(args, 'url')
-      if (url) target.url = url
-      target.request = target.request ?? createRequest()
-
-      const toParams = (value: unknown): ReturnType<typeof createParam>[] | null => {
-        if (!Array.isArray(value)) return null
-        return value
-          .filter((item): item is Record<string, unknown> =>
-            Boolean(item) && typeof item === 'object'
-          )
-          .map((item) =>
-            createParam({
-              key: String(item.key ?? item.name ?? ''),
-              value: String(item.value ?? ''),
-              description: String(item.description ?? ''),
-              is_checked: item.checked === false ? -1 : 1
-            })
-          )
-          .filter((item) => item.key)
-      }
-      const slots: Array<[string, 'header' | 'query' | 'cookie' | 'restful']> = [
-        ['headers', 'header'],
-        ['query', 'query'],
-        ['cookies', 'cookie'],
-        ['paths', 'restful']
-      ]
-      for (const [argKey, slot] of slots) {
-        const params = toParams(args[argKey])
-        if (params) target.request[slot].parameter = params
-      }
-
-      const body = args.body as Record<string, unknown> | undefined
-      if (body && typeof body === 'object') {
-        if (typeof body.mode === 'string') {
-          target.request.body.mode = body.mode as typeof target.request.body.mode
-        }
-        if (typeof body.raw === 'string') {
-          let raw = body.raw
-          try {
-            const parsed = JSON.parse(raw)
-            if (parsed !== null && typeof parsed === 'object') {
-              raw = JSON.stringify(parsed, null, 2)
-            }
-          } catch {
-            // 保留非 JSON 原文
-          }
-          target.request.body.raw = raw
-        }
-        const params = toParams(body.parameters)
-        if (params) target.request.body.parameter = params
-        const fieldDocs = normalizeFieldDocs(body.field_docs)
-        if (fieldDocs) target.request.body.field_docs = fieldDocs
-      }
-
-      const auth = args.auth as Record<string, unknown> | undefined
-      if (auth && typeof auth === 'object' && typeof auth.type === 'string') {
-        const next: Record<string, unknown> = { type: auth.type }
-        if (auth.bearer && typeof auth.bearer === 'object') {
-          const bearer = auth.bearer as Record<string, unknown>
-          next.bearer = { key: String(bearer.key ?? '') }
-        }
-        if (auth.basic && typeof auth.basic === 'object') {
-          const basic = auth.basic as Record<string, unknown>
-          next.basic = {
-            username: String(basic.username ?? ''),
-            password: String(basic.password ?? '')
-          }
-        }
-        if (auth.kv && typeof auth.kv === 'object') {
-          const kv = auth.kv as Record<string, unknown>
-          next.kv = {
-            key: String(kv.key ?? ''),
-            value: String(kv.value ?? ''),
-            in: kv.in === 'query' ? 'query' : 'header'
-          }
-        }
-        target.request.auth = next as typeof target.request.auth
-      }
-
-      const example = args.response_example as Record<string, unknown> | undefined
-      if (example && typeof example === 'object') {
-        const raw =
-          typeof example.raw === 'string'
-            ? example.raw
-            : JSON.stringify(example.raw ?? {}, null, 2)
-        target.response = {
-          example: [
-            {
-              example_id: createId('ex'),
-              expect: {
-                name: String(example.name ?? '示例'),
-                code: (example.code as string | number | undefined) ?? 200,
-                content_type: String(example.content_type ?? 'application/json'),
-                is_default: 1
-              },
-              raw
-            }
-          ]
-        }
-      }
-
-      return { api: store.saveTarget(projectId, target) }
-    }
+    handler: args => writeApiDocumentation(args)
   },
   {
     name: 'move_target',
@@ -823,33 +714,39 @@ const TOOLS: ToolDefinition[] = [
             }
             updated += 1
           } else {
-            target = store.createTargetInProject(projectId, folderId, 'api')
+            target = createTarget(projectId, folderId, 'api')
             created += 1
           }
           target.name = op.summary || op.operationId || `${methodUpper} ${rawPath}`
-          target.description = op.description || ''
+          target.description = op.description ?? target.description ?? ''
           target.method = methodUpper
           target.url = url
-          const request = createRequest()
+          const request = structuredClone(target.request ?? createRequest())
           const params = [...pathLevelParams, ...(Array.isArray(op.parameters) ? op.parameters : [])]
           for (const param of params) {
             if (!param?.name) continue
+            const slot = ({ query: 'query', header: 'header', path: 'restful', cookie: 'cookie' } as const)[param.in as 'query' | 'header' | 'path' | 'cookie']
+            if (!slot) continue
+            const old = request[slot].parameter.find(item => item.key === String(param.name))
+            const importedRules = rulesFromSchema(param.schema ?? param)
             const entry = createParam({
+              ...old,
               key: String(param.name),
-              value: '',
-              description: String(param.description ?? ''),
-              is_checked: param.required ? 1 : -1
+              value: String(param.example ?? param.schema?.example ?? old?.value ?? ''),
+              ...importedRules,
+              description: String(param.description ?? param.schema?.description ?? old?.description ?? ''),
+              field_type: param.schema?.type ?? param.type ?? 'string',
+              required: param.in === 'path' ? true : param.schema?.['x-kindra-rules'] ? importedRules.required : param.required === true,
+              is_checked: 1
             })
-            if (param.in === 'query') request.query.parameter.push(entry)
-            else if (param.in === 'header') request.header.parameter.push(entry)
-            else if (param.in === 'path') request.restful.parameter.push(entry)
-            else if (param.in === 'cookie') request.cookie.parameter.push(entry)
+            request[slot].parameter = patchParams(request[slot].parameter, [entry], slot)
           }
           const bodySchema =
             op.requestBody?.content?.['application/json']?.schema ??
             params.find((param: any) => param?.in === 'body')?.schema
           if (bodySchema) {
-            const exampleValue = exampleFromSchema(bodySchema)
+            const jsonMedia = op.requestBody?.content?.['application/json']
+            const exampleValue = jsonMedia?.example ?? (Object.values(jsonMedia?.examples ?? {})[0] as any)?.value ?? exampleFromSchema(bodySchema)
             const fieldDocs = mergeFieldDocs(
               target.request?.body?.field_docs,
               fieldDocsFromSchema(bodySchema, exampleValue)
@@ -862,6 +759,20 @@ const TOOLS: ToolDefinition[] = [
             }
           }
           target.request = request
+          if (bodySchema) patchBody(target, { field_docs: request.body.field_docs })
+          for (const [mediaType, mode] of [['application/x-www-form-urlencoded', 'urlencoded'], ['multipart/form-data', 'formdata']] as const) {
+            const formSchema = op.requestBody?.content?.[mediaType]?.schema
+            if (!formSchema?.properties) continue
+            const fields = Object.entries(formSchema.properties).map(([key, value]) => {
+              const schema = value as any
+              const rules = rulesFromSchema(schema)
+              return { key, ...rules, type: schema.format === 'binary' ? 'file' : schema.type ?? 'string',
+                required: schema['x-kindra-rules'] ? rules.required : (formSchema.required ?? []).includes(key),
+                value: String(schema.example ?? '') }
+            })
+            patchBody(target, { mode, parameters: fields })
+            break
+          }
           const firstResponse = Object.entries(op.responses ?? {}).find(([code]) =>
             /^2\d\d$/.test(code)
           ) as [string, any] | undefined
@@ -869,30 +780,14 @@ const TOOLS: ToolDefinition[] = [
           const media = contentEntries[0] as [string, any] | undefined
           const mediaType = media?.[0] ?? 'application/json'
           const sample =
-            media?.[1]?.example ?? firstResponse?.[1]?.examples?.default?.value
-          const schema = media?.[1]?.schema
+            media?.[1]?.example ?? (Object.values(media?.[1]?.examples ?? {})[0] as any)?.value ?? firstResponse?.[1]?.examples?.default?.value
+          const schema = media?.[1]?.schema ?? firstResponse?.[1]?.schema
           if (firstResponse && (sample !== undefined || schema)) {
             const sampleValue = sample !== undefined ? sample : exampleFromSchema(schema)
-            target.response = {
-              example: [
-                {
-                  example_id: createId('ex'),
-                  expect: {
-                    name: '成功',
-                    code: firstResponse[0],
-                    content_type: mediaType,
-                    is_default: 1
-                  },
-                  raw:
-                    typeof sampleValue === 'string'
-                      ? sampleValue
-                      : JSON.stringify(sampleValue, null, 2)
-                }
-              ]
-            }
+            patchSuccessResponse(target, { name: firstResponse[1].description || '成功', code: firstResponse[0], content_type: mediaType, raw: sampleValue, field_docs: fieldDocsFromSchema(schema) })
           }
           store.saveTarget(projectId, target)
-          items.push({ method: methodUpper, url, name: target.name, action: match ? 'updated' : 'created' })
+          items.push({ target_id: target.target_id, method: methodUpper, url, name: target.name, action: match ? 'updated' : 'created', documentation: { issues: documentationIssues(target) } })
         }
       }
 
@@ -959,7 +854,7 @@ const TOOLS: ToolDefinition[] = [
       const record = await sendRequest(projectId, prepared, str(args, 'environment_id') || undefined)
       store.addSendRecord(projectId, record)
       let responseSaved = false
-      if (boolArg(args, 'save_response')) {
+      if (boolArg(args, 'save_response') && record.response && !record.error && record.response.code >= 200 && record.response.code < 300) {
         const fresh = store.getTarget(projectId, target.target_id)
         if (fresh) {
           const response = record.response
@@ -1002,7 +897,7 @@ const TOOLS: ToolDefinition[] = [
               : typeof snapshot.body === 'string'
                 ? snapshot.body
                 : JSON.stringify(snapshot.body, null, 2)
-          fresh.response = {
+          const captured = {
             example: [
               {
                 example_id: createId('ex'),
@@ -1017,6 +912,7 @@ const TOOLS: ToolDefinition[] = [
                 headers: responseHeaders,
                 cookies: responseCookies,
                 request: {
+                  body_mode: snapshot?.mode,
                   method: snapshot?.method,
                   url: snapshot?.url,
                   headers: toParamRows(snapshot?.headers ?? {}),
@@ -1025,6 +921,12 @@ const TOOLS: ToolDefinition[] = [
               }
             ]
           }
+          const existing = fresh.response?.example ?? []
+          const index = existing.findIndex(item => String(item.expect?.code ?? 200) === String(response?.code ?? 200) && !item.expect?.model_id)
+          const sample = captured.example[0]
+          if (index >= 0) existing[index] = { ...existing[index], ...sample, field_docs: responseDocs(existing[index]), example_id: existing[index].example_id, expect: { ...existing[index].expect, ...sample.expect } }
+          else existing.push(sample)
+          fresh.response = { ...fresh.response, example: existing }
           store.saveTarget(projectId, fresh)
           responseSaved = true
         }
@@ -2421,19 +2323,31 @@ const TOOLS: ToolDefinition[] = [
         }
       }
       if (args.request && typeof args.request === 'object') {
-        const request = args.request as Target['request']
-        const fieldDocs = normalizeFieldDocs(request?.body?.field_docs)
-        if (fieldDocs && request?.body) request.body.field_docs = fieldDocs
-        next.request = request
+        const request = args.request as any
+        next.request ??= createRequest()
+        for (const slot of ['header', 'query', 'restful', 'cookie'] as const) {
+          if (request[slot]?.parameter !== undefined) next.request[slot].parameter = patchParams(next.request[slot].parameter, request[slot].parameter, slot)
+        }
+        if (request.body) {
+          const body = { ...request.body }
+          if (body.formdata) body.parameters = body.formdata
+          if (body.urlencoded) body.parameters = body.urlencoded
+          patchBody(next, body)
+        }
+        if (request.auth) next.request.auth = { ...next.request.auth, ...request.auth }
+        for (const key of ['pre_script', 'test', 'pre_tasks', 'post_tasks'] as const) if (request[key] !== undefined) (next.request as any)[key] = request[key]
       }
       if (args.response && typeof args.response === 'object') {
-        next.response = args.response as Target['response']
+        for (const example of (args.response as any).example ?? []) {
+          patchSuccessResponse(next, { ...example.expect, ...(example.example_id ? { example_id: example.example_id } : {}), ...(Object.hasOwn(example, 'raw') ? { raw: example.raw } : {}), ...(example.field_docs || example.expect?.schema ? { field_docs: example.field_docs ?? fieldDocsFromSchema(example.expect.schema) } : {}) })
+        }
       }
       store.saveTarget(projectIdOf(args), next)
       return {
         target_id: next.target_id,
         description: next.description ?? '',
-        design: next.design ?? { errors: [] }
+        design: next.design ?? { errors: [] },
+        request: next.request, response: next.response, documentation: { issues: documentationIssues(next) }
       }
     }
   },
@@ -2683,6 +2597,20 @@ function sshFromArgs(value: unknown): DbSshConfig {
     private_key: String(raw.private_key ?? ''),
     passphrase: String(raw.passphrase ?? '')
   }
+}
+
+// Legacy entry points expose the same detailed authoring contract.
+for (const name of ['create_api', 'update_api']) {
+  const tool = TOOLS.find(item => item.name === name)!
+  const props = tool.input_schema.properties as Record<string, unknown>
+  Object.assign(props, apiDocumentationProperties)
+  props.response_example = successSchema
+  if (name === 'create_api') {
+    const legacyCreate = tool.handler
+    tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies
+      ? writeApiDocumentation(args, true) : legacyCreate(args, config)
+    tool.description += '完整文档推荐 upsert_api；也可传入 body、success_response 和参数列表一次创建。'
+  } else tool.description = '增量更新接口与字段文档；未传保留，remove/unset 显式删除。字段结构同 upsert_api。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))

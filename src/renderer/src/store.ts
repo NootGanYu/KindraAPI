@@ -70,7 +70,7 @@ function unwrap<T>(result: Result<T>): T {
   return result.data
 }
 
-function exampleFromRecord(record: SendRecord): ResponseExample {
+export function exampleFromRecord(record: SendRecord): ResponseExample {
   const response = record.response
   const headers = Object.entries(response?.headers ?? {}).map(([key, value]) =>
     createParam({ key, value: String(value) })
@@ -101,6 +101,7 @@ function exampleFromRecord(record: SendRecord): ResponseExample {
     headers,
     cookies,
     request: {
+      body_mode: record.request.mode,
       method: record.request.method,
       url: record.request.url,
       headers: Object.entries(record.request.headers ?? {}).map(([key, value]) =>
@@ -308,14 +309,7 @@ export const useApp = create<AppState>((set, get) => ({
     const project = get().project
     const draft = get().drafts[id]
     if (!project || !draft) return
-    const record = get().records[id]
-    const hasModelExample = (draft.response?.example ?? []).some(
-      (example) => Boolean(example.expect?.model_id)
-    )
-    const payload =
-      record?.response != null && !hasModelExample
-        ? { ...draft, response: { example: [exampleFromRecord(record)] } }
-        : draft
+    const payload = draft
     const saved = unwrap(await window.api.targets.save(project.project_id, payload))
     set((state) => ({
       drafts: { ...state.drafts, [id]: saved },
