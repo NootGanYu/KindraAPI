@@ -504,7 +504,10 @@ export const useApp = create<AppState>((set, get) => ({
       })
       await get().reloadTargets()
       await refreshOpenTarget(id, { local: true })
-    } finally { ownSaves.delete(operationId) }
+    } finally {
+      // 主进程的变更事件可能晚于 IPC 结果到达；保留一小段时间，避免把本次保存误判为外部更新。
+      setTimeout(() => ownSaves.delete(operationId), 2000)
+    }
   },
 
   syncTargets: async (event) => {

@@ -20,6 +20,8 @@ interface Props {
   keyPlaceholder?: string
   valuePlaceholder?: string
   showDescription?: boolean
+  /** 设计模式维护契约；调试模式只允许改值和勾选 */
+  mode?: 'design' | 'debug' | 'edit'
   /** form-data 模式：允许把某行切换为本地文件 */
   allowFile?: boolean
 }
@@ -43,11 +45,14 @@ export default function ParamTable({
   keyPlaceholder = '参数名',
   valuePlaceholder = '参数值',
   showDescription = true,
+  mode = 'edit',
   allowFile = false
 }: Props): JSX.Element {
   const { message } = AntApp.useApp()
   const [collapsed, setCollapsed] = useState(false)
   const projectId = useApp((state) => state.project?.project_id ?? '')
+  const debug = mode === 'debug'
+  const showDesc = showDescription && !debug
 
   const update = (index: number, patch: Partial<Param>): void => {
     onChange(params.map((param, i) => (i === index ? { ...param, ...patch } : param)))
@@ -135,7 +140,7 @@ export default function ParamTable({
       </div>
 
       {collapsed ? null : (
-        <div className={`param-table${showDescription ? '' : ' no-desc'}`}>
+        <div className={`param-table${showDesc ? '' : ' no-desc'}`}>
           <div className="param-tr param-thead">
             <div className="param-td param-check">
               <Checkbox
@@ -146,7 +151,7 @@ export default function ParamTable({
             </div>
             <div className="param-td param-name">参数名</div>
             <div className="param-td param-value">参数值</div>
-            {showDescription ? <div className="param-td param-desc">描述</div> : null}
+            {showDesc ? <div className="param-td param-desc">描述</div> : null}
           </div>
 
           {params.map((param, index) => (
@@ -160,7 +165,7 @@ export default function ParamTable({
                 />
               </div>
               <div className="param-td param-name" style={{ display: 'flex', gap: 4 }}>
-                {showDescription && <FieldRulesEditor value={{ ...param, type: param.field_type }} onChange={({ type, ...rules }) => update(index, { ...rules, field_type: type })} />}
+                {showDesc && <FieldRulesEditor value={{ ...param, type: param.field_type }} onChange={({ type, ...rules }) => update(index, { ...rules, field_type: type })} />}
                 {allowFile ? (
                   <Select
                     size="small"
@@ -240,7 +245,7 @@ export default function ParamTable({
                   />
                 )}
               </div>
-              {showDescription ? (
+              {showDesc ? (
                 <div className="param-td param-desc">
                   {projectId ? (
                     <DictionarySuggest

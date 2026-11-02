@@ -90,7 +90,7 @@ export default function ApisPage(): JSX.Element {
   const syncNotice = useApp(s => s.syncNotice)
 
   const [creating, setCreating] = useState(false)
-  const [mode, setMode] = useState<Mode>('调试')
+  const [mode, setMode] = useState<Mode>('设计')
   const [splitDir, setSplitDir] = useState<SplitDir>('vertical')
   const tabScrollRef = useRef<HTMLDivElement | null>(null)
   const [tabOverflow, setTabOverflow] = useState(false)
@@ -584,7 +584,7 @@ export default function ApisPage(): JSX.Element {
                         }
                         onBlur={() => void commitName()}
                         onPressEnter={(event) => {
-                          void commitName()
+                          // 交给 onBlur 统一提交，避免 Enter + blur 触发两次并发保存。
                           event.currentTarget.blur()
                         }}
                       />
@@ -645,6 +645,7 @@ export default function ApisPage(): JSX.Element {
                     >
                       <RequestEditor
                         key={editorKey} draft={active}
+                        mode="debug"
                         onChange={(patch) => patchDraft(active.target_id, patch)}
                       />
                     </Panel>
@@ -662,6 +663,8 @@ export default function ApisPage(): JSX.Element {
                           examples={active.response?.example}
                           loading={sendingId === active.target_id}
                           projectId={projectId}
+                          mode="debug"
+                          defaultTab="实时响应"
                           onChangeExamples={(examples) =>
                             patchDraft(active.target_id, {
                               response: { ...(active.response ?? {}), example: examples }
@@ -691,6 +694,7 @@ export default function ApisPage(): JSX.Element {
                   <DesignEditor
                     key={editorKey} draft={active}
                     projectId={projectId}
+                    onEditDescription={() => setDescOpen(true)}
                     onChange={(patch) => patchDraft(active.target_id, patch)}
                   />
                 ) : mode === '接口用例' ? (

@@ -10,9 +10,15 @@ interface Props {
   draft: Target
   projectId?: string
   onChange: (patch: Partial<Target>) => void
+  onEditDescription?: () => void
 }
 
-export default function DesignEditor({ draft, projectId, onChange }: Props): JSX.Element {
+export default function DesignEditor({
+  draft,
+  projectId,
+  onChange,
+  onEditDescription
+}: Props): JSX.Element {
   const errors = draft.design?.errors ?? []
 
   const setErrors = (next: DesignError[]): void => {
@@ -24,17 +30,27 @@ export default function DesignEditor({ draft, projectId, onChange }: Props): JSX
 
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '0 16px 32px' }}>
+      <div className="section-title">基本信息</div>
+      <div className="design-basic-row">
+        <span>详细说明</span>
+        <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
+        <span style={{ flex: 1 }} />
+        <Button size="small" type="text" onClick={onEditDescription}>
+          编辑
+        </Button>
+      </div>
+
       <CustomAttributeFields
         projectId={projectId}
         value={draft.custom_attributes}
         onChange={(custom_attributes) => onChange({ custom_attributes })}
       />
 
-      <div className="section-title">请求契约</div>
-      <RequestEditor draft={draft} onChange={onChange} />
+      <div className="section-title">预定义请求参数</div>
+      <RequestEditor draft={draft} onChange={onChange} mode="design" />
 
       <div className="section-title" style={{ marginTop: 8 }}>
-        响应契约
+        预定义响应期望
       </div>
       <div style={{ height: 380, border: '1px solid var(--line, #e8e2d7)', borderRadius: 8, overflow: 'hidden' }}>
         <ResponsePanel
@@ -42,6 +58,8 @@ export default function DesignEditor({ draft, projectId, onChange }: Props): JSX
           record={null}
           examples={draft.response?.example}
           projectId={projectId}
+          mode="design"
+          defaultTab="字段说明"
           onChangeExamples={(examples) =>
             onChange({ response: { ...(draft.response ?? {}), example: examples } })
           }
