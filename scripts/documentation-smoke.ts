@@ -63,6 +63,7 @@ async function main(): Promise<void> {
     assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.description.includes('每个已知')))
     assert(tools.result.tools.some((t: any) => t.name === 'create_folder' && t.inputSchema.properties.description))
     assert(tools.result.tools.some((t: any) => t.name === 'create_api' && t.inputSchema.properties.url.description.includes('主机名')))
+    assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.inputSchema.properties.custom_attributes.items.properties.value))
     const folder = await call('create_folder', { name: '文档目录', description: '订单相关接口' })
     assert.equal(folder.folder.description, '订单相关接口')
     const moved = await call('move_target', { target_id: folder.folder.target_id, description: '订单与支付接口' })
@@ -189,11 +190,19 @@ async function main(): Promise<void> {
         extra: [{ key: 'o1', label: '张三', value: 'zhangsan' }]
       })
     )
-    const apiRecord = store.getTarget(project.project_id, id)!
-    store.saveTarget(project.project_id, {
-      ...apiRecord,
-      custom_attributes: { [owner.attribute_id]: 'zhangsan' }
+    const withAttribute = await call('upsert_api', {
+      target_id: id,
+      custom_attributes: [{ attribute_id: owner.attribute_id, value: 'zhangsan' }]
     })
+    assert.equal(withAttribute.api.custom_attributes[owner.attribute_id], 'zhangsan', 'MCP writes custom attributes')
+    await assert.rejects(
+      () => call('upsert_api', { target_id: id, custom_attributes: [{ attribute_id: owner.attribute_id, value: 'nobody' }] }),
+      'invalid option rejected'
+    )
+    await assert.rejects(
+      () => call('upsert_api', { target_id: id, custom_attributes: [{ attribute_id: 'missing', value: 'x' }] }),
+      'unknown attribute rejected'
+    )
     store.updateDocShare(project.project_id, share.share_id, {
       name: share.name,
       scope: share.scope,
@@ -204,6 +213,11 @@ async function main(): Promise<void> {
     assert(attrHtml.includes('负责人') && attrHtml.includes('张三'), 'share page shows custom attributes')
     const attrMarkdown = await (await fetch(`${base}/download?format=md`)).text()
     assert(attrMarkdown.includes('负责人：张三'), 'markdown shows custom attributes')
+    const cleared = await call('upsert_api', {
+      target_id: id,
+      custom_attributes: [{ attribute_id: owner.attribute_id, value: null }]
+    })
+    assert.equal(cleared.api.custom_attributes[owner.attribute_id], undefined, 'null clears custom attribute')
     const other = store.createProjectWithDefaults('round-trip')
     store.saveMcpConfig({ ...config, allowed_project_ids: [project.project_id, other.project_id] })
     // The running server holds its config; restart after extending this isolated test's allow list.

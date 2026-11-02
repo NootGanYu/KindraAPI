@@ -1,4 +1,12 @@
-import type { BodyModel, FieldDoc, FieldRules, Param, ResponseExample, Target } from '@shared/types'
+import type {
+  BodyModel,
+  CustomAttribute,
+  FieldDoc,
+  FieldRules,
+  Param,
+  ResponseExample,
+  Target
+} from '@shared/types'
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import { buildFieldRows, normalizeFieldDocs, splitPointer, withDisplayPath } from '@shared/jsonFields'
 import { FIELD_TYPES, RULE_KEYS, validateRules } from '@shared/fieldRules'
@@ -46,6 +54,23 @@ export const successSchema = { type: 'object', properties: {
   content_type: { type: 'string' }, raw: { description: '可选响应示例；对象或 JSON 字符串' },
   field_docs: fieldDocsSchema, model_id: { type: ['string', 'null'] }
 }, additionalProperties: false }
+export const customAttributesSchema = {
+  type: 'array',
+  description:
+    '接口自定义属性。按 attribute_id 增量写入，未提交的属性保留；value 为 null 显式清除。只能写入项目已启用的属性，值类型必须与属性定义一致。',
+  items: {
+    type: 'object',
+    properties: {
+      attribute_id: { type: 'string', description: '项目自定义属性 ID，来自项目设置中的接口属性' },
+      value: {
+        description:
+          '属性值：文本/链接/邮箱/日期为字符串，数字为 number，单选为选项值字符串，多选为选项值字符串数组；null 清除该属性'
+      }
+    },
+    required: ['attribute_id'],
+    additionalProperties: false
+  }
+}
 export const HTTP_URL_DESCRIPTION =
   '完整 HTTP(S) 请求地址，必须包含 http:// 或 https://、主机名和路径；不要只填写 /path。项目使用环境前缀时可写 {{baseUrl}}/path，但要确保 baseUrl 会解析为完整地址。'
 export const apiDocumentationProperties = {
@@ -57,7 +82,8 @@ export const apiDocumentationProperties = {
   parent_id: { type: 'string' },
   headers: paramsSchema, query: paramsSchema, paths: paramsSchema, cookies: paramsSchema,
   body: bodySchema, success_response: successSchema,
-  auth: { type: 'object', description: '认证配置；省略保留' }
+  auth: { type: 'object', description: '认证配置；省略保留' },
+  custom_attributes: customAttributesSchema
 }
 
 function patchRules(previous: FieldRules, patch: Obj, path: string): FieldRules {
@@ -176,6 +202,74 @@ function validateFieldExamples(raw: string | undefined, docs: FieldDoc[], scope:
     const errors = validateRules({ ...doc, example: value }, doc.type, scope + doc.pointer)
     if (errors.length) throw new Error(errors.join('\n'))
   }
+}
+
+function normalizeCustomValue(
+  definition: CustomAttribute,
+  value: unknown
+): string | number | string[] {
+  const path = `custom_attributes.${definition.attribute_id}`
+  if (value === undefined) throw new Error(`${path}: 缺少 value`)
+  switch (definition.field_type) {
+    case 'number': {
+      const num = typeof value === 'number' ? value : Number(value)
+      if (!Number.isFinite(num)) throw new Error(`${path}: 必须是数字`)
+      return num
+    }
+    case 'radio': {
+      const text = string(value, path)
+      if (!definition.extra.some((option) => (option.value || option.label) === text)) {
+        throw new Error(`${path}: 不是该属性的有效选项`)
+      }
+      return text
+    }
+    case 'checkbox': {
+      if (!Array.isArray(value)) throw new Error(`${path}: 必须是字符串数组`)
+      const allowed = new Set(definition.extra.map((option) => option.value || option.label))
+      const values = value.map((item, index) => string(item, `${path}[${index}]`))
+      for (const item of values) {
+        if (!allowed.has(item)) throw new Error(`${path}: 包含无效选项 ${item}`)
+      }
+      return [...new Set(values)]
+    }
+    case 'date': {
+      const text = string(value, path)
+      if (!/^\d{4}-\d{2}-\d{2}/.test(text)) {
+        throw new Error(`${path}: 日期格式应为 YYYY-MM-DD`)
+      }
+      return text
+    }
+    default:
+      return string(value, path)
+  }
+}
+
+/** 按属性定义校验并写入接口自定义属性；null/空值清除。 */
+export function patchCustomAttributes(target: Target, input: unknown): void {
+  if (!Array.isArray(input)) throw new Error('custom_attributes: 必须是数组')
+  const definitions = new Map(
+    store.listCustomAttributes(target.project_id).map((item) => [item.attribute_id, item])
+  )
+  const next = { ...(target.custom_attributes ?? {}) }
+  for (const entry of input) {
+    const patch = object(entry, 'custom_attributes')
+    checkKeys(patch, ['attribute_id', 'value'], 'custom_attributes')
+    const attributeId = string(patch.attribute_id, 'custom_attributes.attribute_id')
+    const definition = definitions.get(attributeId)
+    if (!definition) throw new Error(`custom_attributes.${attributeId}: 属性不存在`)
+    if (!definition.enable) throw new Error(`custom_attributes.${attributeId}: 属性已禁用`)
+    if (patch.value === null) {
+      delete next[attributeId]
+      continue
+    }
+    const value = normalizeCustomValue(definition, patch.value)
+    if (value === '' || (Array.isArray(value) && value.length === 0)) {
+      delete next[attributeId]
+      continue
+    }
+    next[attributeId] = value
+  }
+  target.custom_attributes = next
 }
 
 export function patchBody(target: Target, patch: Obj): void {
@@ -308,6 +402,7 @@ export function writeApiDocumentation(args: Obj, allowNew = false): unknown {
   for (const [key, slot] of [['headers', 'header'], ['query', 'query'], ['paths', 'restful'], ['cookies', 'cookie']] as const) if (args[key] !== undefined) target.request[slot].parameter = patchParams(target.request[slot].parameter, args[key], key)
   if (args.auth !== undefined) target.request.auth = { ...target.request.auth, ...object(args.auth, 'auth') }
   if (args.body !== undefined) patchBody(target, object(args.body, 'body'))
+  if (args.custom_attributes !== undefined) patchCustomAttributes(target, args.custom_attributes)
   if (args.success_response !== undefined || args.response_example !== undefined) patchSuccessResponse(target, object(args.success_response ?? args.response_example, 'success_response'))
   const issues = documentationIssues(target)
   const saved = store.saveTarget(projectId, target)

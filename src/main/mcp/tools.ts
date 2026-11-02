@@ -2620,7 +2620,7 @@ for (const name of ['create_api', 'update_api']) {
   props.response_example = successSchema
   if (name === 'create_api') {
     const legacyCreate = tool.handler
-    tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies
+    tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies || args.custom_attributes
       ? writeApiDocumentation(args, true) : legacyCreate(args, config)
     tool.description += '必须填写接口说明 description；URL 必须是完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。完整文档推荐 upsert_api，也可传入 body、success_response 和参数列表一次创建。每个已知字段都应填写 description。'
   } else tool.description = '增量更新接口与字段文档。必须填写或保留接口说明 description，并为每个已知字段填写业务含义；URL 必须使用完整的 http:// 或 https:// 地址。未传保留，remove/unset 显式删除。字段结构同 upsert_api，写入后检查 documentation.issues。'
