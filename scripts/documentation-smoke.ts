@@ -136,7 +136,35 @@ async function main(): Promise<void> {
     assert(spec20.paths['/orders/detail'].get.responses['200'].schema, 'swagger response schema')
     setVersion('3.0')
 
-    const logo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const environment = store.listEnvironments(project.project_id)[0]
+    store.saveEnvironment(project.project_id, {
+      ...environment,
+      env_var_list: {
+        ...environment.env_var_list,
+        baseUrl: { current_value: 'http://api.example.test', initial_value: '', is_checked: 1 }
+      }
+    })
+    const probe = await call('upsert_api', { source_key: 'smoke.env.probe', name: '环境变量验证', method: 'GET', url: '{{baseUrl}}/env/probe', body: { mode: 'none' } })
+    store.updateDocShare(project.project_id, share.share_id, {
+      name: share.name,
+      scope: share.scope,
+      target_ids: share.target_ids,
+      settings: createDocSettings({ ...share.settings, env_id: environment.env_id })
+    })
+    const envHtml = await (await fetch(`${base}/a/${probe.target_id}`)).text()
+    assert(envHtml.includes('http://api.example.test/env/probe'), 'share page resolves environment variables')
+    assert(envHtml.includes('环境：'), 'share page labels the active environment')
+    const envMarkdown = await (await fetch(`${base}/download?format=md`)).text()
+    assert(envMarkdown.includes('http://api.example.test/env/probe'))
+    assert(envMarkdown.includes('展示环境'))
+    store.updateDocShare(project.project_id, share.share_id, {
+      name: share.name,
+      scope: share.scope,
+      target_ids: share.target_ids,
+      settings: createDocSettings({ ...share.settings })
+    })
+
+    const logo ='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
     store.updateDocShare(project.project_id, share.share_id, {
       name: share.name,
       scope: share.scope,
@@ -247,7 +275,7 @@ async function main(): Promise<void> {
     const removed = await call('upsert_api', { target_id: id, success_response: { field_docs: [{ path: 'data.note', remove: true }, { path: state.path, unset: ['default'], enum: null, unset_dummy: undefined }] } })
     assert(!removed.api.response.example[0].field_docs.some((d: any) => d.pointer === '/data/note'))
     assert.equal(removed.api.response.example[0].field_docs.find((d: any) => d.pointer.endsWith('/state')).default, undefined)
-    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'share logo', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
+    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'share environment', 'share logo', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
   } finally {
     child.kill()
     await stopMcpServer()

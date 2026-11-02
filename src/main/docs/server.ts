@@ -810,6 +810,8 @@ interface ShareView {
   byId: Map<string, Target>
   lastUpdated: string
   warnings: ShareWarnings
+  /** 展示环境；变量已按该环境解析为实际值 */
+  environment: { name: string } | null
 }
 
 export type ShareSelection =
@@ -895,17 +897,57 @@ function prepareShareTargets(
   return { targets, warnings }
 }
 
+function environmentVariables(
+  share: DocShare,
+  projectId: string
+): { name: string; vars: Record<string, string> } | null {
+  if (!share.settings.env_id) return null
+  const environment = store
+    .listEnvironments(projectId)
+    .find((item) => item.env_id === share.settings.env_id)
+  if (!environment) return null
+  const vars: Record<string, string> = {}
+  for (const [key, value] of Object.entries(environment.env_var_list)) {
+    if (value.is_checked > 0) vars[key] = value.current_value ?? ''
+  }
+  return { name: environment.name, vars }
+}
+
+const VARIABLE_PATTERN = /\{\{\s*([\w.-]+)\s*\}\}/g
+
+/** 文档展示副本的变量替换；未定义的变量保持原样。 */
+function replaceVariables<T>(value: T, vars: Record<string, string>): T {
+  if (typeof value === 'string') {
+    return value.replace(VARIABLE_PATTERN, (match, key: string) =>
+      Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match
+    ) as T
+  }
+  if (Array.isArray(value)) return value.map((item) => replaceVariables(item, vars)) as T
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = replaceVariables(item, vars)
+    }
+    return result as T
+  }
+  return value
+}
+
 function buildShareView(
   share: DocShare,
   resolved: store.ResolvedDocShare
 ): ShareView | null {
   if (!resolved.project || resolved.notFound) return null
   const prepared = prepareShareTargets(share, resolved.targets)
-  const ids = new Set(prepared.targets.map((target) => target.target_id))
+  const environment = environmentVariables(share, resolved.project.project_id)
+  const targets = environment
+    ? prepared.targets.map((target) => replaceVariables(target, environment.vars))
+    : prepared.targets
+  const ids = new Set(targets.map((target) => target.target_id))
   const byParent = new Map<string, Target[]>()
   const byId = new Map<string, Target>()
   let lastUpdated = share.updated_at
-  for (const target of prepared.targets) {
+  for (const target of targets) {
     byId.set(target.target_id, target)
     if (!lastUpdated || target.updated_at > lastUpdated) lastUpdated = target.updated_at
     const parent = ids.has(target.parent_id) ? target.parent_id : '0'
@@ -919,12 +961,13 @@ function buildShareView(
   return {
     share,
     project: resolved.project,
-    targets: prepared.targets,
+    targets,
     rootId: resolved.rootId,
     byParent,
     byId,
     lastUpdated,
-    warnings: prepared.warnings
+    warnings: prepared.warnings,
+    environment: environment ? { name: environment.name } : null
   }
 }
 
@@ -1050,7 +1093,11 @@ function renderShareShell(
 <header class="doc-top" id="top">
   <div class="brand">${logoMark(share.settings)} KindraAPI 文档</div>
   <div class="top-crumb">${escapeHtml(view.project.name)} / ${escapeHtml(share.name)}</div>
-  <div class="top-badges">${shareChips(share)}</div>
+  <div class="top-badges">${
+    view.environment
+      ? `<span class="chip env" title="文档中的变量已按该环境解析">环境：${escapeHtml(view.environment.name)}</span>`
+      : ''
+  }${shareChips(share)}</div>
 </header>
 <div class="doc-layout">
   <aside class="doc-nav">
@@ -1325,6 +1372,7 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
   const lines: string[] = []
   lines.push(`# ${share.name}`, '')
   lines.push(`> 项目：${view.project.name}`)
+  if (view.environment) lines.push(`> 展示环境：${view.environment.name}（变量已解析为实际值）`)
   lines.push(`> 最后更新：${formatTime(view.lastUpdated)}`)
   lines.push(`> 有效期：${store.docShareExpireInfo(share).expire_label}`, '')
 

@@ -703,6 +703,8 @@ export interface DocSettings {
   openapi_version: OpenApiVersion
   /** 分享页 Logo，data URL；空字符串使用内置图标 */
   logo: string
+  /** 文档展示环境；非空时 {{变量}} 按该环境取值替换 */
+  env_id: string
 }
 
 export interface DocTargetSnapshot {

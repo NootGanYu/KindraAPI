@@ -18,6 +18,7 @@ import type {
   DocSettings,
   DocShare,
   DocShareInput,
+  Environment,
   OpenApiVersion,
   TargetSummary
 } from '@shared/types'
@@ -79,6 +80,7 @@ interface Draft {
   openapi: boolean
   openapiVersion: OpenApiVersion
   logo: string
+  envId: string
 }
 
 function buildTree(targets: TargetSummary[]): DocTreeNode[] {
@@ -162,9 +164,18 @@ export default function DocShareDialog({
     showCases: true,
     openapi: false,
     openapiVersion: '3.0',
-    logo: ''
+    logo: '',
+    envId: ''
   }))
   const [saving, setSaving] = useState(false)
+  const [environments, setEnvironments] = useState<Environment[]>([])
+
+  useEffect(() => {
+    if (!open || !projectId) return
+    void window.api.envs.list(projectId).then((result) => {
+      if (result.ok) setEnvironments(result.data)
+    })
+  }, [open, projectId])
 
   const tree = useMemo(() => buildTree(targets), [targets])
   const apiCount = useMemo(
@@ -199,7 +210,8 @@ export default function DocShareDialog({
       showCases: settings.show_cases,
       openapi: settings.openapi,
       openapiVersion: settings.openapi_version ?? '3.0',
-      logo: settings.logo ?? ''
+      logo: settings.logo ?? '',
+      envId: settings.env_id ?? ''
     })
   }, [open, initialKey, lockScope, lockTarget, lockTargetName, projectName])
 
@@ -275,7 +287,8 @@ export default function DocShareDialog({
         show_cases: draft.showCases,
         openapi: draft.openapi,
         openapi_version: draft.openapiVersion,
-        logo: draft.logo
+        logo: draft.logo,
+        env_id: draft.envId
       }
     }
 
@@ -378,6 +391,21 @@ export default function DocShareDialog({
             </div>
           </>
         )}
+
+        <div className="docs-field">
+          <label>展示环境</label>
+          <Select
+            allowClear
+            style={{ width: '100%' }}
+            placeholder="不解析变量，按变量名原样展示"
+            value={draft.envId || undefined}
+            onChange={(value) => patchDraft({ envId: value ?? '' })}
+            options={environments.map((item) => ({ value: item.env_id, label: item.name }))}
+          />
+          <div className="docs-hint">
+            选择后，文档中的 {'{{变量}}'} 会替换为该环境的当前值，并在页面标注所用环境。
+          </div>
+        </div>
 
         <div className="docs-field-row">
           <div className="docs-field">

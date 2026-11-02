@@ -339,6 +339,7 @@ export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettin
     openapi: false,
     openapi_version: '3.0',
     logo: '',
+    env_id: '',
     ...partial
   }
 }

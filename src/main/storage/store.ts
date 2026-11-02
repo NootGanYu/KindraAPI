@@ -1650,7 +1650,8 @@ function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
       input?.openapi_version === '3.1' || input?.openapi_version === '2.0'
         ? input.openapi_version
         : '3.0',
-    logo: normalizeDocLogo(input?.logo)
+    logo: normalizeDocLogo(input?.logo),
+    env_id: typeof input?.env_id === 'string' ? input.env_id.slice(0, 80) : ''
   }
 }
 
