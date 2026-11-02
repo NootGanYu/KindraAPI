@@ -14,18 +14,17 @@ import {
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import type { CustomAttribute, CustomAttributeOption, CustomAttributeType } from '@shared/types'
 import { createCustomAttribute } from '@shared/factories'
+import {
+  CUSTOM_ATTRIBUTE_TYPES,
+  CUSTOM_ATTRIBUTE_TYPE_LABELS
+} from '@shared/customAttributes'
 
-const TYPE_OPTIONS: Array<{ value: CustomAttributeType; label: string }> = [
-  { value: 'text', label: '文本' },
-  { value: 'number', label: '数字' },
-  { value: 'radio', label: '单选' },
-  { value: 'checkbox', label: '多选' },
-  { value: 'date', label: '日期' },
-  { value: 'link', label: '链接' },
-  { value: 'email', label: '邮箱' }
-]
+const TYPE_OPTIONS = CUSTOM_ATTRIBUTE_TYPES.map((value) => ({
+  value,
+  label: CUSTOM_ATTRIBUTE_TYPE_LABELS[value]
+}))
 
-const TYPE_LABEL = Object.fromEntries(TYPE_OPTIONS.map((item) => [item.value, item.label]))
+const TYPE_LABEL = CUSTOM_ATTRIBUTE_TYPE_LABELS
 
 interface FormValues {
   field_name: string

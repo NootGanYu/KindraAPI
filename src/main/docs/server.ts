@@ -1,4 +1,5 @@
 import { ruleCells, rulesToSchema } from '@shared/fieldRules'
+import { optionLabel } from '@shared/customAttributes'
 import { documentedRequestExample, modelDocumentationWarnings, resolveDocumentedTarget } from './definition'
 import crypto from 'node:crypto'
 import http from 'node:http'
@@ -744,13 +745,9 @@ function customAttributeRows(
     if (!attribute.enable || !selected.includes(attribute.attribute_id)) continue
     const raw = values[attribute.attribute_id]
     if (raw === undefined || raw === null || raw === '') continue
-    const labelOf = (item: string): string => {
-      const option = attribute.extra.find((entry) => (entry.value || entry.label) === item)
-      return option?.label || item
-    }
     const value = Array.isArray(raw)
-      ? raw.map((item) => labelOf(String(item))).filter(Boolean).join('、')
-      : labelOf(String(raw))
+      ? raw.map((item) => optionLabel(attribute, String(item))).filter(Boolean).join('、')
+      : optionLabel(attribute, String(raw))
     if (value) rows.push({ name: attribute.field_name, value })
   }
   return rows
@@ -760,11 +757,14 @@ function renderApi(
   target: Target,
   settings: DocSettings,
   apiHref?: string,
-  warnings?: ShareWarnings
+  warnings?: ShareWarnings,
+  variables?: Record<string, string>
 ): string {
-  const requestExample = documentedRequestExample(target)
   const modelWarnings = modelDocumentationWarnings(target)
   target = resolveDocumentedTarget(target)
+  // 模型展开会重新生成示例与字段说明，因此变量替换必须在其后进行。
+  if (variables) target = replaceVariables(target, variables)
+  const requestExample = documentedRequestExample(target)
   const project = store.getProject(target.project_id)
   const attributeRows = project ? customAttributeRows(target, settings, project) : []
   const attributeBlock = attributeRows.length
@@ -854,8 +854,8 @@ interface ShareView {
   byId: Map<string, Target>
   lastUpdated: string
   warnings: ShareWarnings
-  /** 展示环境；变量已按该环境解析为实际值 */
-  environment: { name: string } | null
+  /** 展示环境；渲染时按 vars 解析变量 */
+  environment: { name: string; vars: Record<string, string> } | null
 }
 
 export type ShareSelection =
@@ -1011,7 +1011,7 @@ function buildShareView(
     byId,
     lastUpdated,
     warnings: prepared.warnings,
-    environment: environment ? { name: environment.name } : null
+    environment
   }
 }
 
@@ -1186,7 +1186,7 @@ function renderListing(ctx: RenderCtx, parentId: string): string {
   return `${folders.map((folder) => renderFolderCard(ctx, folder)).join('')}${
     apis.length
       ? `<div class="section-title">接口（${apis.length}）</div>${apis
-          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api), ctx.view.warnings))
+          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api), ctx.view.warnings, ctx.view.environment?.vars))
           .join('')}`
       : ''
   }`
@@ -1260,7 +1260,7 @@ function renderApiPage(ctx: RenderCtx, apiId: string): string | null {
   const api = ctx.view.byId.get(apiId)
   if (!api || api.target_type !== 'api') return null
   const main = `${renderHero(ctx, { current: api, downloadApiId: api.target_id })}
-${renderApi(api, ctx.share.settings, undefined, ctx.view.warnings)}`
+${renderApi(api, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars)}`
   return renderShareShell(
     ctx,
     `${api.name} · ${ctx.share.name}`,
@@ -1275,7 +1275,7 @@ function renderCompleteListing(ctx: RenderCtx, parentId: string): string {
   return items
     .map((target) => {
       if (target.target_type === 'api') {
-        return renderApi(target, ctx.share.settings, undefined, ctx.view.warnings)
+        return renderApi(target, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars)
       }
       return `<section class="folder-card" id="folder-${escapeHtml(target.target_id)}">
 <h2>${escapeHtml(target.name)}</h2>
@@ -1422,7 +1422,8 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
 
   const apis = view.targets.filter((target) => target.target_type === 'api')
   for (const stored of apis) {
-    const api = resolveDocumentedTarget(stored)
+    let api = resolveDocumentedTarget(stored)
+    if (view.environment) api = replaceVariables(api, view.environment.vars)
     const method = methodText(api.method)
     lines.push(`## ${method} ${api.name}`, '')
     const attributeRows = customAttributeRows(api, settings, view.project)
@@ -1602,7 +1603,8 @@ function buildOpenApi30(share: DocShare, view: ShareView): Record<string, unknow
   const servers = new Set<string>()
 
   for (const stored of apis) {
-    const api = resolveDocumentedTarget(stored)
+    let api = resolveDocumentedTarget(stored)
+    if (view.environment) api = replaceVariables(api, view.environment.vars)
     const method = (api.method || 'GET').toLowerCase()
     if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method)) continue
     if (api.url && /^https?:\/\//i.test(api.url)) {
@@ -1802,8 +1804,16 @@ function convertNullableFor31(node: unknown): unknown {
   }
   if (source.nullable === true) {
     const type = result.type
-    if (type === undefined) result.type = 'null'
-    else if (typeof type === 'string') result.type = [type, 'null']
+    if (type === undefined) {
+      // 组合 schema 不能与顶层 type 取交集，改为追加 null 分支。
+      if (Array.isArray(result.anyOf)) result.anyOf = [...result.anyOf, { type: 'null' }]
+      else if (Array.isArray(result.oneOf)) result.oneOf = [...result.oneOf, { type: 'null' }]
+      else if (Array.isArray(result.allOf)) {
+        const allOf = result.allOf
+        delete result.allOf
+        result.anyOf = [{ allOf }, { type: 'null' }]
+      } else result.type = 'null'
+    } else if (typeof type === 'string') result.type = [type, 'null']
     else if (Array.isArray(type)) result.type = [...type, 'null']
   }
   return result
@@ -1813,15 +1823,17 @@ function toOpenApi31(spec: Record<string, unknown>): Record<string, unknown> {
   return { ...(convertNullableFor31(spec) as Record<string, unknown>), openapi: '3.1.0' }
 }
 
-/** 递归删除 Swagger 2.0 不支持的 nullable 关键字。 */
+/** Swagger 2.0 没有 nullable，用 x-nullable 保留可空信息。 */
 function stripNullable(node: unknown): unknown {
   if (Array.isArray(node)) return node.map(stripNullable)
   if (!node || typeof node !== 'object') return node
+  const source = node as Record<string, unknown>
   const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(source)) {
     if (key === 'nullable') continue
     result[key] = stripNullable(value)
   }
+  if (source.nullable === true) result['x-nullable'] = true
   return result
 }
 
@@ -1846,6 +1858,10 @@ function schemaToSwagger(schema: Record<string, unknown>): Record<string, unknow
   for (const key of SWAGGER_PARAM_KEYS) {
     if (cleaned[key] !== undefined) result[key] = cleaned[key]
   }
+  if (result.format === 'binary' && result.type === 'string') {
+    result.type = 'file'
+    delete result.format
+  }
   if (result.type === 'object' || result.type === 'null' || result.type === undefined) {
     result.type = 'string'
   }
@@ -1855,6 +1871,8 @@ function schemaToSwagger(schema: Record<string, unknown>): Record<string, unknow
 function toSwaggerOperation(operation: Record<string, unknown>): Record<string, unknown> {
   const parameters: Record<string, unknown>[] = []
   for (const raw of (operation.parameters as Record<string, unknown>[] | undefined) ?? []) {
+    // Swagger 2.0 不支持 cookie 参数位置。
+    if (raw.in === 'cookie') continue
     const schema = (raw.schema as Record<string, unknown> | undefined) ?? {}
     parameters.push({
       name: raw.name,
@@ -1899,11 +1917,13 @@ function toSwaggerOperation(operation: Record<string, unknown>): Record<string, 
   }
 
   const responses = (operation.responses as Record<string, Record<string, unknown>> | undefined) ?? {}
+  const produces = new Set<string>()
   const swaggerResponses = Object.fromEntries(
     Object.entries(responses).map(([code, response]) => {
       const content = response.content as
         | Record<string, { schema?: Record<string, unknown>; example?: unknown }>
         | undefined
+      for (const contentType of Object.keys(content ?? {})) produces.add(contentType)
       const first = content ? Object.values(content)[0] : undefined
       const headers = response.headers as
         | Record<string, { description?: string; example?: unknown }>
@@ -1933,6 +1953,7 @@ function toSwaggerOperation(operation: Record<string, unknown>): Record<string, 
     ...(operation.summary ? { summary: operation.summary } : {}),
     ...(operation.description ? { description: operation.description } : {}),
     ...(consumes ? { consumes } : {}),
+    ...(produces.size ? { produces: [...produces] } : {}),
     ...(parameters.length ? { parameters } : {}),
     responses: swaggerResponses
   }
@@ -1971,7 +1992,6 @@ function toSwagger20(spec: Record<string, unknown>): Record<string, unknown> {
     ...(basePath ? { basePath } : {}),
     ...(schemes ? { schemes } : {}),
     ...(spec.tags ? { tags: spec.tags } : {}),
-    produces: ['application/json'],
     paths
   }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Input, InputNumber, Select } from 'antd'
 import type { CustomAttribute, Target } from '@shared/types'
+import { optionKey } from '@shared/customAttributes'
 
 type AttributeValue = NonNullable<Target['custom_attributes']>[string]
 
@@ -61,7 +62,7 @@ export default function CustomAttributeFields({
                   value={typeof raw === 'string' && raw ? raw : undefined}
                   placeholder="请选择"
                   options={attribute.extra.map((option) => ({
-                    value: option.value || option.label,
+                    value: optionKey(option),
                     label: option.label || option.value
                   }))}
                   onChange={(next) => patch(attribute.attribute_id, next ?? null)}
@@ -76,7 +77,7 @@ export default function CustomAttributeFields({
                   value={Array.isArray(raw) ? raw : []}
                   placeholder="请选择"
                   options={attribute.extra.map((option) => ({
-                    value: option.value || option.label,
+                    value: optionKey(option),
                     label: option.label || option.value
                   }))}
                   onChange={(next) => patch(attribute.attribute_id, next)}

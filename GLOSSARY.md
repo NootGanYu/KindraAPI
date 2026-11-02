@@ -26,6 +26,12 @@
 字段标识：`share_id`、`scope`、`target_ids`。
 _Avoid_: 项目文档（指单个分享时）、导出范围（指分享范围时）
 
+**API Attribute（接口属性）**
+项目级自定义字段定义，用于给接口补充负责人、优先级等业务信息；定义包含名称、类型与单选/多选选项。
+接口上的取值保存在 `custom_attributes`，分享时按所选定义展示。
+字段标识：`attribute_id`、`field_name`、`field_type`、`extra`（选项）。
+_Avoid_: 自定义属性（与「接口属性」混用）、展示属性（指分享勾选项时）
+
 **Request（请求定义）**
 API 上的 `request` 对象：auth / header / query / restful / cookie / body / 前后置任务。
 

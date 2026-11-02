@@ -229,10 +229,11 @@ export default function DocShareDialog({
 
   const logoInput = useRef<HTMLInputElement>(null)
   const MAX_LOGO_BYTES = 140 * 1024
+  const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
   const pickLogo = (file: File | undefined): void => {
     if (!file) return
-    if (!file.type.startsWith('image/')) {
-      message.warning('请选择图片文件')
+    if (!LOGO_TYPES.includes(file.type)) {
+      message.warning('仅支持 PNG / JPEG / WebP / GIF')
       return
     }
     if (file.size > MAX_LOGO_BYTES) {
@@ -557,7 +558,7 @@ export default function DocShareDialog({
             <input
               ref={logoInput}
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp,image/gif"
               style={{ display: 'none' }}
               onChange={(event) => {
                 pickLogo(event.target.files?.[0])

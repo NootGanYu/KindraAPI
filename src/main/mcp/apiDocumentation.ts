@@ -10,6 +10,7 @@ import type {
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import { buildFieldRows, normalizeFieldDocs, splitPointer, withDisplayPath } from '@shared/jsonFields'
 import { FIELD_TYPES, RULE_KEYS, validateRules } from '@shared/fieldRules'
+import { isOptionValue, optionKey } from '@shared/customAttributes'
 import * as store from '../storage/store'
 import { assertModelDocumentation, modelDocumentationWarnings, resolveDocumentedTarget, responseDocs } from '../docs/definition'
 
@@ -218,14 +219,14 @@ function normalizeCustomValue(
     }
     case 'radio': {
       const text = string(value, path)
-      if (!definition.extra.some((option) => (option.value || option.label) === text)) {
+      if (!isOptionValue(definition, text)) {
         throw new Error(`${path}: 不是该属性的有效选项`)
       }
       return text
     }
     case 'checkbox': {
       if (!Array.isArray(value)) throw new Error(`${path}: 必须是字符串数组`)
-      const allowed = new Set(definition.extra.map((option) => option.value || option.label))
+      const allowed = new Set(definition.extra.map(optionKey))
       const values = value.map((item, index) => string(item, `${path}[${index}]`))
       for (const item of values) {
         if (!allowed.has(item)) throw new Error(`${path}: 包含无效选项 ${item}`)

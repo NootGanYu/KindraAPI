@@ -18,7 +18,6 @@ import type {
   DocSettings,
   CaseRunResult,
   CustomAttribute,
-  CustomAttributeType,
   DocShare,
   DocShareInput,
   DocShareSummary,
@@ -55,6 +54,7 @@ import {
   createRequest,
   createTarget
 } from '@shared/factories'
+import { CUSTOM_ATTRIBUTE_TYPES } from '@shared/customAttributes'
 import { BUILTIN_DICTIONARY } from '@shared/dictionary'
 import {
   preserveCaseRuns,
@@ -191,16 +191,6 @@ export function saveProject(project: Project): Project {
   writeJson(path.join(projectDir(project.project_id), 'project.json'), project)
   return project
 }
-
-const CUSTOM_ATTRIBUTE_TYPES: CustomAttributeType[] = [
-  'text',
-  'number',
-  'radio',
-  'checkbox',
-  'date',
-  'link',
-  'email'
-]
 
 export function listCustomAttributes(projectId: string): CustomAttribute[] {
   return (getProject(projectId)?.custom_attributes ?? [])

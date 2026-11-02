@@ -135,6 +135,15 @@ async function main(): Promise<void> {
     assert.equal(spec20.openapi, undefined)
     assert(spec20.paths['/orders/detail'].get.parameters.some((p: any) => p.name === 'id'))
     assert(spec20.paths['/orders/detail'].get.responses['200'].schema, 'swagger response schema')
+    assert.equal(
+      spec20.paths['/orders/detail'].get.responses['200'].schema.properties.data.properties.note['x-nullable'],
+      true,
+      'swagger keeps nullability'
+    )
+    assert(
+      (spec20.paths['/orders/detail'].get.produces ?? []).includes('application/json'),
+      'swagger produces follows response content type'
+    )
     setVersion('3.0')
 
     const environment = store.listEnvironments(project.project_id)[0]
