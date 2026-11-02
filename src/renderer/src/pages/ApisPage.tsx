@@ -33,6 +33,7 @@ import {
   ShareAltOutlined
 } from '@ant-design/icons'
 import type { Target } from '@shared/types'
+import { API_STATUS_OPTIONS, apiStatusOption } from '@shared/apiStatus'
 import { useApp } from '../store'
 import ApiTree from '../components/ApiTree'
 import RequestEditor from '../components/RequestEditor'
@@ -573,9 +574,30 @@ export default function ApisPage(): JSX.Element {
                     ))}
                   </div>
                   <div className="api-meta">
-                    <span className="dev-state">
-                      <i /> 开发中 <DownOutlined style={{ fontSize: 9 }} />
-                    </span>
+                    <Dropdown
+                      trigger={['click']}
+                      menu={{
+                        items: API_STATUS_OPTIONS.map((option) => ({
+                          key: String(option.value),
+                          label: (
+                            <span className="dev-state-menu-item">
+                              <i style={{ background: option.color }} />
+                              {option.label}
+                            </span>
+                          )
+                        })),
+                        onClick: ({ key }) => {
+                          const status = Number(key)
+                          patchDraft(active.target_id, { status, mark_id: String(status) })
+                        }
+                      }}
+                    >
+                      <button className="dev-state dev-state-btn" type="button">
+                        <i style={{ background: apiStatusOption(active.status).color }} />
+                        {apiStatusOption(active.status).label}
+                        <DownOutlined style={{ fontSize: 9 }} />
+                      </button>
+                    </Dropdown>
                     <span className="api-name">
                       <Input
                         value={active.name}
@@ -589,11 +611,13 @@ export default function ApisPage(): JSX.Element {
                         }}
                       />
                     </span>
-                    <Tooltip title="接口说明">
-                      <button className="mini" onClick={() => setDescOpen(true)}>
-                        <FileTextOutlined style={{ fontSize: 14 }} />
-                      </button>
-                    </Tooltip>
+                    {mode === '设计' ? null : (
+                      <Tooltip title="接口说明">
+                        <button className="mini" onClick={() => setDescOpen(true)}>
+                          <FileTextOutlined style={{ fontSize: 14 }} />
+                        </button>
+                      </Tooltip>
+                    )}
                     <button className="share-btn" onClick={() => void openShare()}>
                       <ShareAltOutlined style={{ fontSize: 13 }} /> 分享
                     </button>
@@ -692,6 +716,7 @@ export default function ApisPage(): JSX.Element {
                     key={editorKey} draft={active}
                     projectId={projectId}
                     onChange={(patch) => patchDraft(active.target_id, patch)}
+                    onOpenDescription={() => setDescOpen(true)}
                   />
                 ) : mode === '接口用例' ? (
                   <CasesEditor

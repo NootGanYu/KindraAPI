@@ -1,5 +1,6 @@
 import { modelDocumentation } from './schemas/modelDocumentation'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   App as AntApp,
   Button,
@@ -12,27 +13,45 @@ import {
   Tag,
   Tooltip
 } from 'antd'
-import { DownOutlined } from '@ant-design/icons'
+import { CodeOutlined, DownOutlined, EyeOutlined, ImportOutlined } from '@ant-design/icons'
 import type {
   AuthType,
   BodyMode,
   ModelSummary,
+  RawBodyLanguage,
   RequestModel,
   Target
 } from '@shared/types'
 import { createBody } from '@shared/factories'
+import { buildBodyExample } from '@shared/bodyImport'
 import { hasLocalEdits, useApp, useModelEpoch } from '../store'
 import ParamTable from './ParamTable'
 import JsonFieldTable from './JsonFieldTable'
 import ModelPickerModal from './schemas/ModelPickerModal'
+import BodyPreviewModal from './BodyPreviewModal'
+import SmartImportModal from './SmartImportModal'
 
 interface Props {
   draft: Target
   onChange: (patch: Partial<Target>) => void
+  /** 设计页：隐藏发送、Cookie、预执行/后执行，启用数据结构/示例与 Body 动作 */
+  mode?: 'debug' | 'design'
+  /** 插入在 URL 行与参数 Tabs 之间（目录/标签/详细说明） */
+  headerSlot?: ReactNode
+  onPreview?: () => void
+  onGenerateCode?: () => void
 }
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
-const TABS = ['Header', 'Query', 'Path', 'Body', '认证', 'Cookie', '预执行操作', '后执行操作']
+const DEBUG_TABS = ['Header', 'Query', 'Path', 'Body', '认证', 'Cookie', '预执行操作', '后执行操作']
+const DESIGN_TABS = ['Header', 'Query', 'Path', 'Body', '认证']
+const RAW_LANGUAGES: Array<{ value: RawBodyLanguage; label: string }> = [
+  { value: 'json', label: 'JSON' },
+  { value: 'xml', label: 'XML' },
+  { value: 'text', label: 'Text' },
+  { value: 'html', label: 'HTML' },
+  { value: 'javascript', label: 'JavaScript' }
+]
 
 interface JsonError {
   message: string
@@ -92,17 +111,30 @@ function DocIllustration(): JSX.Element {
   )
 }
 
-export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
+export default function RequestEditor({
+  draft,
+  onChange,
+  mode = 'debug',
+  headerSlot,
+  onPreview,
+  onGenerateCode
+}: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
   const projectId = useApp((s) => s.project?.project_id ?? '')
   const saveTarget = useApp((s) => s.saveTarget)
   const sendActive = useApp((s) => s.sendActive)
   const sending = useApp((s) => s.sendingId === draft.target_id)
   const modelEpoch = useModelEpoch(draft.target_id)
+  const design = mode === 'design'
+  const tabs = design ? DESIGN_TABS : DEBUG_TABS
   const [activeTab, setActiveTab] = useState('Body')
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
   const [bodyView, setBodyView] = useState<'raw' | 'fields'>('raw')
+  const [designView, setDesignView] = useState<'structure' | 'example'>('structure')
+  const [designRawEditing, setDesignRawEditing] = useState(false)
+  const [bodyPreviewOpen, setBodyPreviewOpen] = useState(false)
+  const [smartImportOpen, setSmartImportOpen] = useState(false)
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
 
@@ -198,9 +230,16 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     setPickerOpen(false)
   }
 
+  const shouldValidateJson = (model: RequestModel): boolean => {
+    const current = model.body ?? createBody()
+    if (current.mode !== 'raw' && current.mode !== 'json') return false
+    return !design || (current.raw_language ?? 'json') === 'json'
+  }
+
   const formatJsonBody = (): void => {
     const current = request.body ?? createBody()
     if (current.mode !== 'raw' && current.mode !== 'json') return
+    if (design && (current.raw_language ?? 'json') !== 'json') return
     const raw = current.raw ?? ''
     if (!raw.trim()) return
     try {
@@ -215,7 +254,8 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
 
   const handleSend = async (): Promise<boolean> => {
     formatJsonBody()
-    const problem = validateJson(request.body?.raw ?? '')
+    const current = latestRequest.current
+    const problem = shouldValidateJson(current) ? validateJson(current.body?.raw ?? '') : null
     setJsonError(problem)
     if (problem) {
       focusJsonError(problem)
@@ -234,7 +274,8 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
 
   const handleSave = async (notify = true): Promise<void> => {
     formatJsonBody()
-    const problem = validateJson(request.body?.raw ?? '')
+    const current = latestRequest.current
+    const problem = shouldValidateJson(current) ? validateJson(current.body?.raw ?? '') : null
     setJsonError(problem)
     if (problem) {
       focusJsonError(problem)
@@ -253,6 +294,12 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
 
   const body = request.body ?? createBody()
   const bodyValue = body.mode === 'json' ? 'raw' : body.mode
+  const isRawBody = body.mode === 'raw' || body.mode === 'json'
+  const hasModelRef = Boolean(body.model_id)
+  const bodyExample = useMemo(
+    () => buildBodyExample(body.raw ?? '', body.field_docs ?? []),
+    [body.raw, body.field_docs]
+  )
 
   const focusJsonError = (error: JsonError): void => {
     const input = document.querySelector<HTMLTextAreaElement>('.editor-shell textarea')
@@ -263,17 +310,20 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   }
 
   useEffect(() => {
-    if (body.mode !== 'raw' && body.mode !== 'json') {
+    if (
+      (body.mode !== 'raw' && body.mode !== 'json') ||
+      (design && (body.raw_language ?? 'json') !== 'json')
+    ) {
       setJsonError(null)
       return
     }
     const timer = setTimeout(() => setJsonError(validateJson(body.raw ?? '')), 500)
     return () => clearTimeout(timer)
-  }, [body.mode, body.raw])
+  }, [body.mode, body.raw, body.raw_language, design])
 
   useEffect(() => {
-    if (jsonError && bodyView === 'fields') setBodyView('raw')
-  }, [jsonError, bodyView])
+    if (!design && jsonError && bodyView === 'fields') setBodyView('raw')
+  }, [design, jsonError, bodyView])
 
   const sendMenu = {
     items: [
@@ -322,6 +372,85 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
       )
     }
     if (body.mode === 'raw' || body.mode === 'json') {
+      if (design) {
+        return (
+          <div className="body-editor-wrap design-body-editor">
+            <div className="body-model-bar">
+              {bodyModel ? (
+                <>
+                  {modelMissing ? (
+                    <Tag color="error">模型已删除</Tag>
+                  ) : (
+                    <Tag color="gold">模型 · {referencedModel?.name}</Tag>
+                  )}
+                  <span className="muted">发送时按模型实时生成，内容只读</span>
+                  <button className="mini" onClick={clearModelRef}>
+                    解除引用
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="mini" onClick={() => setPickerOpen(true)} disabled={!projectId}>
+                    引用模型
+                  </button>
+                  <span className="muted">也可直接手写 JSON</span>
+                </>
+              )}
+              {jsonError ? (
+                <div
+                  className="json-error inline"
+                  role="alert"
+                  title="点击定位到错误位置"
+                  onClick={() => focusJsonError(jsonError)}
+                >
+                  <span className="json-error-tag">JSON 结构错误</span>
+                  第 {jsonError.line} 行第 {jsonError.column} 列
+                </div>
+              ) : null}
+            </div>
+
+            {designView === 'structure' ? (
+              <JsonFieldTable
+                designMode
+                raw={body.raw ?? ''}
+                docs={body.field_docs ?? []}
+                valuesReadOnly={Boolean(bodyModel)}
+                onChangeRaw={(raw) => setBody({ raw })}
+                onChangeDocs={(field_docs) => setBody({ field_docs })}
+              />
+            ) : (
+              <div className="design-example-wrap">
+                {designRawEditing && !bodyModel ? (
+                  <div className="editor-shell fill">
+                    <Input.TextArea
+                      className="editor-input"
+                      value={body.raw ?? ''}
+                      onChange={(event) => setBody({ raw: event.target.value })}
+                      onBlur={() => {
+                        formatJsonBody()
+                        const current = latestRequest.current
+                        const problem = shouldValidateJson(current)
+                          ? validateJson(current.body?.raw ?? '')
+                          : null
+                        setJsonError(problem)
+                      }}
+                      placeholder='{ "key": "value" }'
+                      spellCheck={false}
+                    />
+                  </div>
+                ) : (
+                  <div className="design-example">
+                    {bodyExample.error ? (
+                      <div className="field-banner error">JSON 结构错误：{bodyExample.error}</div>
+                    ) : null}
+                    <pre>{bodyExample.text || '（暂无示例）'}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      }
       const fieldView = body.mode === 'json' && bodyView === 'fields'
       return (
         <div className="body-editor-wrap">
@@ -397,7 +526,10 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
                 onBlur={() => {
                   if (bodyModel) return
                   formatJsonBody()
-                  const problem = validateJson(request.body?.raw ?? '')
+                  const current = latestRequest.current
+                  const problem = shouldValidateJson(current)
+                    ? validateJson(current.body?.raw ?? '')
+                    : null
                   setJsonError(problem)
                   if (problem) setTimeout(() => focusJsonError(problem), 0)
                 }}
@@ -475,6 +607,74 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
     )
   }
 
+  const renderDesignBodyToolbar = (): JSX.Element => {
+    const canRawEdit = isRawBody && !hasModelRef
+    const canImport = (isRawBody || body.mode === 'none') && !hasModelRef
+    const toggleRawEdit = (): void => {
+      if (!canRawEdit) return
+      setDesignView('example')
+      setDesignRawEditing((current) => {
+        const next = !current
+        if (!next) formatJsonBody()
+        return next
+      })
+    }
+    return (
+      <div className="design-body-toolbar">
+        {isRawBody ? (
+          <Segmented
+            size="small"
+            value={designView}
+            onChange={(value) => setDesignView(value as 'structure' | 'example')}
+            options={[
+              { label: '数据结构', value: 'structure' },
+              { label: '示例', value: 'example' }
+            ]}
+          />
+        ) : (
+          <span className="muted" style={{ fontSize: 12 }}>
+            当前 Body 类型不支持数据结构视图
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="design-action-btn"
+          disabled={!canRawEdit}
+          title={hasModelRef ? '解除模型引用后可编辑' : undefined}
+          onClick={toggleRawEdit}
+        >
+          {designRawEditing ? '完成编辑' : 'Raw编辑'}
+        </button>
+        <button
+          type="button"
+          className="design-action-btn"
+          disabled={!isRawBody}
+          onClick={() => setBodyPreviewOpen(true)}
+        >
+          预览
+        </button>
+        <button
+          type="button"
+          className="design-action-btn"
+          disabled={!onGenerateCode}
+          onClick={onGenerateCode}
+        >
+          <CodeOutlined /> 生成代码
+        </button>
+        <button
+          type="button"
+          className="design-action-btn primary"
+          disabled={!canImport}
+          title={hasModelRef ? '解除模型引用后可导入' : undefined}
+          onClick={() => setSmartImportOpen(true)}
+        >
+          <ImportOutlined /> 智能导入
+        </button>
+      </div>
+    )
+  }
+
   const renderContent = (): JSX.Element | null => {
     if (activeTab === 'Body') {
       return (
@@ -496,7 +696,17 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
               }}
               options={BODY_OPTIONS}
             />
+            {design && isRawBody ? (
+              <Select
+                size="small"
+                style={{ width: 110, marginLeft: 'auto' }}
+                value={body.raw_language ?? 'json'}
+                options={RAW_LANGUAGES}
+                onChange={(raw_language) => setBody({ raw_language: raw_language as RawBodyLanguage })}
+              />
+            ) : null}
           </div>
+          {design ? renderDesignBodyToolbar() : null}
           {renderBody()}
         </div>
       )
@@ -614,7 +824,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
               value={draft.url ?? ''}
               onChange={(event) => onChange({ url: event.target.value })}
               placeholder="请输入URL或粘贴cURL文本"
-              onPressEnter={() => void handleSend()}
+              onPressEnter={() => void (design ? handleSave() : handleSend())}
             />
           </div>
           <div className="proto-select">
@@ -632,31 +842,50 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           </div>
         </div>
 
-        <div className="send-group">
-          <button className="send-btn" onClick={() => void handleSend()} disabled={sending}>
-            {sending ? '发送中…' : '发送'}
-          </button>
-          <Dropdown menu={sendMenu} trigger={['click']}>
-            <button className="send-caret">
-              <DownOutlined style={{ fontSize: 9 }} />
-            </button>
-          </Dropdown>
-        </div>
+        {design ? (
+          <>
+            {onPreview ? (
+              <Button size="small" icon={<EyeOutlined />} onClick={onPreview}>
+                预览
+              </Button>
+            ) : null}
+            <div className="save-group">
+              <button className="save-btn" onClick={() => void handleSave()} disabled={saving}>
+                保存
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="send-group">
+              <button className="send-btn" onClick={() => void handleSend()} disabled={sending}>
+                {sending ? '发送中…' : '发送'}
+              </button>
+              <Dropdown menu={sendMenu} trigger={['click']}>
+                <button className="send-caret">
+                  <DownOutlined style={{ fontSize: 9 }} />
+                </button>
+              </Dropdown>
+            </div>
 
-        <div className="save-group">
-          <button className="save-btn" onClick={() => void handleSave()} disabled={saving}>
-            保存
-          </button>
-          <Dropdown menu={saveMenu} trigger={['click']}>
-            <button className="save-caret">
-              <DownOutlined style={{ fontSize: 9 }} />
-            </button>
-          </Dropdown>
-        </div>
+            <div className="save-group">
+              <button className="save-btn" onClick={() => void handleSave()} disabled={saving}>
+                保存
+              </button>
+              <Dropdown menu={saveMenu} trigger={['click']}>
+                <button className="save-caret">
+                  <DownOutlined style={{ fontSize: 9 }} />
+                </button>
+              </Dropdown>
+            </div>
+          </>
+        )}
       </div>
 
+      {headerSlot}
+
       <div className="req-tabs">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab}
             className={activeTab === tab ? 'active' : ''}
@@ -668,6 +897,24 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
       </div>
 
       {renderContent()}
+
+      <BodyPreviewModal
+        open={bodyPreviewOpen}
+        raw={body.raw ?? ''}
+        language={body.raw_language ?? 'json'}
+        onClose={() => setBodyPreviewOpen(false)}
+      />
+      <SmartImportModal
+        open={smartImportOpen}
+        existingDocs={body.field_docs ?? []}
+        onClose={() => setSmartImportOpen(false)}
+        onApply={({ raw, fieldDocs }) => {
+          setBody({ mode: 'json', raw, field_docs: fieldDocs })
+          setDesignView('structure')
+          setDesignRawEditing(false)
+          setJsonError(validateJson(raw))
+        }}
+      />
 
       <ModelPickerModal
         open={pickerOpen}

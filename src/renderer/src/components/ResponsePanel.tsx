@@ -17,10 +17,13 @@ interface Props {
   examples?: ResponseExample[]
   loading?: boolean
   projectId?: string
+  /** 设计页只保留响应契约相关 Tab */
+  mode?: 'debug' | 'design'
   onChangeExamples?: (examples: ResponseExample[]) => void
 }
 
 const TABS = ['实时响应', '响应头', 'Cookie', '响应示例', '字段说明', '实际请求', '控制台']
+const DESIGN_TABS = ['响应示例', '字段说明']
 
 function pretty(text: string): string {
   try {
@@ -93,12 +96,14 @@ export default function ResponsePanel({
   examples,
   loading,
   projectId,
+  mode = 'debug',
   onChangeExamples
 }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
   const modelEpoch = useModelEpoch(targetId)
+  const tabs = mode === 'design' ? DESIGN_TABS : TABS
   const [viewMode, setViewMode] = useState<ViewMode>('pretty')
-  const [activeTab, setActiveTab] = useState('实时响应')
+  const [activeTab, setActiveTab] = useState(mode === 'design' ? '响应示例' : '实时响应')
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelWarning, setModelWarning] = useState('')
@@ -245,6 +250,9 @@ export default function ResponsePanel({
     onChangeExamples?.(example ? (examples ?? []).map(item => item.example_id === example.example_id ? next : item) : [...(examples ?? []), next])
     setSelectedExample(next.example_id)
   }
+  const changeExpect = (patch: Partial<NonNullable<ResponseExample['expect']>>): void => {
+    changeExample({ expect: { ...(example?.expect ?? {}), ...patch } })
+  }
   const saveRecordedExample = (replace: boolean): void => {
     if (!record?.response || !onChangeExamples) return
     if (record.response.code < 200 || record.response.code >= 300) { message.warning('当前仅维护成功响应'); return }
@@ -316,6 +324,33 @@ export default function ResponsePanel({
       return (
         <div className="resp-filled">
           {referenceBar}
+          {mode === 'design' && onChangeExamples ? (
+            <div className="resp-expect-editor">
+              <Input
+                size="small"
+                value={example.expect?.name ?? ''}
+                placeholder="期望名称"
+                onChange={(event) => changeExpect({ name: event.target.value })}
+              />
+              <Input
+                size="small"
+                value={example.expect?.code == null ? '' : String(example.expect.code)}
+                placeholder="状态码"
+                onChange={(event) => {
+                  const value = event.target.value.trim()
+                  changeExpect({
+                    code: value ? (/^\d+$/.test(value) ? Number(value) : value) : undefined
+                  })
+                }}
+              />
+              <Input
+                size="small"
+                value={example.expect?.content_type ?? ''}
+                placeholder="Content-Type"
+                onChange={(event) => changeExpect({ content_type: event.target.value })}
+              />
+            </div>
+          ) : null}
           {modelWarning ? (
             <div className="muted" style={{ color: '#a47400', marginBottom: 8, fontSize: 11 }}>
               {modelWarning}
@@ -473,7 +508,7 @@ export default function ResponsePanel({
   return (
     <section className="resp">
       <div className="resp-tabs">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab}
             className={activeTab === tab ? 'active' : ''}

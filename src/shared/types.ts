@@ -69,14 +69,20 @@ export interface FieldDoc extends FieldRules {
   type?: JsonFieldType
   required?: boolean
   description?: string
+  /** 设计页 Mock 值，仅用于生成示例，不参与真实发送 */
+  mock?: string
   /** 用户显式新增、raw 中可能不存在的仅文档行 */
   doc_only?: boolean
   source?: 'manual' | 'openapi'
 }
 
+export type RawBodyLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
+
 export interface BodyModel {
   mode: BodyMode
   raw?: string
+  /** raw 子格式，仅用于设计/编辑展示 */
+  raw_language?: RawBodyLanguage
   parameter?: Param[]
   urlencoded?: Param[]
   formdata?: Param[]

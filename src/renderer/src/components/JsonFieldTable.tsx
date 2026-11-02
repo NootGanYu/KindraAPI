@@ -28,6 +28,8 @@ interface Props {
   raw: string
   docs: FieldDoc[]
   valuesReadOnly?: boolean
+  /** 设计页：隐藏值列，增加可空 / Mock 列 */
+  designMode?: boolean
   onChangeRaw: (raw: string) => void
   onChangeDocs: (docs: FieldDoc[]) => void
 }
@@ -45,7 +47,12 @@ const TYPE_OPTIONS: Array<{ value: JsonFieldType | '__auto__'; label: string }> 
 ]
 
 function docHasMeaning(doc: FieldDoc): boolean {
-  return Boolean(doc.type || doc.doc_only || RULE_KEYS.some(key => doc[key] !== undefined))
+  return Boolean(
+    doc.type ||
+    doc.doc_only ||
+    doc.mock !== undefined ||
+    RULE_KEYS.some(key => doc[key] !== undefined)
+  )
 }
 
 function upsertDoc(
@@ -177,6 +184,7 @@ export default function JsonFieldTable({
   raw,
   docs,
   valuesReadOnly = false,
+  designMode = false,
   onChangeRaw,
   onChangeDocs
 }: Props): JSX.Element {
@@ -394,10 +402,15 @@ export default function JsonFieldTable({
   return (
     <div className="json-field-panel">
       <div className="json-field-toolbar">
-        <span className="json-field-title">字段说明</span>
+        <span className="json-field-title">{designMode ? '数据结构' : '字段说明'}</span>
         <span className="muted" style={{ fontSize: 11 }}>
-          值与结构以原始 JSON 为准
+          {designMode ? '结构定义不包含实际值' : '值与结构以原始 JSON 为准'}
         </span>
+        {designMode ? (
+          <span className="muted" style={{ fontSize: 11 }}>
+            根节点：{result.rootKind === 'array' ? 'array' : 'object'}
+          </span>
+        ) : null}
         <span style={{ flex: 1 }} />
         <Tooltip title="新增 raw 中不存在的仅文档字段">
           <Button size="small" icon={<PlusOutlined />} onClick={openAdd}>
@@ -417,12 +430,14 @@ export default function JsonFieldTable({
         </div>
       ) : null}
 
-      <div className="json-field-table">
+      <div className={`json-field-table${designMode ? ' design-mode' : ''}`}>
         <div className="json-field-row json-field-head">
           <div className="json-field-cell json-field-name">字段</div>
-          <div className="json-field-cell json-field-value">值</div>
+          {designMode ? null : <div className="json-field-cell json-field-value">值</div>}
           <div className="json-field-cell json-field-type">类型</div>
           <div className="json-field-cell json-field-required">必填</div>
+          {designMode ? <div className="json-field-cell json-field-nullable">可空</div> : null}
+          {designMode ? <div className="json-field-cell json-field-mock">Mock</div> : null}
           <div className="json-field-cell json-field-desc">说明</div>
           <div className="json-field-cell json-field-actions" />
         </div>
@@ -457,9 +472,11 @@ export default function JsonFieldTable({
                   {row.wildcard ? <Tag>数组元素</Tag> : null}
                 </span>
               </div>
-              <div className="json-field-cell json-field-value">
-                <ValueCell row={row} readOnly={valuesReadOnly} onCommit={(value) => commitValue(row, value)} />
-              </div>
+              {designMode ? null : (
+                <div className="json-field-cell json-field-value">
+                  <ValueCell row={row} readOnly={valuesReadOnly} onCommit={(value) => commitValue(row, value)} />
+                </div>
+              )}
               <div className="json-field-cell json-field-type">
                 <Select
                   size="small"
@@ -492,6 +509,44 @@ export default function JsonFieldTable({
                   onChange={(event) => updateDoc(row.pointer, { required: event.target.checked })}
                 />
               </div>
+              {designMode ? (
+                <div className="json-field-cell json-field-nullable">
+                  {(() => {
+                    const explicit = typeof row.doc?.nullable === 'boolean'
+                    const canBeNull = explicit ? Boolean(row.doc?.nullable) : row.nullable
+                    return (
+                      <button
+                        type="button"
+                        className={`design-bool-btn${canBeNull ? ' on' : ''}${
+                          explicit ? '' : ' inferred'
+                        }`}
+                        disabled={valuesReadOnly || row.type === 'null'}
+                        title={
+                          explicit
+                            ? '切换是否可为 null'
+                            : '未显式声明，当前按示例推断；点击写入明确值'
+                        }
+                        onClick={() => updateDoc(row.pointer, { nullable: !canBeNull })}
+                      >
+                        {canBeNull ? '是' : '否'}
+                      </button>
+                    )
+                  })()}
+                </div>
+              ) : null}
+              {designMode ? (
+                <div className="json-field-cell json-field-mock">
+                  <Input
+                    variant="borderless"
+                    value={row.doc?.mock ?? ''}
+                    disabled={valuesReadOnly}
+                    placeholder="Mock 值"
+                    onChange={(event) =>
+                      updateDoc(row.pointer, { mock: event.target.value || undefined })
+                    }
+                  />
+                </div>
+              ) : null}
               <div className="json-field-cell json-field-desc">
                 <Input.TextArea
                   variant="borderless"

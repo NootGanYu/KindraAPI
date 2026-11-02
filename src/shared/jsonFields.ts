@@ -637,6 +637,74 @@ export function deleteValueAtPointer(root: unknown, pointer: string): boolean {
   return delete (current as Record<string, unknown>)[parts[parts.length - 1]]
 }
 
+function parseMockText(text: string, type?: JsonFieldType): unknown {
+  const trimmed = text.trim()
+  if (!trimmed) return text
+  if (type === 'string') return text
+  if (type === 'boolean') {
+    if (trimmed === 'true') return true
+    if (trimmed === 'false') return false
+    return text
+  }
+  if (type === 'integer') {
+    const value = Number(trimmed)
+    return Number.isInteger(value) ? value : text
+  }
+  if (type === 'number') {
+    const value = Number(trimmed)
+    return Number.isNaN(value) ? text : value
+  }
+  if (type === 'null') return null
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return text
+  }
+}
+
+function setMockAtParts(node: unknown, parts: string[], value: unknown): boolean {
+  if (parts.length === 0) return false
+  const [head, ...rest] = parts
+  if (Array.isArray(node)) {
+    if (head !== '*') return false
+    if (rest.length === 0 || node.length === 0) return false
+    let changed = false
+    for (const item of node) {
+      if (item !== null && typeof item === 'object' && setMockAtParts(item, rest, value)) {
+        changed = true
+      }
+    }
+    return changed
+  }
+  if (node === null || typeof node !== 'object') return false
+  const record = node as Record<string, unknown>
+  if (!Object.hasOwn(record, head)) return false
+  if (rest.length === 0) {
+    record[head] = value
+    return true
+  }
+  return setMockAtParts(record[head], rest, value)
+}
+
+/** 把字段文档里的 Mock 值写入 JSON 副本，数组通配 `*` 会应用到每个元素。 */
+export function applyFieldMocks(root: unknown, docs: FieldDoc[]): unknown {
+  if (!docs?.length) return root
+  let clone: unknown
+  try {
+    clone = JSON.parse(JSON.stringify(root))
+  } catch {
+    return root
+  }
+  let changed = false
+  for (const doc of docs) {
+    if (typeof doc.mock !== 'string' || !doc.mock.trim()) continue
+    const parts = splitPointer(doc.pointer)
+    if (parts.length === 0) continue
+    if (setMockAtParts(clone, parts, parseMockText(doc.mock, doc.type))) changed = true
+  }
+  return changed ? clone : root
+}
+
 export type ParsedValue =
   | { ok: true; value: unknown }
   | { ok: false; error: string }
@@ -704,6 +772,8 @@ export function normalizeFieldDocs(value: unknown): FieldDoc[] | null {
     if (isJsonFieldType(source.type)) doc.type = source.type
     if (typeof source.required === 'boolean') doc.required = source.required
     if (typeof source.description === 'string') doc.description = source.description
+    if (typeof source.mock === 'string') doc.mock = source.mock
+    else if (typeof source['x-mock'] === 'string') doc.mock = source['x-mock']
     if (typeof source.doc_only === 'boolean') doc.doc_only = source.doc_only
     if (source.source === 'openapi' || source.source === 'manual') doc.source = source.source
     map.set(pointer, doc)
@@ -734,6 +804,7 @@ export function mergeFieldDocs(
       description,
       type: doc.type ?? previous.type,
       required: doc.required ?? previous.required,
+      mock: doc.mock ?? previous.mock,
       doc_only: doc.doc_only ?? previous.doc_only,
       source: doc.source ?? previous.source
     })
@@ -796,6 +867,8 @@ export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDo
       if (typeof source.description === 'string' && source.description.trim()) {
         doc.description = source.description.trim()
       }
+      if (typeof source.mock === 'string') doc.mock = source.mock
+      else if (typeof source['x-mock'] === 'string') doc.mock = source['x-mock']
       doc.doc_only = true
     }
     const source = node as Record<string, unknown>
