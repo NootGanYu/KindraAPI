@@ -28,6 +28,9 @@ interface Props {
   raw: string
   docs: FieldDoc[]
   valuesReadOnly?: boolean
+  /** design 维护结构与说明；debug 只允许改值 */
+  mode?: 'design' | 'debug' | 'edit'
+  title?: string
   onChangeRaw: (raw: string) => void
   onChangeDocs: (docs: FieldDoc[]) => void
 }
@@ -79,10 +82,12 @@ function removeDocTree(docs: FieldDoc[], pointer: string): FieldDoc[] {
 function ValueCell({
   row,
   readOnly,
+  canEditMissing = false,
   onCommit
 }: {
   row: JsonFieldRow
   readOnly: boolean
+  canEditMissing?: boolean
   onCommit: (value: unknown) => void
 }): JSX.Element {
   const [text, setText] = useState(row.valueText)
@@ -94,8 +99,11 @@ function ValueCell({
     setError(null)
   }, [row.pointer, row.valueText, row.type])
 
-  if (!row.present) {
+  if (!row.present && !canEditMissing) {
     return <span className="muted">（未出现在示例中）</span>
+  }
+  if (!row.present && (row.type === 'object' || row.type === 'array')) {
+    return <span className="muted">（由子字段生成）</span>
   }
   if (row.wildcard) {
     if (row.sameValue && row.type !== 'object' && row.type !== 'array') {
@@ -177,10 +185,13 @@ export default function JsonFieldTable({
   raw,
   docs,
   valuesReadOnly = false,
+  mode = 'edit',
+  title = '字段说明',
   onChangeRaw,
   onChangeDocs
 }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
+  const docsReadOnly = mode === 'debug' || valuesReadOnly
   const result = useMemo(() => buildFieldRows(raw, docs), [raw, docs])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const initialized = useRef(false)
@@ -237,15 +248,19 @@ export default function JsonFieldTable({
   }
 
   const commitValue = (row: JsonFieldRow, value: unknown): void => {
-    if (valuesReadOnly || !row.present || row.wildcard) return
+    if (valuesReadOnly || row.wildcard) return
     let parsed: unknown
     try {
-      parsed = JSON.parse(raw)
+      parsed = raw.trim() ? JSON.parse(raw) : {}
     } catch {
       message.error('当前 JSON 无效，无法写回字段值')
       return
     }
-    if (!setValueAtPointer(parsed, row.pointer, value)) {
+    if (parsed === null || typeof parsed !== 'object') {
+      message.error('当前 JSON 不是对象或数组，无法写回字段值')
+      return
+    }
+    if (!setValueAtPointer(parsed, row.pointer, value, { createMissing: !row.present })) {
       message.error('无法在该路径写入值')
       return
     }
@@ -392,18 +407,20 @@ export default function JsonFieldTable({
   }
 
   return (
-    <div className="json-field-panel">
+    <div className={`json-field-panel${docsReadOnly ? ' json-field-panel--readonly' : ''}`}>
       <div className="json-field-toolbar">
-        <span className="json-field-title">字段说明</span>
+        <span className="json-field-title">{title}</span>
         <span className="muted" style={{ fontSize: 11 }}>
-          值与结构以原始 JSON 为准
+          {docsReadOnly ? '结构由设计页维护，这里只修改值' : '字段结构以本表为准，示例 JSON 可留空'}
         </span>
         <span style={{ flex: 1 }} />
-        <Tooltip title="新增 raw 中不存在的仅文档字段">
-          <Button size="small" icon={<PlusOutlined />} onClick={openAdd}>
-            仅文档字段
-          </Button>
-        </Tooltip>
+        {docsReadOnly ? null : (
+          <Tooltip title="新增 raw 中不存在的仅文档字段">
+            <Button size="small" icon={<PlusOutlined />} onClick={openAdd}>
+              仅文档字段
+            </Button>
+          </Tooltip>
+        )}
       </div>
 
       {result.orphanCount > 0 ? (
@@ -428,7 +445,7 @@ export default function JsonFieldTable({
         </div>
 
         {visibleRows.map((row) => {
-          const items = valuesReadOnly ? [] : menuItems(row)
+          const items = valuesReadOnly || docsReadOnly ? [] : menuItems(row)
           return (
             <div
               className={`json-field-row${row.orphan ? ' is-orphan' : ''}${
@@ -458,7 +475,12 @@ export default function JsonFieldTable({
                 </span>
               </div>
               <div className="json-field-cell json-field-value">
-                <ValueCell row={row} readOnly={valuesReadOnly} onCommit={(value) => commitValue(row, value)} />
+                <ValueCell
+                  row={row}
+                  readOnly={valuesReadOnly}
+                  canEditMissing={!valuesReadOnly}
+                  onCommit={(value) => commitValue(row, value)}
+                />
               </div>
               <div className="json-field-cell json-field-type">
                 <Select
@@ -466,7 +488,7 @@ export default function JsonFieldTable({
                   variant="borderless"
                   style={{ flex: 1, minWidth: 0 }}
                   value={row.typeOverridden ? row.type : '__auto__'}
-                  disabled={valuesReadOnly && row.present}
+                  disabled={valuesReadOnly || docsReadOnly}
                   options={TYPE_OPTIONS.map((option) =>
                     option.value === '__auto__'
                       ? { ...option, label: `自动（${row.inferred}${row.mixed ? '/mixed' : ''}）` }
@@ -486,7 +508,7 @@ export default function JsonFieldTable({
               </div>
               <div className="json-field-cell json-field-required">
                 <Checkbox
-                  disabled={valuesReadOnly}
+                  disabled={valuesReadOnly || docsReadOnly}
                   indeterminate={row.doc?.required === undefined}
                   checked={row.required}
                   onChange={(event) => updateDoc(row.pointer, { required: event.target.checked })}
@@ -496,27 +518,31 @@ export default function JsonFieldTable({
                 <Input.TextArea
                   variant="borderless"
                   autoSize={{ minRows: 1, maxRows: 4 }}
-                  disabled={valuesReadOnly}
+                  disabled={valuesReadOnly || docsReadOnly}
                   value={row.description}
                   placeholder="字段含义"
                   onChange={(event) => updateDoc(row.pointer, { description: event.target.value })}
                 />
               </div>
               <div className="json-field-cell json-field-actions" style={{ minWidth: 80 }}>
-                <FieldRulesEditor value={{ ...row.doc, type: row.type }} disabled={valuesReadOnly} onChange={rules => updateDoc(row.pointer, rules as Partial<FieldDoc>)} />
-                {items.length > 0 ? (
-                  <Dropdown
-                    trigger={['click']}
-                    menu={{
-                      items,
-                      onClick: ({ key }) => handleMenu(row, key)
-                    }}
-                  >
-                    <button className="param-delete" title="更多操作">
-                      <MoreOutlined style={{ fontSize: 13 }} />
-                    </button>
-                  </Dropdown>
-                ) : null}
+                {docsReadOnly ? null : (
+                  <>
+                    <FieldRulesEditor value={{ ...row.doc, type: row.type }} disabled={valuesReadOnly} onChange={rules => updateDoc(row.pointer, rules as Partial<FieldDoc>)} />
+                    {items.length > 0 ? (
+                      <Dropdown
+                        trigger={['click']}
+                        menu={{
+                          items,
+                          onClick: ({ key }) => handleMenu(row, key)
+                        }}
+                      >
+                        <button className="param-delete" title="更多操作">
+                          <MoreOutlined style={{ fontSize: 13 }} />
+                        </button>
+                      </Dropdown>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           )
@@ -524,7 +550,9 @@ export default function JsonFieldTable({
 
         {result.rows.length === 0 ? (
           <div className="json-field-empty">
-            当前请求体没有字段。可切换到「原始」编写 JSON，或新增仅文档字段。
+            {docsReadOnly
+              ? '暂无字段，请在设计页维护字段结构。'
+              : '当前请求体没有字段。可切换到「示例」编写 JSON，或新增仅文档字段。'}
           </div>
         ) : null}
       </div>

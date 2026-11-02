@@ -21,6 +21,7 @@ import type {
   Target
 } from '@shared/types'
 import { createBody } from '@shared/factories'
+import { buildExampleFromDocs } from '@shared/jsonFields'
 import { hasLocalEdits, useApp, useModelEpoch } from '../store'
 import ParamTable from './ParamTable'
 import JsonFieldTable from './JsonFieldTable'
@@ -29,6 +30,8 @@ import ModelPickerModal from './schemas/ModelPickerModal'
 interface Props {
   draft: Target
   onChange: (patch: Partial<Target>) => void
+  /** design 维护契约并允许发送；debug 只允许改值并发送 */
+  mode?: 'design' | 'debug'
 }
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
@@ -92,8 +95,9 @@ function DocIllustration(): JSX.Element {
   )
 }
 
-export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
+export default function RequestEditor({ draft, onChange, mode = 'design' }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
+  const debug = mode === 'debug'
   const projectId = useApp((s) => s.project?.project_id ?? '')
   const saveTarget = useApp((s) => s.saveTarget)
   const sendActive = useApp((s) => s.sendActive)
@@ -102,7 +106,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   const [activeTab, setActiveTab] = useState('Body')
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
-  const [bodyView, setBodyView] = useState<'raw' | 'fields'>('raw')
+  const [bodyView, setBodyView] = useState<'raw' | 'fields'>('fields')
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
 
@@ -292,10 +296,12 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
   }
 
   const saveMenu = {
-    items: [
-      { key: 'save', label: '保存' },
-      { key: 'saveSend', label: '保存并发送' }
-    ],
+    items: debug
+      ? [
+          { key: 'save', label: '保存' },
+          { key: 'saveSend', label: '保存并发送' }
+        ]
+      : [{ key: 'save', label: '保存' }],
     onClick: ({ key }: { key: string }) => {
       if (key === 'save') void handleSave()
       if (key === 'saveSend') {
@@ -322,7 +328,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
       )
     }
     if (body.mode === 'raw' || body.mode === 'json') {
-      const fieldView = body.mode === 'json' && bodyView === 'fields'
+      const fieldView = !debug && body.mode === 'json' && bodyView === 'fields'
       return (
         <div className="body-editor-wrap">
           <div className="body-model-bar">
@@ -334,14 +340,34 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
                   <Tag color="gold">模型 · {referencedModel?.name}</Tag>
                 )}
                 <span className="muted">发送时按模型实时生成，内容只读</span>
-                <Tooltip title="解除引用后保留当前 JSON 可编辑">
-                  <button className="mini" onClick={confirmEdit}>
-                    编辑
-                  </button>
-                </Tooltip>
-                <button className="mini" onClick={clearModelRef}>
-                  解除引用
+                {debug ? null : (
+                  <>
+                    <Tooltip title="解除引用后保留当前 JSON 可编辑">
+                      <button className="mini" onClick={confirmEdit}>
+                        编辑
+                      </button>
+                    </Tooltip>
+                    <button className="mini" onClick={clearModelRef}>
+                      解除引用
+                    </button>
+                  </>
+                )}
+              </>
+            ) : debug ? (
+              <>
+                <button
+                  className="mini"
+                  disabled={body.mode !== 'json' && body.mode !== 'raw'}
+                  onClick={() =>
+                    setBody({
+                      mode: 'json',
+                      raw: buildExampleFromDocs(body.field_docs ?? [], body.raw ?? '')
+                    })
+                  }
+                >
+                  基于数据结构生成
                 </button>
+                <span className="muted">按设计结构补全字段，已有值保留</span>
               </>
             ) : (
               <>
@@ -364,15 +390,15 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
             ) : (
               <>
                 <span style={{ flex: 1 }} />
-                {body.mode === 'json' ? (
+                {!debug && body.mode === 'json' ? (
                   <Segmented
                     className="body-view-segmented"
                     size="small"
                     value={bodyView}
                     onChange={(value) => setBodyView(value as 'raw' | 'fields')}
                     options={[
-                      { label: '原始', value: 'raw' },
-                      { label: '字段', value: 'fields' }
+                      { label: '示例', value: 'raw' },
+                      { label: '数据结构', value: 'fields' }
                     ]}
                   />
                 ) : null}
@@ -384,6 +410,8 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
               raw={body.raw ?? ''}
               docs={body.field_docs ?? []}
               valuesReadOnly={Boolean(bodyModel)}
+              mode={mode}
+              title={debug ? '字段值' : '数据结构'}
               onChangeRaw={(raw) => setBody({ raw })}
               onChangeDocs={(field_docs) => setBody({ field_docs })}
             />
@@ -414,6 +442,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
         <ParamTable
           title="表单参数（urlencoded）"
           params={body.urlencoded ?? []}
+          mode={mode}
           onChange={(urlencoded) => setBody({ urlencoded })}
         />
       )
@@ -423,6 +452,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
         <ParamTable
           title="表单参数（form-data）"
           params={body.formdata ?? []}
+          mode={mode}
           onChange={(formdata) => setBody({ formdata })}
           valuePlaceholder="值或文件路径"
           allowFile
@@ -507,6 +537,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           <ParamTable
             title="公共参数（Header）"
             params={request.header?.parameter ?? []}
+            mode={mode}
             onChange={(parameter) => setRequest({ header: { parameter } })}
             keyPlaceholder="Header 名"
           />
@@ -519,6 +550,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           <ParamTable
             title="查询参数（Query）"
             params={request.query?.parameter ?? []}
+            mode={mode}
             onChange={(parameter) => setRequest({ query: { parameter } })}
             keyPlaceholder="参数名"
           />
@@ -531,6 +563,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           <ParamTable
             title="路径参数（Path）"
             params={request.restful?.parameter ?? []}
+            mode={mode}
             onChange={(parameter) => setRequest({ restful: { parameter } })}
             keyPlaceholder="路径变量（不含 {}）"
           />
@@ -543,6 +576,7 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           <ParamTable
             title="Cookie 参数"
             params={request.cookie?.parameter ?? []}
+            mode={mode}
             onChange={(parameter) => setRequest({ cookie: { parameter } })}
             keyPlaceholder="Cookie 名"
           />
@@ -614,7 +648,9 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
               value={draft.url ?? ''}
               onChange={(event) => onChange({ url: event.target.value })}
               placeholder="请输入URL或粘贴cURL文本"
-              onPressEnter={() => void handleSend()}
+              onPressEnter={() => {
+                if (!debug) void handleSend()
+              }}
             />
           </div>
           <div className="proto-select">
@@ -632,16 +668,18 @@ export default function RequestEditor({ draft, onChange }: Props): JSX.Element {
           </div>
         </div>
 
-        <div className="send-group">
-          <button className="send-btn" onClick={() => void handleSend()} disabled={sending}>
-            {sending ? '发送中…' : '发送'}
-          </button>
-          <Dropdown menu={sendMenu} trigger={['click']}>
-            <button className="send-caret">
-              <DownOutlined style={{ fontSize: 9 }} />
+        {debug ? (
+          <div className="send-group">
+            <button className="send-btn" onClick={() => void handleSend()} disabled={sending}>
+              {sending ? '发送中…' : '发送'}
             </button>
-          </Dropdown>
-        </div>
+            <Dropdown menu={sendMenu} trigger={['click']}>
+              <button className="send-caret">
+                <DownOutlined style={{ fontSize: 9 }} />
+              </button>
+            </Dropdown>
+          </div>
+        ) : null}
 
         <div className="save-group">
           <button className="save-btn" onClick={() => void handleSave()} disabled={saving}>

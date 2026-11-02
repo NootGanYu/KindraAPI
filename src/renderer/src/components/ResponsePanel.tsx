@@ -3,7 +3,7 @@ import { fieldDocsFromSchema, mergeFieldDocs } from '@shared/jsonFields'
 import { exampleFromRecord, hasLocalEdits, useApp, useModelEpoch } from '../store'
 import { modelDocumentation } from './schemas/modelDocumentation'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { App as AntApp, Input, Select, Tag, Tooltip } from 'antd'
+import { App as AntApp, Input, Modal, Select, Tag, Tooltip } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
 import type { ModelSummary, Param, ResponseExample, SendRecord } from '@shared/types'
 import { createId } from '@shared/factories'
@@ -17,6 +17,9 @@ interface Props {
   examples?: ResponseExample[]
   loading?: boolean
   projectId?: string
+  /** design 维护期望契约；debug 只读示例并允许显式保存；view 保持旧行为 */
+  mode?: 'design' | 'debug' | 'view'
+  defaultTab?: string
   onChangeExamples?: (examples: ResponseExample[]) => void
 }
 
@@ -93,16 +96,31 @@ export default function ResponsePanel({
   examples,
   loading,
   projectId,
+  mode = 'view',
+  defaultTab,
   onChangeExamples
 }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
+  const design = mode === 'design'
+  const debug = mode === 'debug'
+  const visibleTabs = design
+    ? ['字段说明', '响应示例']
+    : debug
+      ? TABS.filter(tab => tab !== '字段说明')
+      : TABS
   const modelEpoch = useModelEpoch(targetId)
-  const [viewMode, setViewMode] = useState<ViewMode>('pretty')
-  const [activeTab, setActiveTab] = useState('实时响应')
+  const [viewMode, setViewMode] = useState<ViewMode>(design ? 'raw' : 'pretty')
+  const [activeTab, setActiveTab] = useState(defaultTab ?? '实时响应')
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelWarning, setModelWarning] = useState('')
   const [selectedExample, setSelectedExample] = useState<string>()
+  const [expectOpen, setExpectOpen] = useState(false)
+  const [expectDraft, setExpectDraft] = useState({
+    name: '成功',
+    code: '200',
+    contentType: 'application/json'
+  })
 
   const response = record?.response ?? null
   const ok = response && !record?.error
@@ -151,7 +169,7 @@ export default function ResponsePanel({
   const modelMissing = Boolean(exampleModelId) && !referencedModel
 
   useEffect(() => {
-    if (!exampleModelId || !projectId || !onChangeExamples || !example) return
+    if (!exampleModelId || !projectId || !onChangeExamples || !example || debug) return
     let active = true
     modelDocumentation(projectId, exampleModelId)
       .then((result) => {
@@ -237,6 +255,7 @@ export default function ResponsePanel({
   }
 
   const changeExample = (patch: Partial<ResponseExample>): void => {
+    if (debug) return
     const next: ResponseExample = { ...(example ?? { example_id: createId('ex'), expect: { name: '成功', code: 200, content_type: 'application/json', is_default: 1 } }), ...patch }
     if (patch.field_docs && next.expect) {
       next.expect = { ...next.expect }
@@ -245,6 +264,30 @@ export default function ResponsePanel({
     onChangeExamples?.(example ? (examples ?? []).map(item => item.example_id === example.example_id ? next : item) : [...(examples ?? []), next])
     setSelectedExample(next.example_id)
   }
+  const openNewExpectation = (): void => {
+    setExpectDraft({ name: '成功', code: '200', contentType: 'application/json' })
+    setExpectOpen(true)
+  }
+
+  const submitExpectation = (): void => {
+    if (!onChangeExamples) return
+    const next: ResponseExample = {
+      example_id: createId('ex'),
+      expect: {
+        name: expectDraft.name.trim() || '期望',
+        code: Number(expectDraft.code) || 200,
+        content_type: expectDraft.contentType || 'application/json',
+        is_default: 0
+      },
+      raw: '{}',
+      field_docs: []
+    }
+    onChangeExamples([...(examples ?? []), next])
+    setSelectedExample(next.example_id)
+    setActiveTab('字段说明')
+    setExpectOpen(false)
+  }
+
   const saveRecordedExample = (replace: boolean): void => {
     if (!record?.response || !onChangeExamples) return
     if (record.response.code < 200 || record.response.code >= 300) { message.warning('当前仅维护成功响应'); return }
@@ -261,16 +304,30 @@ export default function ResponsePanel({
 
   const renderContent = (): JSX.Element => {
     if (activeTab === '字段说明') {
+      if (!example) {
+        return <div className="resp-empty" style={{ paddingBottom: 0, minHeight: 180 }}>
+          <RocketIllustration />
+          <span>暂无预定义响应期望</span>
+          {design && onChangeExamples ? <button className="mini" onClick={openNewExpectation}>新建期望</button> : null}
+        </div>
+      }
       return <div className="resp-filled">
         {modelWarning && <div role="alert">{modelWarning}</div>}
-        {exampleModelId && <div>字段规则继承数据模型。<button className="mini" onClick={editExampleModel}>解除并编辑</button></div>}
-        <JsonFieldTable raw={example?.raw ?? ''} docs={mergeFieldDocs(fieldDocsFromSchema(example?.expect?.schema), example?.field_docs)} valuesReadOnly={Boolean(exampleModelId) || !onChangeExamples}
-          onChangeRaw={raw => changeExample({ raw })} onChangeDocs={field_docs => changeExample({ field_docs })} />
+        {exampleModelId && !debug && <div>字段规则继承数据模型。<button className="mini" onClick={editExampleModel}>解除并编辑</button></div>}
+        <JsonFieldTable
+          raw={example?.raw ?? ''}
+          docs={mergeFieldDocs(fieldDocsFromSchema(example?.expect?.schema), example?.field_docs)}
+          valuesReadOnly={Boolean(exampleModelId) || !onChangeExamples || debug}
+          mode={design ? 'design' : debug ? 'debug' : 'edit'}
+          title={design ? '数据结构' : debug ? '字段值' : '字段说明'}
+          onChangeRaw={raw => changeExample({ raw })}
+          onChangeDocs={field_docs => changeExample({ field_docs })}
+        />
       </div>
     }
     if (activeTab === '响应示例') {
       const referenceBar =
-        projectId && onChangeExamples ? (
+        projectId && onChangeExamples && !debug ? (
           <div className="body-model-bar" style={{ marginBottom: 8 }}>
             {exampleModelId ? (
               <>
@@ -307,7 +364,8 @@ export default function ResponsePanel({
             {referenceBar}
             <div className="resp-empty" style={{ paddingBottom: 0, minHeight: 180 }}>
               <RocketIllustration />
-              <span>暂无响应示例</span>{onChangeExamples && <button className="mini" onClick={() => { changeExample({ raw: '{}' }); setViewMode('raw') }}>新增成功响应</button>}
+              <span>暂无预定义响应期望</span>
+              {design && onChangeExamples ? <button className="mini" onClick={openNewExpectation}>新建期望</button> : null}
             </div>
           </div>
         )
@@ -321,15 +379,53 @@ export default function ResponsePanel({
               {modelWarning}
             </div>
           ) : null}
-          <div className="resp-meta">
-            <span className="method-text">{example.expect?.code ?? '200'}</span>
-            <span>{example.expect?.name ?? '示例'}</span>
-            <span className="muted">{example.expect?.content_type}</span>
-          </div>
+          {design ? (
+            <div className="resp-expect-edit">
+              <Input
+                size="small"
+                value={example.expect?.name ?? ''}
+                placeholder="期望名称"
+                onChange={event =>
+                  changeExample({
+                    expect: { ...(example.expect ?? {}), name: event.target.value }
+                  })
+                }
+              />
+              <Input
+                size="small"
+                value={String(example.expect?.code ?? '200')}
+                placeholder="状态码"
+                onChange={event =>
+                  changeExample({
+                    expect: { ...(example.expect ?? {}), code: event.target.value }
+                  })
+                }
+              />
+              <Select
+                size="small"
+                value={example.expect?.content_type ?? 'application/json'}
+                onChange={content_type =>
+                  changeExample({ expect: { ...(example.expect ?? {}), content_type } })
+                }
+                options={[
+                  { value: 'application/json', label: 'JSON' },
+                  { value: 'text/plain', label: 'Text' },
+                  { value: 'text/html', label: 'HTML' },
+                  { value: 'application/xml', label: 'XML' }
+                ]}
+              />
+            </div>
+          ) : (
+            <div className="resp-meta">
+              <span className="method-text">{example.expect?.code ?? '200'}</span>
+              <span>{example.expect?.name ?? '示例'}</span>
+              <span className="muted">{example.expect?.content_type}</span>
+            </div>
+          )}
           {viewMode === 'pretty' ? (
             <pre className="resp-code">{pretty(raw) || '(空响应示例)'}</pre>
           ) : viewMode === 'raw' ? (
-            <Input.TextArea aria-label="响应示例 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={raw} readOnly={Boolean(exampleModelId) || !onChangeExamples} onChange={event => changeExample({ raw: event.target.value })} />
+            <Input.TextArea aria-label="响应示例 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={raw} readOnly={Boolean(exampleModelId) || !onChangeExamples || debug} onChange={event => changeExample({ raw: event.target.value })} />
           ) : viewMode === 'preview' ? (
             <PreviewView mime={String(example.expect?.content_type ?? '')} body={raw} />
           ) : (
@@ -473,7 +569,7 @@ export default function ResponsePanel({
   return (
     <section className="resp">
       <div className="resp-tabs">
-        {TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab}
             className={activeTab === tab ? 'active' : ''}
@@ -524,7 +620,25 @@ export default function ResponsePanel({
           </button>
         </div>
       ) : null}
-      {(activeTab === '响应示例' || activeTab === '字段说明') && (examples?.length ?? 0) > 0 && <Select aria-label="选择响应示例" value={example?.example_id} onChange={setSelectedExample} options={(examples ?? []).map(item => ({ value: item.example_id, label: (item.expect?.name ?? '成功') + ' · ' + (item.expect?.code ?? 200) }))} />}
+      {(activeTab === '响应示例' || activeTab === '字段说明') && (examples?.length ?? 0) > 0 ? (
+        <div className="resp-expect-tabs">
+          {(examples ?? []).map(item => (
+            <button
+              key={item.example_id}
+              className={item.example_id === example?.example_id ? 'active' : ''}
+              onClick={() => setSelectedExample(item.example_id)}
+            >
+              {item.expect?.name ?? '成功'}
+              <span className="muted">（{item.expect?.code ?? 200}）</span>
+            </button>
+          ))}
+          {design && onChangeExamples ? (
+            <button className="resp-expect-add" onClick={openNewExpectation}>
+              + 新建期望
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {record?.response && onChangeExamples && activeTab === '实时响应' && <div className="resp-toolbar"><span>保存为响应示例：</span><button onClick={() => saveRecordedExample(false)}>新增</button><button disabled={!example} onClick={() => saveRecordedExample(true)}>更新当前示例（保留字段规则）</button></div>}
       {renderContent()}
 
@@ -537,6 +651,41 @@ export default function ResponsePanel({
           onSelect={(model) => void selectExampleModel(model)}
         />
       ) : null}
+
+      <Modal
+        title="新建响应期望"
+        open={expectOpen}
+        onCancel={() => setExpectOpen(false)}
+        onOk={submitExpectation}
+        okText="确定"
+        cancelText="取消"
+      >
+        <div className="field-form">
+          <label>期望名称</label>
+          <Input
+            value={expectDraft.name}
+            placeholder="例如：成功"
+            onChange={event => setExpectDraft({ ...expectDraft, name: event.target.value })}
+          />
+          <label>状态码</label>
+          <Input
+            value={expectDraft.code}
+            placeholder="200"
+            onChange={event => setExpectDraft({ ...expectDraft, code: event.target.value })}
+          />
+          <label>内容格式</label>
+          <Select
+            value={expectDraft.contentType}
+            onChange={contentType => setExpectDraft({ ...expectDraft, contentType })}
+            options={[
+              { value: 'application/json', label: 'JSON' },
+              { value: 'text/plain', label: 'Text' },
+              { value: 'text/html', label: 'HTML' },
+              { value: 'application/xml', label: 'XML' }
+            ]}
+          />
+        </div>
+      </Modal>
     </section>
   )
 }

@@ -425,7 +425,20 @@ async function main() {
     const apiName = page.locator('.api-name input')
     await apiName.fill('UI 引用接口')
     await apiName.press('Enter')
+    await page.locator('.mode-row .segmented').getByText('设计', { exact: true }).click()
+    if (await page.locator('.send-group').count()) {
+      throw new Error('设计页不应显示发送按钮')
+    }
+    await page.locator('.mode-row .segmented').getByText('调试', { exact: true }).click()
+    if ((await urlInput.getAttribute('readonly')) !== null) {
+      throw new Error('调试页 URL 应可编辑')
+    }
+    if (!(await page.locator('.send-group').count())) {
+      throw new Error('调试页应显示发送按钮')
+    }
+    await page.locator('.mode-row .segmented').getByText('设计', { exact: true }).click()
     await page.locator('.bodytypes .ant-radio-wrapper').filter({ hasText: 'raw' }).click()
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '示例' }).click()
     await page.locator('.req-body .body-model-bar').getByText('引用模型').click()
     await pickModel('UI 模型', '选择数据模型')
     const bodyTextArea = page.locator('.req-body textarea.editor-input')
@@ -462,21 +475,21 @@ async function main() {
     await bodyTextArea.pressSequentially('{"user":{"name":"Ada"},"amount":12}', { delay: 10 })
     await page.waitForTimeout(700)
     await page.locator('.body-view-segmented').waitFor()
-    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '字段' }).click()
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '数据结构' }).click()
     await page.locator('.json-field-panel').waitFor()
     const nameRow = page
       .locator('.json-field-name [title="user.name"]')
       .locator('xpath=ancestor::div[contains(@class,"json-field-row")]')
     await nameRow.locator('textarea').fill('用户姓名')
     await page.waitForTimeout(200)
-    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '原始' }).click()
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '示例' }).click()
     const rawValue = await bodyTextArea.inputValue()
     if (!rawValue.includes('"name": "Ada"')) {
       throw new Error('字段说明编辑不应破坏原始 JSON')
     }
     await page.locator('.save-btn').click()
     await page.waitForTimeout(300)
-    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '字段' }).click()
+    await page.locator('.body-view-segmented .ant-segmented-item').filter({ hasText: '数据结构' }).click()
     const savedDescription = await page
       .locator('.json-field-name [title="user.name"]')
       .locator('xpath=ancestor::div[contains(@class,"json-field-row")]')
@@ -498,7 +511,7 @@ async function main() {
       .waitFor()
     await pickModel('UI 模型', '选择响应示例模型')
     await page.locator('.resp .body-model-bar').getByText('模型 · UI 模型').waitFor()
-    const code = await page.locator('.resp-code').first().innerText()
+    const code = await page.locator('textarea[aria-label="响应示例 JSON"]').inputValue()
     if (!code.includes('"status"')) throw new Error('响应示例未生成模型内容')
     await page.locator('.save-btn').click()
     await page.waitForTimeout(300)

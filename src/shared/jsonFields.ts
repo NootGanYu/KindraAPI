@@ -610,18 +610,99 @@ export function buildFieldRows(raw: string, docs: FieldDoc[]): FieldRowsResult {
 // 编辑 helpers
 // ---------------------------------------------------------------------------
 
-export function setValueAtPointer(root: unknown, pointer: string, value: unknown): boolean {
+export function setValueAtPointer(
+  root: unknown,
+  pointer: string,
+  value: unknown,
+  options?: { createMissing?: boolean }
+): boolean {
   const parts = splitPointer(pointer)
   if (parts.length === 0) return false
   if (parts.includes('*')) return false
   let current = root
   for (let index = 0; index < parts.length - 1; index += 1) {
     if (current === null || typeof current !== 'object') return false
-    current = (current as Record<string, unknown>)[parts[index]]
+    const key = parts[index]
+    if (Array.isArray(current)) {
+      const position = Number(key)
+      if (!Number.isInteger(position) || position < 0) return false
+      if (current[position] === undefined && options?.createMissing) current[position] = {}
+      current = current[position]
+    } else {
+      const record = current as Record<string, unknown>
+      if (!Object.hasOwn(record, key) && options?.createMissing) record[key] = {}
+      current = record[key]
+    }
   }
   if (current === null || typeof current !== 'object') return false
-  ;(current as Record<string, unknown>)[parts[parts.length - 1]] = value
+  const last = parts[parts.length - 1]
+  if (Array.isArray(current)) {
+    const position = Number(last)
+    if (!Number.isInteger(position) || position < 0) return false
+    current[position] = value
+  } else {
+    ;(current as Record<string, unknown>)[last] = value
+  }
   return true
+}
+
+function fieldPlaceholder(doc: FieldDoc): unknown {
+  if (doc.example !== undefined) return doc.example
+  if (doc.default !== undefined) return doc.default
+  switch (doc.type) {
+    case 'number':
+    case 'integer':
+      return 0
+    case 'boolean':
+      return false
+    case 'null':
+      return null
+    case 'object':
+      return {}
+    case 'array':
+      return []
+    default:
+      return ''
+  }
+}
+
+function pointerHasValue(root: unknown, parts: string[]): boolean {
+  let current = root
+  for (const part of parts) {
+    if (current === null || typeof current !== 'object') return false
+    if (Array.isArray(current)) {
+      const index = Number(part)
+      if (!Number.isInteger(index) || index < 0 || current[index] === undefined) return false
+      current = current[index]
+    } else {
+      if (!Object.hasOwn(current, part)) return false
+      current = (current as Record<string, unknown>)[part]
+    }
+  }
+  return true
+}
+
+/** 按字段数据结构补全示例；已有的值保留，只补缺失字段。 */
+export function buildExampleFromDocs(docs: FieldDoc[], existingRaw = ''): string {
+  let root: unknown = {}
+  if (existingRaw.trim()) {
+    try {
+      const parsed = JSON.parse(existingRaw)
+      if (parsed !== null && typeof parsed === 'object') root = parsed
+    } catch {
+      // 保持空对象，后续按结构生成。
+    }
+  }
+  const ordered = [...docs].sort(
+    (left, right) => splitPointer(left.pointer).length - splitPointer(right.pointer).length
+  )
+  for (const doc of ordered) {
+    const parts = splitPointer(doc.pointer)
+    if (parts.length === 0 || parts.includes('*')) continue
+    if (pointerHasValue(root, parts)) continue
+    setValueAtPointer(root, doc.pointer, fieldPlaceholder(doc), { createMissing: true })
+  }
+  return JSON.stringify(root, null, 2)
 }
 
 export function deleteValueAtPointer(root: unknown, pointer: string): boolean {
