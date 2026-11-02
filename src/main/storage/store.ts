@@ -1645,7 +1645,11 @@ function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
     show_scripts: input?.show_scripts === true,
     show_design: input?.show_design !== false,
     show_cases: input?.show_cases !== false,
-    openapi: input?.openapi === true
+    openapi: input?.openapi === true,
+    openapi_version:
+      input?.openapi_version === '3.1' || input?.openapi_version === '2.0'
+        ? input.openapi_version
+        : '3.0'
   }
 }
 

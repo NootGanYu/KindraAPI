@@ -337,6 +337,7 @@ export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettin
     show_design: true,
     show_cases: true,
     openapi: false,
+    openapi_version: '3.0',
     ...partial
   }
 }

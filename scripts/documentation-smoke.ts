@@ -113,6 +113,28 @@ async function main(): Promise<void> {
     assert(operation.parameters.some((p: any) => p.name === 'id'))
     assert(operation.parameters.some((p: any) => p.name === 'disabled' && p.required === false))
     assert(!operation.requestBody)
+
+    const setVersion = (openapi_version: '3.1' | '3.0' | '2.0'): void => {
+      store.updateDocShare(project.project_id, share.share_id, {
+        name: share.name,
+        scope: share.scope,
+        target_ids: share.target_ids,
+        settings: createDocSettings({ ...share.settings, openapi: true, openapi_version })
+      })
+    }
+    setVersion('3.1')
+    const spec31: any = await (await fetch(`${base}/download?format=openapi`)).json()
+    assert.equal(spec31.openapi, '3.1.0')
+    const note31 = spec31.paths['/orders/detail'].get.responses['200'].content['application/json'].schema.properties.data.properties.note
+    assert.deepEqual(note31.type, ['string', 'null'], '3.1 expresses nullable as type array')
+    assert.equal(note31.nullable, undefined)
+    setVersion('2.0')
+    const spec20: any = await (await fetch(`${base}/download?format=openapi`)).json()
+    assert.equal(spec20.swagger, '2.0')
+    assert.equal(spec20.openapi, undefined)
+    assert(spec20.paths['/orders/detail'].get.parameters.some((p: any) => p.name === 'id'))
+    assert(spec20.paths['/orders/detail'].get.responses['200'].schema, 'swagger response schema')
+    setVersion('3.0')
     const other = store.createProjectWithDefaults('round-trip')
     store.saveMcpConfig({ ...config, allowed_project_ids: [project.project_id, other.project_id] })
     // The running server holds its config; restart after extending this isolated test's allow list.
@@ -208,7 +230,7 @@ async function main(): Promise<void> {
     const removed = await call('upsert_api', { target_id: id, success_response: { field_docs: [{ path: 'data.note', remove: true }, { path: state.path, unset: ['default'], enum: null, unset_dummy: undefined }] } })
     assert(!removed.api.response.example[0].field_docs.some((d: any) => d.pointer === '/data/note'))
     assert.equal(removed.api.response.example[0].field_docs.find((d: any) => d.pointer.endsWith('/state')).default, undefined)
-    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
+    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
   } finally {
     child.kill()
     await stopMcpServer()

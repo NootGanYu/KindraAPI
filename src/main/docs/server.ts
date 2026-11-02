@@ -1479,6 +1479,14 @@ function urlToOpenApiPath(raw?: string): string {
 }
 
 function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown> {
+  const spec = buildOpenApi30(share, view)
+  const version = share.settings.openapi_version ?? '3.0'
+  if (version === '3.1') return toOpenApi31(spec)
+  if (version === '2.0') return toSwagger20(spec)
+  return spec
+}
+
+function buildOpenApi30(share: DocShare, view: ShareView): Record<string, unknown> {
   const apis = view.targets.filter((target) => target.target_type === 'api')
   const settings = share.settings
   const paths: Record<string, Record<string, unknown>> = {}
@@ -1669,6 +1677,192 @@ function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown>
     },
     servers: (servers.size ? [...servers] : ['http://localhost']).map((url) => ({ url })),
     tags: [{ name: view.project.name }],
+    paths
+  }
+}
+
+/** 递归把 OpenAPI 3.0 的 nullable 转为 3.1 的 type 数组表达。 */
+function convertNullableFor31(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(convertNullableFor31)
+  if (!node || typeof node !== 'object') return node
+  const source = node as Record<string, unknown>
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(source)) {
+    if (key === 'nullable') continue
+    result[key] = convertNullableFor31(value)
+  }
+  if (source.nullable === true) {
+    const type = result.type
+    if (type === undefined) result.type = 'null'
+    else if (typeof type === 'string') result.type = [type, 'null']
+    else if (Array.isArray(type)) result.type = [...type, 'null']
+  }
+  return result
+}
+
+function toOpenApi31(spec: Record<string, unknown>): Record<string, unknown> {
+  return { ...(convertNullableFor31(spec) as Record<string, unknown>), openapi: '3.1.0' }
+}
+
+/** 递归删除 Swagger 2.0 不支持的 nullable 关键字。 */
+function stripNullable(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripNullable)
+  if (!node || typeof node !== 'object') return node
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === 'nullable') continue
+    result[key] = stripNullable(value)
+  }
+  return result
+}
+
+const SWAGGER_PARAM_KEYS = [
+  'type',
+  'format',
+  'items',
+  'enum',
+  'default',
+  'minimum',
+  'maximum',
+  'pattern',
+  'minLength',
+  'maxLength',
+  'description'
+] as const
+
+/** 把 JSON Schema 片段展开为 Swagger 2.0 参数可接受的字段。 */
+function schemaToSwagger(schema: Record<string, unknown>): Record<string, unknown> {
+  const cleaned = stripNullable(schema) as Record<string, unknown>
+  const result: Record<string, unknown> = {}
+  for (const key of SWAGGER_PARAM_KEYS) {
+    if (cleaned[key] !== undefined) result[key] = cleaned[key]
+  }
+  if (result.type === 'object' || result.type === 'null' || result.type === undefined) {
+    result.type = 'string'
+  }
+  return result
+}
+
+function toSwaggerOperation(operation: Record<string, unknown>): Record<string, unknown> {
+  const parameters: Record<string, unknown>[] = []
+  for (const raw of (operation.parameters as Record<string, unknown>[] | undefined) ?? []) {
+    const schema = (raw.schema as Record<string, unknown> | undefined) ?? {}
+    parameters.push({
+      name: raw.name,
+      in: raw.in,
+      ...(raw.required !== undefined ? { required: raw.required } : {}),
+      ...(raw.description !== undefined ? { description: raw.description } : {}),
+      ...schemaToSwagger(schema),
+      ...(raw.example !== undefined ? { 'x-example': raw.example } : {})
+    })
+  }
+
+  const requestBody = operation.requestBody as
+    | { content?: Record<string, { schema?: Record<string, unknown>; example?: unknown }> }
+    | undefined
+  let consumes: string[] | undefined
+  if (requestBody?.content) {
+    for (const [contentType, media] of Object.entries(requestBody.content)) {
+      const schema = (media.schema as Record<string, unknown> | undefined) ?? {}
+      if (contentType.includes('urlencoded') || contentType.includes('multipart')) {
+        consumes = [contentType.includes('multipart') ? 'multipart/form-data' : 'application/x-www-form-urlencoded']
+        const properties = (schema.properties as Record<string, Record<string, unknown>>) ?? {}
+        const required = (schema.required as string[] | undefined) ?? []
+        for (const [name, property] of Object.entries(properties)) {
+          parameters.push({
+            name,
+            in: 'formData',
+            required: required.includes(name),
+            ...schemaToSwagger(property)
+          })
+        }
+      } else {
+        consumes ??= [contentType]
+        parameters.push({
+          name: 'body',
+          in: 'body',
+          required: true,
+          ...(schema.description ? { description: schema.description } : {}),
+          schema: stripNullable(schema)
+        })
+      }
+    }
+  }
+
+  const responses = (operation.responses as Record<string, Record<string, unknown>> | undefined) ?? {}
+  const swaggerResponses = Object.fromEntries(
+    Object.entries(responses).map(([code, response]) => {
+      const content = response.content as
+        | Record<string, { schema?: Record<string, unknown>; example?: unknown }>
+        | undefined
+      const first = content ? Object.values(content)[0] : undefined
+      const headers = response.headers as
+        | Record<string, { description?: string; example?: unknown }>
+        | undefined
+      return [
+        code,
+        {
+          description: response.description ?? '',
+          ...(first?.schema ? { schema: stripNullable(first.schema) } : {}),
+          ...(headers
+            ? {
+                headers: Object.fromEntries(
+                  Object.entries(headers).map(([name, header]) => [
+                    name,
+                    { type: 'string', ...(header.description ? { description: header.description } : {}) }
+                  ])
+                )
+              }
+            : {}),
+          ...(first?.example !== undefined ? { 'x-example': first.example } : {})
+        }
+      ]
+    })
+  )
+
+  return {
+    ...(operation.summary ? { summary: operation.summary } : {}),
+    ...(operation.description ? { description: operation.description } : {}),
+    ...(consumes ? { consumes } : {}),
+    ...(parameters.length ? { parameters } : {}),
+    responses: swaggerResponses
+  }
+}
+
+function toSwagger20(spec: Record<string, unknown>): Record<string, unknown> {
+  const servers = (spec.servers as Array<{ url: string }> | undefined) ?? []
+  let host: string | undefined
+  let basePath: string | undefined
+  let schemes: string[] | undefined
+  try {
+    const url = new URL(servers[0]?.url ?? '')
+    host = url.host
+    schemes = [url.protocol.replace(':', '')]
+    if (url.pathname && url.pathname !== '/') basePath = url.pathname.replace(/\/$/, '')
+  } catch {
+    // 非绝对地址时省略 host/basePath/schemes
+  }
+  const paths = Object.fromEntries(
+    Object.entries((spec.paths as Record<string, Record<string, unknown>>) ?? {}).map(
+      ([path, operations]) => [
+        path,
+        Object.fromEntries(
+          Object.entries(operations).map(([method, operation]) => [
+            method,
+            toSwaggerOperation(operation as Record<string, unknown>)
+          ])
+        )
+      ]
+    )
+  )
+  return {
+    swagger: '2.0',
+    info: spec.info,
+    ...(host ? { host } : {}),
+    ...(basePath ? { basePath } : {}),
+    ...(schemes ? { schemes } : {}),
+    ...(spec.tags ? { tags: spec.tags } : {}),
+    produces: ['application/json'],
     paths
   }
 }

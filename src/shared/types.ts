@@ -683,6 +683,9 @@ export interface DbConnection {
 
 export type DocScope = 'project' | 'folder' | 'api' | 'custom'
 
+/** 文档分享导出的 OpenAPI 规范版本 */
+export type OpenApiVersion = '3.1' | '3.0' | '2.0'
+
 export interface DocSettings {
   /** 空字符串表示公开访问 */
   password: string
@@ -696,6 +699,8 @@ export interface DocSettings {
   show_design: boolean
   show_cases: boolean
   openapi: boolean
+  /** OpenAPI 导出规范版本；默认 3.0，保持既有输出兼容 */
+  openapi_version: OpenApiVersion
 }
 
 export interface DocTargetSnapshot {

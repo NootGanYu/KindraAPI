@@ -17,6 +17,7 @@ import type {
   DocSettings,
   DocShare,
   DocShareInput,
+  OpenApiVersion,
   TargetSummary
 } from '@shared/types'
 import { createDocSettings } from '@shared/factories'
@@ -75,6 +76,7 @@ interface Draft {
   showDesign: boolean
   showCases: boolean
   openapi: boolean
+  openapiVersion: OpenApiVersion
 }
 
 function buildTree(targets: TargetSummary[]): DocTreeNode[] {
@@ -156,7 +158,8 @@ export default function DocShareDialog({
     showScripts: false,
     showDesign: true,
     showCases: true,
-    openapi: false
+    openapi: false,
+    openapiVersion: '3.0'
   }))
   const [saving, setSaving] = useState(false)
 
@@ -191,7 +194,8 @@ export default function DocShareDialog({
       showScripts: settings.show_scripts,
       showDesign: settings.show_design,
       showCases: settings.show_cases,
-      openapi: settings.openapi
+      openapi: settings.openapi,
+      openapiVersion: settings.openapi_version ?? '3.0'
     })
   }, [open, initialKey, lockScope, lockTarget, lockTargetName, projectName])
 
@@ -247,7 +251,8 @@ export default function DocShareDialog({
         show_scripts: draft.showScripts,
         show_design: draft.showDesign,
         show_cases: draft.showCases,
-        openapi: draft.openapi
+        openapi: draft.openapi,
+        openapi_version: draft.openapiVersion
       }
     }
 
@@ -454,12 +459,26 @@ export default function DocShareDialog({
         <div className="docs-field docs-switch-row">
           <div>
             <label style={{ margin: 0 }}>允许 OpenAPI 导出</label>
-            <div className="docs-hint">开启后访问者可下载 OpenAPI 3.0 文档。</div>
+            <div className="docs-hint">开启后访问者可下载 OpenAPI / Swagger 文档。</div>
           </div>
-          <Switch
-            checked={draft.openapi}
-            onChange={(checked) => patchDraft({ openapi: checked })}
-          />
+          <div className="docs-inline">
+            <Select
+              size="small"
+              style={{ width: 132 }}
+              disabled={!draft.openapi}
+              value={draft.openapiVersion}
+              onChange={(value) => patchDraft({ openapiVersion: value as OpenApiVersion })}
+              options={[
+                { value: '3.1', label: 'OpenAPI 3.1' },
+                { value: '3.0', label: 'OpenAPI 3.0' },
+                { value: '2.0', label: 'Swagger 2.0' }
+              ]}
+            />
+            <Switch
+              checked={draft.openapi}
+              onChange={(checked) => patchDraft({ openapi: checked })}
+            />
+          </div>
         </div>
       </div>
     </Modal>
