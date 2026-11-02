@@ -701,6 +701,8 @@ export interface DocSettings {
   openapi: boolean
   /** OpenAPI 导出规范版本；默认 3.0，保持既有输出兼容 */
   openapi_version: OpenApiVersion
+  /** 分享页 Logo，data URL；空字符串使用内置图标 */
+  logo: string
 }
 
 export interface DocTargetSnapshot {

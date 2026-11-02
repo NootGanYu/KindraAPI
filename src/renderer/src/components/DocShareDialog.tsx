@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
+  Button,
   Checkbox,
   Input,
   InputNumber,
@@ -77,6 +78,7 @@ interface Draft {
   showCases: boolean
   openapi: boolean
   openapiVersion: OpenApiVersion
+  logo: string
 }
 
 function buildTree(targets: TargetSummary[]): DocTreeNode[] {
@@ -159,7 +161,8 @@ export default function DocShareDialog({
     showDesign: true,
     showCases: true,
     openapi: false,
-    openapiVersion: '3.0'
+    openapiVersion: '3.0',
+    logo: ''
   }))
   const [saving, setSaving] = useState(false)
 
@@ -195,12 +198,31 @@ export default function DocShareDialog({
       showDesign: settings.show_design,
       showCases: settings.show_cases,
       openapi: settings.openapi,
-      openapiVersion: settings.openapi_version ?? '3.0'
+      openapiVersion: settings.openapi_version ?? '3.0',
+      logo: settings.logo ?? ''
     })
   }, [open, initialKey, lockScope, lockTarget, lockTargetName, projectName])
 
   const patchDraft = (patch: Partial<Draft>): void => {
     setDraft((current) => ({ ...current, ...patch }))
+  }
+
+  const logoInput = useRef<HTMLInputElement>(null)
+  const MAX_LOGO_BYTES = 140 * 1024
+  const pickLogo = (file: File | undefined): void => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      message.warning('请选择图片文件')
+      return
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      message.warning('图片请小于 140KB')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => patchDraft({ logo: String(reader.result ?? '') })
+    reader.onerror = () => message.error('读取图片失败')
+    reader.readAsDataURL(file)
   }
 
   const changeScope = (scope: DocScope): void => {
@@ -252,7 +274,8 @@ export default function DocShareDialog({
         show_design: draft.showDesign,
         show_cases: draft.showCases,
         openapi: draft.openapi,
-        openapi_version: draft.openapiVersion
+        openapi_version: draft.openapiVersion,
+        logo: draft.logo
       }
     }
 
@@ -453,6 +476,46 @@ export default function DocShareDialog({
             >
               接口用例
             </Checkbox>
+          </div>
+        </div>
+
+        <div className="docs-field docs-switch-row">
+          <div>
+            <label style={{ margin: 0 }}>分享 Logo</label>
+            <div className="docs-hint">建议正方形图片，不超过 140KB；未上传时使用内置图标。</div>
+          </div>
+          <div className="docs-inline">
+            {draft.logo ? (
+              <img
+                src={draft.logo}
+                alt=""
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '1px solid var(--color-border, #eee)'
+                }}
+              />
+            ) : null}
+            <input
+              ref={logoInput}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                pickLogo(event.target.files?.[0])
+                event.target.value = ''
+              }}
+            />
+            <Button size="small" onClick={() => logoInput.current?.click()}>
+              {draft.logo ? '更换' : '上传'}
+            </Button>
+            {draft.logo ? (
+              <Button size="small" onClick={() => patchDraft({ logo: '' })}>
+                移除
+              </Button>
+            ) : null}
           </div>
         </div>
 

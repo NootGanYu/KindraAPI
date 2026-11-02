@@ -208,6 +208,15 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
+/** 分享页图标：仅接受 store 校验过的 data:image，未设置时回退内置 K。 */
+function logoMark(settings?: Pick<DocSettings, 'logo'>): string {
+  const logo = settings?.logo
+  if (logo && logo.startsWith('data:image/')) {
+    return `<span class="logo"><img src="${escapeHtml(logo)}" alt=""></span>`
+  }
+  return '<span class="logo">K</span>'
+}
+
 function parseCookies(header: string | undefined): Record<string, string> {
   const result: Record<string, string> = {}
   if (!header) return result
@@ -338,7 +347,8 @@ a{color:var(--gold);text-decoration:none}
 code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .doc-top{height:56px;display:flex;align-items:center;gap:12px;padding:0 26px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .brand{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ink);white-space:nowrap}
-.brand .logo{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:11px;background:linear-gradient(135deg,#c8a25e,#8a6b3b)}
+.brand .logo{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:11px;background:linear-gradient(135deg,#c8a25e,#8a6b3b);overflow:hidden}
+.brand .logo img,.gate .logo img{width:100%;height:100%;object-fit:cover;display:block}
 .top-crumb{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top-badges{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:4px;font-size:11.5px;border:1px solid var(--line);background:var(--soft);color:var(--text);white-space:nowrap}
@@ -434,7 +444,7 @@ details.raw-request summary{cursor:pointer;color:var(--gold);font-size:12.5px}
 .content-warning{margin:10px 0;padding:10px 12px;border:1px solid #dc9a32;border-radius:7px;background:#fff3d6;color:#7b4614;font-size:12.5px;white-space:pre-wrap}
 .gate-wrap{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(160deg,#faf8f4 0%,#f1e8d7 100%)}
 .gate{width:100%;max-width:380px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:32px 30px;box-shadow:0 18px 60px rgba(70,55,30,.10)}
-.gate .logo{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#c8a25e,#8a6b3b);font-weight:700;margin-bottom:18px}
+.gate .logo{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#c8a25e,#8a6b3b);font-weight:700;margin-bottom:18px;overflow:hidden}
 .gate h1{font-size:20px;margin:0 0 6px}
 .gate p{margin:0 0 20px;color:var(--muted);font-size:13px;word-break:break-word}
 .gate label{display:block;font-size:12px;color:var(--text);margin-bottom:6px}
@@ -1038,7 +1048,7 @@ function renderShareShell(
   const nav = renderNav(ctx, currentFolderId, currentApiId)
   const body = `
 <header class="doc-top" id="top">
-  <div class="brand"><span class="logo">K</span> KindraAPI 文档</div>
+  <div class="brand">${logoMark(share.settings)} KindraAPI 文档</div>
   <div class="top-crumb">${escapeHtml(view.project.name)} / ${escapeHtml(share.name)}</div>
   <div class="top-badges">${shareChips(share)}</div>
 </header>
@@ -1210,7 +1220,7 @@ function renderPasswordPage(share: DocShare, error = false): string {
   const body = `
 <div class="gate-wrap">
   <div class="gate">
-    <div class="logo">K</div>
+    ${logoMark(share.settings)}
     <h1>受保护的文档</h1>
     <p>${escapeHtml(share.name)}</p>
     <form method="post" action="/share/${escapeHtml(share.share_id)}/auth">

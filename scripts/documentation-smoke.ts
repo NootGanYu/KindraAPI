@@ -135,6 +135,23 @@ async function main(): Promise<void> {
     assert(spec20.paths['/orders/detail'].get.parameters.some((p: any) => p.name === 'id'))
     assert(spec20.paths['/orders/detail'].get.responses['200'].schema, 'swagger response schema')
     setVersion('3.0')
+
+    const logo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    store.updateDocShare(project.project_id, share.share_id, {
+      name: share.name,
+      scope: share.scope,
+      target_ids: share.target_ids,
+      settings: createDocSettings({ ...share.settings, logo })
+    })
+    const logoHtml = await (await fetch(`${base}/a/${id}`)).text()
+    assert(logoHtml.includes('data:image/png;base64,'), 'custom share logo renders')
+    store.updateDocShare(project.project_id, share.share_id, {
+      name: share.name,
+      scope: share.scope,
+      target_ids: share.target_ids,
+      settings: createDocSettings({ ...share.settings, logo: 'javascript:alert(1)' })
+    })
+    assert.equal(store.getDocShare(project.project_id, share.share_id)!.settings.logo, '', 'invalid logo is dropped')
     const other = store.createProjectWithDefaults('round-trip')
     store.saveMcpConfig({ ...config, allowed_project_ids: [project.project_id, other.project_id] })
     // The running server holds its config; restart after extending this isolated test's allow list.
@@ -230,7 +247,7 @@ async function main(): Promise<void> {
     const removed = await call('upsert_api', { target_id: id, success_response: { field_docs: [{ path: 'data.note', remove: true }, { path: state.path, unset: ['default'], enum: null, unset_dummy: undefined }] } })
     assert(!removed.api.response.example[0].field_docs.some((d: any) => d.pointer === '/data/note'))
     assert.equal(removed.api.response.example[0].field_docs.find((d: any) => d.pointer.endsWith('/state')).default, undefined)
-    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
+    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'share logo', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
   } finally {
     child.kill()
     await stopMcpServer()

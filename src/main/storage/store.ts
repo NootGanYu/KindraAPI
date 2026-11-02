@@ -1649,8 +1649,19 @@ function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
     openapi_version:
       input?.openapi_version === '3.1' || input?.openapi_version === '2.0'
         ? input.openapi_version
-        : '3.0'
+        : '3.0',
+    logo: normalizeDocLogo(input?.logo)
   }
+}
+
+const DOC_LOGO_PATTERN = /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/
+const DOC_LOGO_MAX_LENGTH = 200 * 1024
+
+function normalizeDocLogo(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const logo = value.trim()
+  if (!logo || logo.length > DOC_LOGO_MAX_LENGTH || !DOC_LOGO_PATTERN.test(logo)) return ''
+  return logo
 }
 
 function normalizeDocTargetIds(scope: DocScope, ids: unknown): string[] {
