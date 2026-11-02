@@ -14,6 +14,7 @@ import {
 } from 'antd'
 import type { DataNode } from 'antd/es/tree'
 import type {
+  CustomAttribute,
   DocScope,
   DocSettings,
   DocShare,
@@ -81,6 +82,7 @@ interface Draft {
   openapiVersion: OpenApiVersion
   logo: string
   envId: string
+  attributeList: string[]
 }
 
 function buildTree(targets: TargetSummary[]): DocTreeNode[] {
@@ -165,15 +167,20 @@ export default function DocShareDialog({
     openapi: false,
     openapiVersion: '3.0',
     logo: '',
-    envId: ''
+    envId: '',
+    attributeList: []
   }))
   const [saving, setSaving] = useState(false)
   const [environments, setEnvironments] = useState<Environment[]>([])
+  const [attributes, setAttributes] = useState<CustomAttribute[]>([])
 
   useEffect(() => {
     if (!open || !projectId) return
     void window.api.envs.list(projectId).then((result) => {
       if (result.ok) setEnvironments(result.data)
+    })
+    void window.api.attributes.list(projectId).then((result) => {
+      if (result.ok) setAttributes(result.data.filter((item) => item.enable))
     })
   }, [open, projectId])
 
@@ -211,7 +218,8 @@ export default function DocShareDialog({
       openapi: settings.openapi,
       openapiVersion: settings.openapi_version ?? '3.0',
       logo: settings.logo ?? '',
-      envId: settings.env_id ?? ''
+      envId: settings.env_id ?? '',
+      attributeList: settings.attribute_list ?? []
     })
   }, [open, initialKey, lockScope, lockTarget, lockTargetName, projectName])
 
@@ -288,7 +296,8 @@ export default function DocShareDialog({
         openapi: draft.openapi,
         openapi_version: draft.openapiVersion,
         logo: draft.logo,
-        env_id: draft.envId
+        env_id: draft.envId,
+        attribute_list: draft.attributeList
       }
     }
 
@@ -406,6 +415,25 @@ export default function DocShareDialog({
             选择后，文档中的 {'{{变量}}'} 会替换为该环境的当前值，并在页面标注所用环境。
           </div>
         </div>
+
+        {attributes.length ? (
+          <div className="docs-field">
+            <label>展示属性</label>
+            <Select
+              mode="multiple"
+              allowClear
+              style={{ width: '100%' }}
+              placeholder="选择要在文档中展示的接口属性"
+              value={draft.attributeList}
+              options={attributes.map((item) => ({
+                value: item.attribute_id,
+                label: item.field_name
+              }))}
+              onChange={(value) => patchDraft({ attributeList: value })}
+            />
+            <div className="docs-hint">未选择的属性不会出现在分享文档中。</div>
+          </div>
+        ) : null}
 
         <div className="docs-field-row">
           <div className="docs-field">

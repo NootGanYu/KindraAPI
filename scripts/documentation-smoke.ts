@@ -7,7 +7,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import * as store from '../src/main/storage/store'
-import { createDocSettings } from '../src/shared/factories'
+import { createCustomAttribute, createDocSettings } from '../src/shared/factories'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
 import { startDocServer, stopDocServer } from '../src/main/docs/server'
 
@@ -180,6 +180,30 @@ async function main(): Promise<void> {
       settings: createDocSettings({ ...share.settings, logo: 'javascript:alert(1)' })
     })
     assert.equal(store.getDocShare(project.project_id, share.share_id)!.settings.logo, '', 'invalid logo is dropped')
+
+    const owner = store.saveCustomAttribute(
+      project.project_id,
+      createCustomAttribute(project.project_id, {
+        field_name: '负责人',
+        field_type: 'radio',
+        extra: [{ key: 'o1', label: '张三', value: 'zhangsan' }]
+      })
+    )
+    const apiRecord = store.getTarget(project.project_id, id)!
+    store.saveTarget(project.project_id, {
+      ...apiRecord,
+      custom_attributes: { [owner.attribute_id]: 'zhangsan' }
+    })
+    store.updateDocShare(project.project_id, share.share_id, {
+      name: share.name,
+      scope: share.scope,
+      target_ids: share.target_ids,
+      settings: createDocSettings({ ...share.settings, attribute_list: [owner.attribute_id] })
+    })
+    const attrHtml = await (await fetch(`${base}/a/${id}`)).text()
+    assert(attrHtml.includes('负责人') && attrHtml.includes('张三'), 'share page shows custom attributes')
+    const attrMarkdown = await (await fetch(`${base}/download?format=md`)).text()
+    assert(attrMarkdown.includes('负责人：张三'), 'markdown shows custom attributes')
     const other = store.createProjectWithDefaults('round-trip')
     store.saveMcpConfig({ ...config, allowed_project_ids: [project.project_id, other.project_id] })
     // The running server holds its config; restart after extending this isolated test's allow list.
@@ -275,7 +299,7 @@ async function main(): Promise<void> {
     const removed = await call('upsert_api', { target_id: id, success_response: { field_docs: [{ path: 'data.note', remove: true }, { path: state.path, unset: ['default'], enum: null, unset_dummy: undefined }] } })
     assert(!removed.api.response.example[0].field_docs.some((d: any) => d.pointer === '/data/note'))
     assert.equal(removed.api.response.example[0].field_docs.find((d: any) => d.pointer.endsWith('/state')).default, undefined)
-    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'share environment', 'share logo', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
+    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'share environment', 'share logo', 'custom attributes', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
   } finally {
     child.kill()
     await stopMcpServer()

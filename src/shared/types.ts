@@ -227,6 +227,8 @@ export interface Target {
   response?: ResponseModel
   design?: DesignModel
   cases?: ApiCase[]
+  /** 项目自定义属性值：attribute_id → 值 */
+  custom_attributes?: Record<string, string | number | string[] | null>
   created_at: string
   updated_at: string
 }
@@ -244,6 +246,28 @@ export interface TargetSummary {
   updated_at: string
 }
 
+export type CustomAttributeType = 'text' | 'number' | 'radio' | 'checkbox' | 'date' | 'link' | 'email'
+
+export interface CustomAttributeOption {
+  key: string
+  label: string
+  value: string
+}
+
+/** 项目级自定义属性，用于给接口补充业务字段（负责人、优先级等）。 */
+export interface CustomAttribute {
+  attribute_id: string
+  project_id: string
+  field_name: string
+  field_type: CustomAttributeType
+  enable: boolean
+  /** 单选 / 多选的候选值 */
+  extra: CustomAttributeOption[]
+  sort: number
+  created_at: string
+  updated_at: string
+}
+
 export interface Project {
   project_id: string
   name: string
@@ -254,6 +278,8 @@ export interface Project {
   updated_at: string
   /** 系统内置描述总开关：1 开启，-1 关闭 */
   is_describe_library?: number
+  /** 项目自定义属性定义 */
+  custom_attributes?: CustomAttribute[]
 }
 
 export interface EnvVar {
@@ -705,6 +731,8 @@ export interface DocSettings {
   logo: string
   /** 文档展示环境；非空时 {{变量}} 按该环境取值替换 */
   env_id: string
+  /** 分享页展示的自定义属性 ID；空数组不展示 */
+  attribute_list: string[]
 }
 
 export interface DocTargetSnapshot {

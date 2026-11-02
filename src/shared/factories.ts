@@ -5,6 +5,7 @@ import type {
   CaseAssertion,
   CaseAssertionKind,
   CaseAssertionOp,
+  CustomAttribute,
   DataModel,
   DbConnection,
   DesignError,
@@ -141,6 +142,25 @@ export function createEnvironment(projectId: string, name = '默认环境'): Env
     is_private: -1,
     created_at: now,
     updated_at: now
+  }
+}
+
+export function createCustomAttribute(
+  projectId: string,
+  partial: Partial<CustomAttribute> = {}
+): CustomAttribute {
+  const now = new Date().toISOString()
+  return {
+    attribute_id: createId('attr'),
+    project_id: projectId,
+    field_name: '新属性',
+    field_type: 'text',
+    enable: true,
+    extra: [],
+    sort: 1000,
+    created_at: now,
+    updated_at: now,
+    ...partial
   }
 }
 
@@ -340,6 +360,7 @@ export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettin
     openapi_version: '3.0',
     logo: '',
     env_id: '',
+    attribute_list: [],
     ...partial
   }
 }

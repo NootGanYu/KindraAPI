@@ -4,6 +4,7 @@ import type { DesignError, Target } from '@shared/types'
 import { createDesignError } from '@shared/factories'
 import RequestEditor from './RequestEditor'
 import ResponsePanel from './ResponsePanel'
+import CustomAttributeFields from './CustomAttributeFields'
 
 interface Props {
   draft: Target
@@ -23,6 +24,12 @@ export default function DesignEditor({ draft, projectId, onChange }: Props): JSX
 
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '0 16px 32px' }}>
+      <CustomAttributeFields
+        projectId={projectId}
+        value={draft.custom_attributes}
+        onChange={(custom_attributes) => onChange({ custom_attributes })}
+      />
+
       <div className="section-title">请求契约</div>
       <RequestEditor draft={draft} onChange={onChange} />
 

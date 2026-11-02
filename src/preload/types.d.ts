@@ -3,6 +3,7 @@ import type {
   AppSettings,
   CaseRunResult,
   CaseRunSummary,
+  CustomAttribute,
   DataModel,
   DbConnection,
   DebugConfig,
@@ -169,6 +170,11 @@ export interface ApiBridge {
     list(projectId: string): Promise<Result<Environment[]>>
     save(projectId: string, env: Environment): Promise<Result<Environment>>
     remove(projectId: string, envId: string): Promise<Result<boolean>>
+  }
+  attributes: {
+    list(projectId: string): Promise<Result<CustomAttribute[]>>
+    save(projectId: string, attribute: CustomAttribute): Promise<Result<CustomAttribute>>
+    remove(projectId: string, attributeId: string): Promise<Result<boolean>>
   }
   globals: {
     get(projectId: string): Promise<Result<GlobalVars>>

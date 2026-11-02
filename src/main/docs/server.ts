@@ -389,6 +389,8 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.PUT,.method.PATCH{background:#b7791f}
 .method.DELETE{background:var(--red)}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
+.api-attrs{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0 0;font-size:12.5px;color:var(--text)}
+.api-attr b{color:var(--muted);font-weight:500;margin-right:6px}
 .api-desc{color:var(--text);margin:10px 0 0;line-height:1.75;word-break:break-word}
 .api-desc p{margin:6px 0}
 .api-desc p:first-child{margin-top:0}
@@ -723,6 +725,37 @@ function renderCasesSection(target: Target): string {
 </div>`
 }
 
+interface AttributeRow {
+  name: string
+  value: string
+}
+
+/** 分享中选中的自定义属性；未填写值的属性不展示。 */
+function customAttributeRows(
+  target: Target,
+  settings: DocSettings,
+  project: Project
+): AttributeRow[] {
+  const selected = settings.attribute_list ?? []
+  if (!selected.length) return []
+  const values = target.custom_attributes ?? {}
+  const rows: AttributeRow[] = []
+  for (const attribute of project.custom_attributes ?? []) {
+    if (!attribute.enable || !selected.includes(attribute.attribute_id)) continue
+    const raw = values[attribute.attribute_id]
+    if (raw === undefined || raw === null || raw === '') continue
+    const labelOf = (item: string): string => {
+      const option = attribute.extra.find((entry) => (entry.value || entry.label) === item)
+      return option?.label || item
+    }
+    const value = Array.isArray(raw)
+      ? raw.map((item) => labelOf(String(item))).filter(Boolean).join('、')
+      : labelOf(String(raw))
+    if (value) rows.push({ name: attribute.field_name, value })
+  }
+  return rows
+}
+
 function renderApi(
   target: Target,
   settings: DocSettings,
@@ -732,6 +765,16 @@ function renderApi(
   const requestExample = documentedRequestExample(target)
   const modelWarnings = modelDocumentationWarnings(target)
   target = resolveDocumentedTarget(target)
+  const project = store.getProject(target.project_id)
+  const attributeRows = project ? customAttributeRows(target, settings, project) : []
+  const attributeBlock = attributeRows.length
+    ? `<div class="api-attrs">${attributeRows
+        .map(
+          (row) =>
+            `<span class="api-attr"><b>${escapeHtml(row.name)}</b>${escapeHtml(row.value)}</span>`
+        )
+        .join('')}</div>`
+    : ''
   const method = methodClass(target.method)
   const label = methodText(target.method)
   const request = target.request
@@ -792,6 +835,7 @@ ${
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${heading}</h2>
 </div>
+${attributeBlock}
 ${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
     target.url || '（未设置 URL）'
@@ -1381,6 +1425,13 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
     const api = resolveDocumentedTarget(stored)
     const method = methodText(api.method)
     lines.push(`## ${method} ${api.name}`, '')
+    const attributeRows = customAttributeRows(api, settings, view.project)
+    if (attributeRows.length) {
+      lines.push(
+        `> 属性：${attributeRows.map((row) => `${row.name}：${row.value}`).join('；')}`,
+        ''
+      )
+    }
     lines.push('```http')
     lines.push(documentedRequestExample(stored))
     lines.push('```', '')

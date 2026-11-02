@@ -90,6 +90,12 @@ const api = {
     remove: (projectId: string, envId: string) => invoke('env:delete', projectId, envId)
   },
 
+  attributes: {
+    list: (projectId: string) => invoke('attribute:list', projectId),
+    save: (projectId: string, attribute: unknown) => invoke('attribute:save', projectId, attribute),
+    remove: (projectId: string, attributeId: string) => invoke('attribute:remove', projectId, attributeId)
+  },
+
   globals: {
     get: (projectId: string) => invoke('globals:get', projectId),
     save: (projectId: string, vars: unknown) => invoke('globals:save', projectId, vars)

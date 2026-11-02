@@ -29,6 +29,7 @@ import type {
   McpConfig
 } from '@shared/types'
 import { useApp } from '../store'
+import CustomAttributesPanel from '../components/CustomAttributesPanel'
 
 interface VarRow {
   key: string
@@ -275,6 +276,10 @@ export default function SettingsPage(): JSX.Element {
             存储位置：<span className="mono">{paths?.projectRoot}</span>
           </div>
         </Space>
+      </div>
+
+      <div className="settings-card">
+        <CustomAttributesPanel projectId={project?.project_id} />
       </div>
 
       <div className="settings-card">

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import type {
   AppSettings,
   CookieJar,
+  CustomAttribute,
   DataModel,
   DbConnection,
   DebugConfig,
@@ -249,6 +250,14 @@ export function registerIpc(): void {
     store.deleteEnvironment(projectId, envId)
     return true
   })
+
+  handle('attribute:list', (projectId: string) => store.listCustomAttributes(projectId))
+  handle('attribute:save', (projectId: string, attribute: CustomAttribute) =>
+    store.saveCustomAttribute(projectId, attribute)
+  )
+  handle('attribute:remove', (projectId: string, attributeId: string) =>
+    store.deleteCustomAttribute(projectId, attributeId)
+  )
 
   handle('globals:get', (projectId: string) => store.getGlobalVars(projectId))
   handle('globals:save', (projectId: string, vars: GlobalVars) => store.saveGlobalVars(projectId, vars))

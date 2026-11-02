@@ -17,6 +17,8 @@ import type {
   DocServiceConfig,
   DocSettings,
   CaseRunResult,
+  CustomAttribute,
+  CustomAttributeType,
   DocShare,
   DocShareInput,
   DocShareSummary,
@@ -188,6 +190,74 @@ export function saveProject(project: Project): Project {
   project.updated_at = new Date().toISOString()
   writeJson(path.join(projectDir(project.project_id), 'project.json'), project)
   return project
+}
+
+const CUSTOM_ATTRIBUTE_TYPES: CustomAttributeType[] = [
+  'text',
+  'number',
+  'radio',
+  'checkbox',
+  'date',
+  'link',
+  'email'
+]
+
+export function listCustomAttributes(projectId: string): CustomAttribute[] {
+  return (getProject(projectId)?.custom_attributes ?? [])
+    .slice()
+    .sort((a, b) => a.sort - b.sort || a.created_at.localeCompare(b.created_at))
+}
+
+export function saveCustomAttribute(
+  projectId: string,
+  attribute: CustomAttribute
+): CustomAttribute {
+  const project = getProject(projectId)
+  if (!project) throw new Error('项目不存在')
+  const fieldName = String(attribute.field_name ?? '').trim().slice(0, 30)
+  if (!fieldName) throw new Error('属性名称不能为空')
+  const fieldType = CUSTOM_ATTRIBUTE_TYPES.includes(attribute.field_type)
+    ? attribute.field_type
+    : 'text'
+  const extra = Array.isArray(attribute.extra)
+    ? attribute.extra.slice(0, 50).map((option) => ({
+        key: typeof option.key === 'string' && option.key ? option.key : createId('opt'),
+        label: String(option.label ?? '').slice(0, 60),
+        value: String(option.value ?? '').slice(0, 200)
+      }))
+    : []
+  if ((fieldType === 'radio' || fieldType === 'checkbox') && extra.length === 0) {
+    throw new Error('单选和多选属性至少需要一个选项')
+  }
+  const normalized: CustomAttribute = {
+    ...attribute,
+    attribute_id: attribute.attribute_id || createId('attr'),
+    project_id: projectId,
+    field_name: fieldName,
+    field_type: fieldType,
+    enable: attribute.enable !== false,
+    extra,
+    sort: Number.isFinite(attribute.sort) ? attribute.sort : 1000,
+    updated_at: new Date().toISOString()
+  }
+  const attributes = project.custom_attributes ?? []
+  const index = attributes.findIndex((item) => item.attribute_id === normalized.attribute_id)
+  const next =
+    index < 0
+      ? [...attributes, normalized]
+      : attributes.map((item, i) => (i === index ? normalized : item))
+  saveProject({ ...project, custom_attributes: next })
+  return normalized
+}
+
+export function deleteCustomAttribute(projectId: string, attributeId: string): boolean {
+  const project = getProject(projectId)
+  if (!project) return false
+  const attributes = project.custom_attributes ?? []
+  const next = attributes.filter((item) => item.attribute_id !== attributeId)
+  if (next.length === attributes.length) return false
+  saveProject({ ...project, custom_attributes: next })
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -1651,7 +1721,10 @@ function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
         ? input.openapi_version
         : '3.0',
     logo: normalizeDocLogo(input?.logo),
-    env_id: typeof input?.env_id === 'string' ? input.env_id.slice(0, 80) : ''
+    env_id: typeof input?.env_id === 'string' ? input.env_id.slice(0, 80) : '',
+    attribute_list: Array.isArray(input?.attribute_list)
+      ? [...new Set(input.attribute_list.filter((id): id is string => typeof id === 'string' && id.length > 0))].slice(0, 50)
+      : []
   }
 }
 
