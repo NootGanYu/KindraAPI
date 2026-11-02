@@ -4,6 +4,7 @@ import {
   App as AntApp,
   Button,
   Checkbox,
+  Collapse,
   Divider,
   Input,
   InputNumber,
@@ -520,45 +521,51 @@ export default function SettingsPage(): JSX.Element {
               {mcpSnippet}
             </pre>
 
-            <div>
-              <div className="muted" style={{ marginBottom: 4 }}>
-                已注册工具（{mcpTools.length}）
-              </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                <thead>
-                  <tr>
-                    <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                      工具
-                    </th>
-                    <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                      权限
-                    </th>
-                    <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                      说明
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mcpTools.map((tool) => (
-                    <tr key={tool.name}>
-                      <td className="mono" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                        {tool.name}
-                      </td>
-                      <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                        {tool.requires_write ? <Tag color="warning">write</Tag> : null}
-                        {tool.requires_execute ? <Tag color="processing">execute</Tag> : null}
-                        {!tool.requires_write && !tool.requires_execute ? (
-                          <Tag>read</Tag>
-                        ) : null}
-                      </td>
-                      <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                        {tool.description}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Collapse
+              size="small"
+              items={[
+                {
+                  key: 'mcp-tools',
+                  label: `已注册工具（${mcpTools.length}）`,
+                  children: (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                      <thead>
+                        <tr>
+                          <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                            工具
+                          </th>
+                          <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                            权限
+                          </th>
+                          <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                            说明
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mcpTools.map((tool) => (
+                          <tr key={tool.name}>
+                            <td className="mono" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                              {tool.name}
+                            </td>
+                            <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                              {tool.requires_write ? <Tag color="warning">write</Tag> : null}
+                              {tool.requires_execute ? <Tag color="processing">execute</Tag> : null}
+                              {!tool.requires_write && !tool.requires_execute ? (
+                                <Tag>read</Tag>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                              {tool.description}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )
+                }
+              ]}
+            />
           </Space>
         ) : (
           <div className="muted">MCP 配置未加载</div>
