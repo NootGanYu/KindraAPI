@@ -324,7 +324,7 @@ function executeSummary(record: Awaited<ReturnType<typeof sendRequest>>): Record
 const TOOLS: ToolDefinition[] = [
   {
     name: 'upsert_api',
-    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义；同时尽量写明 type、required、nullable、enum 及枚举含义。url 必须填写完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单；写入后应继续处理 documentation.issues。',
+    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。新建接口会执行硬性文档校验：必须填写接口说明 description，url 必须是完整的 http:// 或 https:// 地址（含主机名与路径），每个已知请求参数、请求体字段和响应字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions；缺失任一项将直接拒绝写入且不保存。更新接口时，本次显式提交的字段同样必须补齐这些信息，未提交字段保持原样。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单。',
     requires_write: true, requires_execute: false,
     input_schema: schema(apiDocumentationProperties, ['project_id']),
     handler: args => writeApiDocumentation(args)
@@ -445,7 +445,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_api',
-    description: '在项目指定目录下创建空接口（根为 0）。',
+    description: '在项目指定目录下创建接口（根为 0）。执行与 upsert_api 相同的硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；传入请求/响应字段时，每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺失任一项将拒绝写入且不保存。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -455,23 +455,11 @@ const TOOLS: ToolDefinition[] = [
         name: { type: 'string', description: '接口名称' },
         method: { type: 'string', description: 'HTTP 方法，默认 GET' },
         url: { type: 'string', description: HTTP_URL_DESCRIPTION },
-        description: { type: 'string', description: '接口说明' }
+        description: { type: 'string', description: '接口说明（必填）' }
       },
-      ['project_id', 'name']
+      ['project_id', 'name', 'url', 'description']
     ),
-    handler: (args) => {
-      const projectId = projectIdOf(args)
-      const parentId = str(args, 'parent_id') || '0'
-      const target = store.createTargetInProject(projectId, parentId, 'api')
-      target.name = requiredStr(args, 'name')
-      const method = str(args, 'method').trim().toUpperCase()
-      if (method) target.method = method
-      const url = str(args, 'url')
-      if (url) target.url = url
-      const description = str(args, 'description')
-      if (description) target.description = description
-      return { api: store.saveTarget(projectId, target) }
-    }
+    handler: args => writeApiDocumentation(args, true)
   },
   {
     name: 'get_api_detail',
@@ -2612,18 +2600,18 @@ function sshFromArgs(value: unknown): DbSshConfig {
   }
 }
 
-// Legacy entry points expose the same detailed authoring contract.
+// Legacy entry points expose the same detailed authoring contract and strict gate.
 for (const name of ['create_api', 'update_api']) {
   const tool = TOOLS.find(item => item.name === name)!
   const props = tool.input_schema.properties as Record<string, unknown>
   Object.assign(props, apiDocumentationProperties)
   props.response_example = successSchema
-  if (name === 'create_api') {
-    const legacyCreate = tool.handler
-    tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies
-      ? writeApiDocumentation(args, true) : legacyCreate(args, config)
-    tool.description += '必须填写接口说明 description；URL 必须是完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。完整文档推荐 upsert_api，也可传入 body、success_response 和参数列表一次创建。每个已知字段都应填写 description。'
-  } else tool.description = '增量更新接口与字段文档。必须填写或保留接口说明 description，并为每个已知字段填写业务含义；URL 必须使用完整的 http:// 或 https:// 地址。未传保留，remove/unset 显式删除。字段结构同 upsert_api，写入后检查 documentation.issues。'
+  tool.handler = name === 'create_api'
+    ? args => writeApiDocumentation(args, true)
+    : args => writeApiDocumentation(args)
+  tool.description = name === 'create_api'
+    ? '创建接口，执行硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺项拒绝写入且不保存。'
+    : '增量更新接口与字段文档。本次显式提交的字段必须补齐 description、type、required、nullable、enum（有枚举需 enum_descriptions），未提交字段保留；缺项拒绝写入。URL 若提交必须是完整 http(s) 地址。字段结构同 upsert_api。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))

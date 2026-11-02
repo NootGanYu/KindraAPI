@@ -73,3 +73,7 @@ Feature: api-field-documentation
 - `npm run smoke` 全量回归通过；`npm run typecheck` 通过。界面回归 15 项通过，并在浏览器检查分享页排版。
 - 发行版本为 0.2.4；提供 Windows 安装包。现有安装版和业务数据未被自动替换。
 - 新打包版在隔离数据目录启动后，使用用户原安装目录中的 `mcp-stdio.cjs` 完成 `tools/list`、`upsert_api` 和 `get_api_detail` 的真实 stdio 验证，71 个工具可发现，字段枚举及含义写入回读一致。测试进程已关闭。
+
+## 后续修订（2026-11-02）
+
+决策 11 的“缺项提醒”已收紧为 MCP 新建接口的硬性门槛：接口说明、完整绝对 URL，以及每个已知字段的 `description`、`type`、`required`、`nullable`、`enum`（有枚举还需 `enum_descriptions`）缺失时拒绝写入且不保存。更新接口只校验本次显式提交的字段，未提交的历史字段不追溯；系统自动生成的 Header 与模型引用分支不参与该门槛。详见 [ADR-0006](../../docs/adr/0006-strict-documentation-gate-for-mcp-api-writes.md)。

@@ -50,14 +50,14 @@ async function main(): Promise<void> {
     return result.result
   }
   const create = async (name: string): Promise<string> => (await call('upsert_api', {
-    source_key: name, name, method: 'GET', url: 'https://example.invalid/before', body: { mode: 'none' }
+    source_key: name, name, method: 'GET', url: 'https://example.invalid/before', description: `${name} 接口`, body: { mode: 'none' }
   })).target_id
   try {
     const id = await create('sync-main'), other = await create('sync-background')
     await ui().openTarget(id); await ui().openTarget(other)
     await call('upsert_api', { target_id: id, name: 'MCP 最新名称', url: 'https://example.invalid/after',
-      query: [{ key: 'id', description: '新的查询说明' }],
-      success_response: { raw: { state: 1 }, field_docs: [{ path: 'state', description: '新的响应说明', type: 'integer' }] } })
+      query: [{ key: 'id', type: 'string', required: false, nullable: true, enum: null, description: '新的查询说明' }],
+      success_response: { raw: { state: 1 }, field_docs: [{ path: 'state', description: '新的响应说明', type: 'integer', required: true, nullable: false, enum: null }] } })
     assert.equal(ui().drafts[id].name, 'MCP 最新名称')
     assert.equal(ui().tabs.find(tab => tab.id === id)!.name, 'MCP 最新名称')
     assert.equal(ui().drafts[id].request!.query.parameter[0].description, '新的查询说明')
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
     console.log('PASS edits started during an asynchronous refresh are not overwritten')
 
     const start = events.length
-    await call('create_api', { name: 'legacy-create', url: '/legacy' })
+    await call('create_api', { name: 'legacy-create', url: 'http://localhost/legacy', description: '客户端同步测试接口' })
     assert.equal(events.slice(start).filter(event => event.source === 'mcp').length, 1)
     const partialStart = events.length
     await assert.rejects(withTargetChanges('mcp', 'partial-batch', () => {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
@@ -36,7 +36,58 @@ const appIconPath = app.isPackaged
   : appIcon
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+// allowClose 现在表示“允许真正退出应用”，窗口关闭默认只隐藏到托盘。
 let allowClose = false
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function sendRequestClose(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.webContents.isLoadingMainFrame()) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow?.webContents.send('app:request-close')
+    })
+    return
+  }
+  mainWindow.webContents.send('app:request-close')
+}
+
+// 退出前先把窗口显示出来，渲染层的未保存确认弹窗才可见。
+function requestQuit(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    allowClose = true
+    app.quit()
+    return
+  }
+  showMainWindow()
+  sendRequestClose()
+}
+
+function createTray(): void {
+  if (tray) return
+  const icon = nativeImage.createFromPath(appIconPath)
+  const sized = process.platform === 'win32' ? icon.resize({ width: 16, height: 16 }) : icon
+  tray = new Tray(sized)
+  tray.setToolTip('KindraAPI')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '显示主窗口', click: () => showMainWindow() },
+      { type: 'separator' },
+      { label: '退出 KindraAPI', click: () => requestQuit() }
+    ])
+  )
+  tray.on('click', () => showMainWindow())
+  tray.on('double-click', () => showMainWindow())
+}
 
 // macOS 用内嵌红绿灯；Windows 交给 Window Controls Overlay 绘制原生按钮；
 // 其余平台保持原来的无边框窗口。
@@ -91,17 +142,23 @@ function createWindow(): void {
     }
   })
 
-  // 关闭窗口前交给渲染层确认未保存标签，渲染层确认后才真正关闭。
+  // 关闭窗口只隐藏到托盘；真正退出由托盘菜单或系统退出流程触发，
+  // 退出前仍交给渲染层确认未保存标签。
   mainWindow.on('close', (event) => {
     if (allowClose) return
     event.preventDefault()
-    mainWindow?.webContents.send('app:request-close')
+    mainWindow?.hide()
+  })
+
+  // Windows 注销/关机时不要再拦截关闭。
+  mainWindow.on('session-end', () => {
+    allowClose = true
   })
 
   ipcMain.removeHandler('app:confirm-close')
   ipcMain.handle('app:confirm-close', () => {
     allowClose = true
-    mainWindow?.close()
+    app.quit()
     return { ok: true, data: true }
   })
 
@@ -133,9 +190,7 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+    showMainWindow()
   })
 
   app.whenReady().then(() => {
@@ -150,18 +205,29 @@ if (!gotLock) {
     void startMcpServer()
     void startDocServer()
     createWindow()
+    createTray()
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      showMainWindow()
     })
   })
 
+  // 窗口关闭只是隐藏到托盘，因此不能因窗口全部关闭而退出应用。
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
+    if (allowClose) app.quit()
+  })
+
+  // 系统退出（Cmd+Q、注销等）同样走未保存确认流程。
+  app.on('before-quit', (event) => {
+    if (allowClose) return
+    event.preventDefault()
+    requestQuit()
   })
 
   // will-quit 在所有窗口关闭后触发；若关闭被未保存守卫拦截，不会执行。
   app.on('will-quit', () => {
+    tray?.destroy()
+    tray = null
     void shutdownMcp()
     void shutdownDocs()
     shutdownMqtt()

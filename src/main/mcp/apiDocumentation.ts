@@ -1,6 +1,6 @@
 import type { BodyModel, FieldDoc, FieldRules, Param, ResponseExample, Target } from '@shared/types'
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
-import { buildFieldRows, normalizeFieldDocs, splitPointer, withDisplayPath } from '@shared/jsonFields'
+import { buildFieldRows, normalizeFieldDocs, pointerToPath, splitPointer, withDisplayPath } from '@shared/jsonFields'
 import { FIELD_TYPES, RULE_KEYS, validateRules } from '@shared/fieldRules'
 import * as store from '../storage/store'
 import { assertModelDocumentation, modelDocumentationWarnings, resolveDocumentedTarget, responseDocs } from '../docs/definition'
@@ -48,6 +48,142 @@ export const successSchema = { type: 'object', properties: {
 }, additionalProperties: false }
 export const HTTP_URL_DESCRIPTION =
   '完整 HTTP(S) 请求地址，必须包含 http:// 或 https://、主机名和路径；不要只填写 /path。项目使用环境前缀时可写 {{baseUrl}}/path，但要确保 baseUrl 会解析为完整地址。'
+function urlProblem(url: string): string | null {
+  const text = url.trim()
+  if (!text) return '缺少 URL'
+  const resolved = text
+    .replace(/^\{\{\s*baseUrl\s*\}\}/i, 'https://baseurl.invalid')
+    .replace(/^\$\{\s*baseUrl\s*\}/i, 'https://baseurl.invalid')
+  let parsed: URL
+  try {
+    parsed = new URL(resolved)
+  } catch {
+    return '必须是完整的 http:// 或 https:// 地址（含主机名与路径），不能只写 /path'
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '协议必须是 http 或 https'
+  if (!parsed.hostname) return '缺少主机名'
+  return null
+}
+
+export interface DocumentationGap {
+  path: string
+  missing: string[]
+}
+
+function missingRuleNames(rules: FieldRules, type?: string): string[] {
+  const missing: string[] = []
+  if (!type || type === 'unknown') missing.push('type')
+  if (!rules.description?.trim()) missing.push('description')
+  if (rules.required === undefined) missing.push('required')
+  if (rules.nullable === undefined) missing.push('nullable')
+  if (rules.enum === undefined) missing.push('enum')
+  if (Array.isArray(rules.enum) && rules.enum.some((_, index) => !rules.enum_descriptions?.[index]?.trim())) {
+    missing.push('enum_descriptions')
+  }
+  return missing
+}
+
+/**
+ * 新建接口的硬性文档门槛：接口说明、完整 URL，以及每个已知字段的全部规则。
+ * 模型引用分支由 assertModelDocumentation 负责，避免把数据模型规则重复算到接口上。
+ */
+export function strictDocumentationGaps(target: Target): DocumentationGap[] {
+  const gaps: DocumentationGap[] = []
+  if (!target.description?.trim()) gaps.push({ path: 'api.description', missing: ['description'] })
+  const problem = urlProblem(target.url ?? '')
+  if (problem) gaps.push({ path: 'api.url', missing: [problem] })
+  const resolved = resolveDocumentedTarget(target)
+  const inspect = (path: string, rules: FieldRules, type?: string): void => {
+    const missing = missingRuleNames(rules, type)
+    if (missing.length) gaps.push({ path, missing })
+  }
+  for (const slot of ['header', 'query', 'restful', 'cookie'] as const) {
+    for (const param of resolved.request?.[slot].parameter ?? []) {
+      if ((param.is_system ?? 0) > 0) continue
+      inspect(`${slot}.${param.key}`, param, param.field_type)
+    }
+  }
+  const body = resolved.request?.body
+  if (body && !body.model_id) {
+    if (body.mode === 'formdata' || body.mode === 'urlencoded') {
+      for (const param of body[body.mode] ?? []) inspect(`body.${param.key}`, param, param.field_type)
+    } else if (body.mode === 'json') {
+      for (const row of buildFieldRows(body.raw ?? '', body.field_docs ?? []).exportedRows) {
+        if (row.synthetic) continue
+        inspect(`body.${row.path}`, row.doc ?? {}, row.type)
+      }
+    }
+  }
+  for (const example of resolved.response?.example ?? []) {
+    if (example.expect?.model_id) continue
+    for (const row of buildFieldRows(example.raw ?? '', example.field_docs ?? []).exportedRows) {
+      if (row.synthetic) continue
+      inspect(`response.${row.path}`, row.doc ?? {}, row.type)
+    }
+  }
+  return gaps
+}
+
+function submittedFieldPaths(input: unknown, prefix: string): string[] {
+  if (!Array.isArray(input)) return []
+  const paths: string[] = []
+  for (const item of input) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const entry = item as Obj
+    if (entry.remove === true) continue
+    const doc = normalizeFieldDocs([entry])?.[0]
+    if (doc && doc.pointer !== '') paths.push(prefix + pointerToPath(doc.pointer))
+  }
+  return paths
+}
+
+function submittedDocumentationPaths(args: Obj): Set<string> {
+  const paths = new Set<string>()
+  if (args.description !== undefined) paths.add('api.description')
+  if (args.url !== undefined) paths.add('api.url')
+  for (const [argKey, slot] of [['headers', 'header'], ['query', 'query'], ['paths', 'restful'], ['cookies', 'cookie']] as const) {
+    if (!Array.isArray(args[argKey])) continue
+    for (const entry of args[argKey] as Obj[]) {
+      if (!entry || typeof entry !== 'object' || entry.remove === true) continue
+      if (typeof entry.key === 'string' && entry.key) paths.add(`${slot}.${entry.key}`)
+    }
+  }
+  const body = args.body
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    for (const path of submittedFieldPaths((body as Obj).field_docs, 'body.')) paths.add(path)
+    if (Array.isArray((body as Obj).parameters)) {
+      for (const entry of (body as Obj).parameters as Obj[]) {
+        if (entry && typeof entry === 'object' && entry.remove !== true && typeof entry.key === 'string') {
+          paths.add(`body.${entry.key}`)
+        }
+      }
+    }
+  }
+  const response = (args.success_response ?? args.response_example) as Obj | undefined
+  if (response && typeof response === 'object' && !Array.isArray(response)) {
+    for (const path of submittedFieldPaths(response.field_docs, 'response.')) paths.add(path)
+  }
+  return paths
+}
+
+export function assertStrictDocumentation(target: Target, args: Obj, created: boolean): void {
+  const gaps = strictDocumentationGaps(target)
+  const submitted = created ? null : submittedDocumentationPaths(args)
+  const relevant = submitted ? gaps.filter(gap => submitted.has(gap.path)) : gaps
+  if (!relevant.length) return
+  const lines = relevant.map(gap =>
+    gap.path === 'api.url'
+      ? `- api.url: ${gap.missing[0]}`
+      : `- ${gap.path}: 缺少 ${gap.missing.join(', ')}`
+  )
+  throw new Error(
+    '接口文档不完整，已拒绝写入。请补齐后重试：\n' +
+      lines.join('\n') +
+      (created
+        ? '\n新建接口必须填写接口说明 description 与完整 http(s) URL，并为每个已知字段写明 description、type、required、nullable、enum；有枚举时必须提供 enum_descriptions。'
+        : '\n更新接口时，本次显式提交的字段必须补齐 description、type、required、nullable、enum；有枚举时必须提供 enum_descriptions。')
+  )
+}
 export const apiDocumentationProperties = {
   project_id: { type: 'string' }, target_id: { type: 'string', description: '更新已有接口的 ID' },
   source_key: { type: 'string', description: '项目内稳定且唯一的代码标识，如 OrderController.detail；重复调用更新同一接口。新建必需。' },
@@ -267,7 +403,12 @@ export function documentationIssues(target: Target): Array<{ path: string; missi
   }
   const resolved = resolveDocumentedTarget(target)
   for (const warning of modelDocumentationWarnings(target)) result.push({ path: warning.path, missing: [warning.message] })
-  for (const slot of ['header', 'query', 'restful', 'cookie'] as const) for (const p of resolved.request?.[slot].parameter ?? []) inspect(`${slot}.${p.key}`, p, p.field_type)
+  for (const slot of ['header', 'query', 'restful', 'cookie'] as const) {
+    for (const p of resolved.request?.[slot].parameter ?? []) {
+      if ((p.is_system ?? 0) > 0) continue
+      inspect(`${slot}.${p.key}`, p, p.field_type)
+    }
+  }
   const body = resolved.request?.body
   if (body?.mode === 'formdata' || body?.mode === 'urlencoded') for (const p of body[body.mode] ?? []) inspect(`body.${p.key}`, p, p.field_type)
   if (body?.mode === 'json') for (const row of buildFieldRows(body.raw ?? '', body.field_docs ?? []).exportedRows) inspect('body.' + row.path, row.doc ?? {}, row.type)
@@ -310,6 +451,7 @@ export function writeApiDocumentation(args: Obj, allowNew = false): unknown {
   if (args.body !== undefined) patchBody(target, object(args.body, 'body'))
   if (args.success_response !== undefined || args.response_example !== undefined) patchSuccessResponse(target, object(args.success_response ?? args.response_example, 'success_response'))
   const issues = documentationIssues(target)
+  assertStrictDocumentation(target, args, !existing)
   const saved = store.saveTarget(projectId, target)
   const api = structuredClone(saved)
   if (api.request?.body.field_docs) api.request.body.field_docs = api.request.body.field_docs.map(withDisplayPath)
