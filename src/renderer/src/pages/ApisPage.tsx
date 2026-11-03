@@ -1,3 +1,4 @@
+import { AgentCandidateNotice } from '../components/AgentCandidates'
 import { useEffect, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -284,6 +285,8 @@ export default function ApisPage(): JSX.Element {
     }
     if (!summary || summary.name === name) return
     try {
+      const agentDraft = projectId ? await window.api.agent.getDraft(projectId, active.target_id) : null
+      if (agentDraft?.ok && agentDraft.data.agent_owned) return
       await saveTarget(active.target_id)
     } catch (error) {
       message.error((error as Error).message)
@@ -544,6 +547,7 @@ export default function ApisPage(): JSX.Element {
               </Tooltip>
             </div>
 
+            {projectId && activeId && <AgentCandidateNotice projectId={projectId} targetId={activeId} onReview={() => setVersionOpen(true)} />}
             {syncNotice ? <div className="target-sync-banner" role="status"><span>{syncNotice}</span><Button size="small" type="text" onClick={() => useApp.setState({ syncNotice: '' })}>知道了</Button></div> : null}
             {activeId && (pending || activeTab?.syncError) ? <div className="target-sync-banner" role="status">
               <span>{activeTab?.syncError ? `同步失败：${activeTab.syncError}` : pending?.target === null

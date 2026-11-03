@@ -1,3 +1,4 @@
+import type { AgentDraft, AgentCandidate, AgentDraftEvent } from '@shared/agentDraft'
 import type { AgentPlan, AgentPlanEvent, ReadPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
@@ -90,6 +91,16 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    saveManualDraftOnQuit(projectId: string, target: Target, revision: string): Promise<Result<boolean>>
+    getDraft(projectId: string, targetId: string): Promise<Result<AgentDraft>>
+    syncEditorDraft(projectId: string, target: Target): Promise<Result<AgentDraft>>
+    listAgentDrafts(projectId: string): Promise<Result<AgentDraft[]>>
+    listCandidates(projectId: string, targetId?: string): Promise<Result<AgentCandidate[]>>
+    applyCandidate(projectId: string, candidateId: string): Promise<Result<AgentCandidate>>
+    onDraftChanged(callback: (event: AgentDraftEvent) => void): () => void
+    getActivity(): Promise<Result<{ running: number }>>
+    prepareQuit(): Promise<Result<boolean>>
+    proposeEditPlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     proposeReadPlan: (projectId: string, input: ReadPlanInput) => Promise<Result<AgentPlan>>
     getPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
     listPlans: (projectId: string) => Promise<Result<AgentPlan[]>>

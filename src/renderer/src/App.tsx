@@ -1,3 +1,4 @@
+import { connectAgentDraftSync, flushAgentDrafts } from './agentDraftSync'
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { App as AntApp, Spin } from 'antd'
@@ -41,8 +42,7 @@ function Shell(): JSX.Element {
 }
 
 function QuitGuard(): JSX.Element {
-  const { message } = AntApp.useApp()
-  const saveTarget = useApp((s) => s.saveTarget)
+  const { message, modal } = AntApp.useApp()
   const closing = useRef(false)
 
   useEffect(() => {
@@ -51,8 +51,22 @@ function QuitGuard(): JSX.Element {
       closing.current = true
       void (async () => {
         try {
-          const dirty = useApp.getState().tabs.filter((tab) => tab.dirty)
-          for (const tab of dirty) await saveTarget(tab.id)
+          await flushAgentDrafts()
+          const activity = await window.api.agent.getActivity()
+          if (!activity.ok) throw new Error(activity.error)
+          if (activity.data.running) {
+            const confirmed = await new Promise<boolean>(resolve => modal.confirm({ title: '退出将停止 Agent 任务', content: `当前有 ${activity.data.running} 个 Agent 任务。退出仅暂存 Agent 草稿，不保存定义；重启不会自动重放请求。`, okText: '停止并退出', cancelText: '继续工作', onOk: () => resolve(true), onCancel: () => resolve(false) }))
+            if (!confirmed) { closing.current = false; return }
+          }
+          const prepared = await window.api.agent.prepareQuit()
+          if (!prepared.ok) throw new Error(prepared.error)
+          await flushAgentDrafts()
+          const state = useApp.getState()
+          for (const tab of state.tabs.filter(tab => tab.dirty)) {
+            if (!state.project || !state.drafts[tab.id]) continue
+            const saved = await window.api.agent.saveManualDraftOnQuit(state.project.project_id, state.drafts[tab.id], state.baselines[tab.id]?.revision ?? '')
+            if (!saved.ok) throw new Error(saved.error)
+          }
           await window.api.app.confirmClose()
         } catch (error) {
           // 保存失败时不退出，避免丢失未保存内容；用户可修正后再次关闭。
@@ -61,7 +75,7 @@ function QuitGuard(): JSX.Element {
         }
       })()
     })
-  }, [message, saveTarget])
+  }, [message, modal])
 
   return <></>
 }
@@ -73,8 +87,9 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     const off = connectTargetSync()
+    const offAgent = connectAgentDraftSync()
     init().catch((e: Error) => setError(e.message))
-    return off
+    return () => { off(); offAgent() }
   }, [init])
 
   if (error) {
