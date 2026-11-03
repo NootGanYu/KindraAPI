@@ -1,3 +1,4 @@
+import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
   AppPaths,
   AppSettings,
@@ -87,6 +88,18 @@ export interface SelectedFile {
 }
 
 export interface ApiBridge {
+  agent: {
+    getConnection(): Promise<Result<AgentConnection | null>>
+    saveConnection(input: AgentConnectionInput): Promise<Result<AgentConnection>>
+    testConnection(): Promise<Result<AgentConnectionTest>>
+    createConversation(projectId: string): Promise<Result<AgentConversation>>
+    listConversations(projectId: string): Promise<Result<AgentConversation[]>>
+    getConversation(projectId: string, id: string): Promise<Result<AgentConversation>>
+    deleteConversation(projectId: string, id: string): Promise<Result<boolean>>
+    sendMessage(projectId: string, id: string, content: string): Promise<Result<AgentConversation>>
+    cancelMessage(projectId: string, id: string): Promise<Result<boolean>>
+    onChanged(callback: (event: AgentEvent) => void): () => void
+  }
   paths(): Promise<Result<AppPaths>>
   app: {
     openPath(targetPath: string): Promise<Result<string>>

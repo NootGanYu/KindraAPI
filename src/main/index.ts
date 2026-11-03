@@ -1,3 +1,4 @@
+import { shutdownAgent } from './agent/service'
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -226,6 +227,7 @@ if (!gotLock) {
 
   // will-quit 在所有窗口关闭后触发；若关闭被未保存守卫拦截，不会执行。
   app.on('will-quit', () => {
+    shutdownAgent()
     tray?.destroy()
     tray = null
     void shutdownMcp()
