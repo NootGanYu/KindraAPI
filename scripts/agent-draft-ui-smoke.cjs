@@ -7,7 +7,7 @@ const server = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
   const body = JSON.parse(raw), name = body.tools?.[0]?.function.name
   if (hold && !name) { res.setHeader('Content-Type', 'text/event-stream'); res.write('data: {"choices":[{"delta":{"content":"进行中"}}]}\n\n'); return }
-  const message = name ? { tool_calls: [{ id: 'one', type: 'function', function: { name, arguments: JSON.stringify(name === 'kindra_capability_probe' ? { token: 'kindra-probe' } : { project_id: pid, target_id: targetId, patch: { description: 'Agent 候选说明' } }) } }] } : { content: '修改提案已创建，等待审阅。' }
+  const message = name ? { tool_calls: [{ id: 'one', type: 'function', function: { name, arguments: JSON.stringify(name === 'kindra_capability_probe' ? { token: 'kindra-probe' } : { project_id: pid, target_id: targetId, patch: { description: 'Agent 候选说明', request: { query: { parameter: [{ param_id: 'second', key: 'duplicate', value: '', is_checked: 1 }] } } } }) } }] } : { content: '修改提案已创建，等待审阅。' }
   res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
 })
 async function launch() {
@@ -21,6 +21,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   const info = await page.evaluate(async base => {
     const p = (await window.api.projects.ensureDefault()).data
     const target = (await window.api.targets.create(p.project_id, '0', 'api')).data
+    target.request.query.parameter = [{ param_id: 'first', key: 'duplicate', value: '', is_checked: 1 }, { param_id: 'second', key: 'duplicate', value: '', is_checked: 1 }];
     target.name = 'Agent 验收接口'; target.description = '原说明'; await window.api.targets.save(p.project_id, target)
     const manual = (await window.api.targets.create(p.project_id, '0', 'api')).data
     manual.name = '人工验收接口'; await window.api.targets.save(p.project_id, manual)
@@ -43,6 +44,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.getByRole('button', { name: '审阅 Agent 版本', exact: true }).click()
   await page.getByRole('button', { name: '查看差异', exact: true }).click()
   await page.getByLabel('候选双栏差异').waitFor()
+  assert((await page.locator('[data-diff=removed]').allTextContents()).some(line => line.includes('"value": ""')), 'deleting a duplicate JSON value must remain visibly removed')
   await page.getByRole('button', { name: '应用到草稿', exact: true }).click()
   await page.getByText('已应用草稿', { exact: true }).waitFor()
   await page.locator('.ant-drawer-close').click()

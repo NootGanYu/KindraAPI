@@ -15,11 +15,12 @@ async function main(): Promise<void> {
   target.description = '原说明'; target.request!.header.parameter.push({ param_id: 'secret', key: 'Authorization', value: 'Bearer local-token', is_checked: 1 } as any)
   store.saveTarget(pid, target)
   const received: unknown[] = []
+  let patch: unknown = { description: 'Agent 新说明' }
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk
     const body = JSON.parse(raw); received.push(body)
     const name = body.tools?.[0]?.function.name
-    const message = name ? { tool_calls: [{ id: 'call1', type: 'function', function: { name, arguments: JSON.stringify(name === 'kindra_capability_probe' ? { token: 'kindra-probe' } : { project_id: pid, target_id: target.target_id, patch: { description: 'Agent 新说明' }, depends_on: [] }) } }] } : { content: '已创建待确认候选' }
+    const message = name ? { tool_calls: [{ id: 'call1', type: 'function', function: { name, arguments: JSON.stringify(name === 'kindra_capability_probe' ? { token: 'kindra-probe' } : { project_id: pid, target_id: target.target_id, patch, depends_on: [] }) } }] } : { content: '已创建待确认候选' }
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -59,7 +60,25 @@ async function main(): Promise<void> {
     const revisionCandidate = commands.listCandidates(pid, target.target_id).find(c => c.status === 'pending')!
     store.saveTarget(pid, { ...target, description: '外部更新' })
     assert.equal(commands.applyCandidate(pid, revisionCandidate.candidate_id).status, 'conflict')
-    console.log('PASS approved proposal, immutable candidate, draft-only application, secrets, concurrent edits, revision and exit deduplication')
+    const beforeRejected = commands.listCandidates(pid, target.target_id).length
+    patch = { request: { auth: { bearer: { key: '[已隐藏]' } } } }
+    const masked = await commands.proposeEditPlan(pid, { goal: '检查占位符', targetId: target.target_id })
+    assert.equal(masked.status, 'paused')
+    assert.equal(commands.listCandidates(pid, target.target_id).length, beforeRejected)
+    patch = { description: '独立的待确认说明' }
+    const versionsBefore = store.listTargetVersions(pid, target.target_id).length
+    for (let index = 0; index < 102; index++) {
+      const next = await commands.proposeEditPlan(pid, { goal: `候选 ${index}`, targetId: target.target_id })
+      await commands.approvePlan(pid, next.plan_id)
+    }
+    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending').length, 102)
+    assert.equal(store.listTargetVersions(pid, target.target_id).length, versionsBefore)
+    const projectFiles = fs.readdirSync(path.join(store.getPaths().projectRoot, pid), { recursive: true }).filter(name => typeof name === 'string') as string[]
+    for (const name of projectFiles) {
+      const file = path.join(store.getPaths().projectRoot, pid, name)
+      if (fs.statSync(file).isFile()) assert(!fs.readFileSync(file, 'utf8').includes(candidate.candidate_id), 'Agent candidate must not appear in project Git files')
+    }
+    console.log('PASS approved proposal, immutable candidate, draft-only application, secrets, concurrent edits, revision, quit guard, no trimming beyond 100, Git boundary and exit deduplication')
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
 }
 main().then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1) })

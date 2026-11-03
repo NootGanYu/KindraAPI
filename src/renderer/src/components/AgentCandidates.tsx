@@ -1,3 +1,4 @@
+import { candidateDiff } from './candidateDiff'
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Space, Tag } from 'antd'
 import type { AgentCandidate } from '@shared/agentDraft'
@@ -37,6 +38,7 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
   if (!items.length) return null
   const before = candidate ? JSON.stringify(targetDefinition(candidate.base), null, 2).split('\n') : []
   const after = candidate ? JSON.stringify(targetDefinition(candidate.proposal), null, 2).split('\n') : []
+  const rows = candidateDiff(before, after)
   return <section aria-label="Agent 候选版本" style={{ marginBottom: 20 }}>
     <h3>Agent 候选版本</h3>
     <Alert type="info" message="候选不会自动保存定义。应用只改变本机草稿；退出时仅暂存。" />
@@ -48,7 +50,7 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
       </Space>{item.error && <p>{item.error}</p>}
     </div>)}
     {candidate && <div aria-label="候选双栏差异" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, marginTop: 16 }}>
-      {[[before, after, '基线', '#fff0ef'], [after, before, 'Agent 提案', '#edfaef']].map(([lines, other, label, color]) => <div key={label as string}><strong>{label as string}</strong><pre style={{ overflow: 'auto', maxHeight: 420, fontSize: 12, background: '#fafafa', padding: 8 }}>{(lines as string[]).map((line, i) => <div key={i} style={{ background: (other as string[]).includes(line) ? undefined : color as string }}><span style={{ opacity: .4 }}>{String(i + 1).padStart(3)} </span>{line || ' '}</div>)}</pre></div>)}
+      {(['before', 'after'] as const).map(side => <div key={side}><strong>{side === 'before' ? '基线' : 'Agent 提案'}</strong><pre style={{ overflow: 'auto', maxHeight: 420, fontSize: 12, background: '#fafafa', padding: 8 }}>{rows.map((row, index) => <div key={index} data-diff={row.changed && row[side] !== undefined ? (side === 'before' ? 'removed' : 'added') : 'same'} style={{ minHeight: '1.5em', background: row.changed && row[side] !== undefined ? (side === 'before' ? '#fff0ef' : '#edfaef') : undefined }}><span style={{ opacity: .4 }}>{String(row[side === 'before' ? 'beforeNumber' : 'afterNumber'] ?? '').padStart(3)} </span>{row.changed && row[side] !== undefined ? (side === 'before' ? '- ' : '+ ') : '  '}{row[side] ?? ' '}</div>)}</pre></div>)}
     </div>}
   </section>
 }
