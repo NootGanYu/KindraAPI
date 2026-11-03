@@ -584,6 +584,7 @@ export interface FlowRefreshPreview {
   blockers: string[]
 }
 export interface FlowVersionSwitch {
+  after_instance_id?: string
   preview_id: string
   applied_at: number
   references: FlowRefreshReference[]

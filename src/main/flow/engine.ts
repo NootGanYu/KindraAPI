@@ -868,7 +868,7 @@ export async function runFlow(
     return [...pending.values()]
   }
   options.onControl?.(new FlowRefreshController(projectId,env,runtime.definitions,remaining,applyRequestInput,
-    ()=>({...runtime.globalValues,...runtime.envValues,...runtime.localValues}),flow.events))
+    ()=>({...runtime.globalValues,...runtime.envValues,...runtime.localValues}),flow.events,()=>runtime.cursor.after_instance_id))
   const snapshot: FlowExecutionSnapshot = {
     flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
     captured_at: Date.now(),
