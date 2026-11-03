@@ -26,6 +26,7 @@ async function main(): Promise<void> {
   app.setPath('userData', dir)
   await app.whenReady()
   if (process.env.CANCEL_RESTART_DIR) {
+    store.saveMcpConfig({ ...store.getMcpConfig(), enabled: true, allowed_project_ids: [process.env.CANCEL_PROJECT!] })
     const result = await callTool('get_flow_run', { project_id: process.env.CANCEL_PROJECT!, run_id: process.env.CANCEL_RUN! }, { ...store.getMcpConfig(), enabled: true, allowed_project_ids: [process.env.CANCEL_PROJECT!] })
     assert(result.ok)
     const run = result.result as FlowRun
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   try {
     const projectId = store.ensureDefaultProject().project_id
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [projectId] }
+    store.saveMcpConfig(config)
     registerIpc()
     window = new BrowserWindow({ show:false, webPreferences:{nodeIntegration:true,contextIsolation:false} })
     await window.loadURL('about:blank')

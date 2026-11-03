@@ -41,6 +41,7 @@ async function main(): Promise<void> {
   try {
     const projectId = store.ensureDefaultProject().project_id
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [projectId] }
+    store.saveMcpConfig(config)
     const request = createFlowEvent('request', { event_id: 'item-request', logical_step_id: 'item-step', url: `${origin}/item?outer={{outer}}&inner={{loop_index}}` })
     const post = createFlowEvent('script', { event_id: 'item-post', logical_step_id: 'item-step', script: 'pm.environment.set("token", pm.response.json().token); pm.variables.set("object_id", pm.response.json().object_id); pm.variables.set("post_done", "yes"); pm.test("完整步骤", () => pm.expect(pm.variables.get("phase")).to.eql("pre"));' })
     const group = createFlowEvent('begin', { event_id: 'group', children: [

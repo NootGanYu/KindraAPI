@@ -7,8 +7,9 @@ const { _electron } = require('playwright-core')
 
 async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-progress-ui-'))
-  let release
-  const server = http.createServer((_req,res) => { release = () => res.end('{}') })
+  let release, arrived
+  const arrival = new Promise(resolve => { arrived = resolve })
+  const server = http.createServer((_req,res) => { release = () => res.end('{}'); arrived() })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   let electron
   try {
@@ -27,6 +28,9 @@ async function main() {
       return window.api.flows.startRun(project.project_id, flow.flow_id, '', 'ui-progress')
     }, server.address().port)
     assert(result.ok)
+    let arrivalTimer
+    try { await Promise.race([arrival, new Promise((_, reject) => { arrivalTimer = setTimeout(() => reject(new Error('HTTP fixture did not arrive')), 10000) })]) }
+    finally { clearTimeout(arrivalTimer) }
     console.log('started UI fixture')
     await page.evaluate(() => { window.location.hash = '#/automation' })
     console.log('navigated automation')

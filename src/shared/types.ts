@@ -598,7 +598,7 @@ export interface FlowVersionSwitch {
   applied_at: number
   references: FlowRefreshReference[]
 }
-export type FlowRunStatus = 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
+export type FlowRunStatus = 'permission_revoked' | 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
   cursor?: FlowExecutionCursor

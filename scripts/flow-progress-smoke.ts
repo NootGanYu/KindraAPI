@@ -52,6 +52,7 @@ async function main(): Promise<void> {
     ] })]
     store.saveFlow(projectId, flow)
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [projectId] }
+    store.saveMcpConfig(config)
     const start = await callTool('start_flow_run', { project_id: projectId, flow_id: flow.flow_id, request_id: 'progress' }, config)
     assert(start.ok, start.ok ? "" : start.error)
     const runId = (start.result as FlowRun).run_id
