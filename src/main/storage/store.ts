@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeFlowEvents } from '../flow/definition'
 import { apiStatuses, defaultApiStatus } from '@shared/apiStatuses'
 import type {
   AppPaths,
@@ -1012,18 +1013,42 @@ export function listFlows(projectId: string): Flow[] {
     .filter((file) => file.endsWith('.json'))
     .map((file) => readJson<Flow | null>(path.join(dir, file), null))
     .filter((flow): flow is Flow => Boolean(flow))
+    .map(withFlowRevision)
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
 
 export function getFlow(projectId: string, flowId: string): Flow | null {
-  return readJson<Flow | null>(flowPath(projectId, flowId), null)
+  const flow = readJson<Flow | null>(flowPath(projectId, flowId), null)
+  return flow ? withFlowRevision(flow) : null
+}
+
+function withFlowRevision(flow: Flow): Flow {
+  const { revision: _revision, updated_at: _updated, ...definition } = flow
+  return { ...flow, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }
+}
+
+/** Read, validate and write without yielding, including legacy updates without a revision. */
+export function updateFlowChecked(
+  projectId: string, flowId: string, expectedRevision: string | undefined, update: (flow: Flow) => Flow
+): Flow {
+  const current = getFlow(projectId, flowId)
+  if (!current) throw new Error('流程不存在')
+  if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+    throw new Error('流程保存冲突：revision 已过期，请重新读取流程')
+  }
+  return saveFlow(projectId, update(current))
+}
+
+export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision: string): Flow {
+  if (!expectedRevision) throw new Error('流程保存需要 expected revision，请重新读取流程')
+  return updateFlowChecked(projectId, flow.flow_id, expectedRevision, () => flow)
 }
 
 export function saveFlow(projectId: string, flow: Flow): Flow {
   if (flow.project_id !== projectId) throw new Error('项目不匹配')
-  flow.updated_at = new Date().toISOString()
-  writeJson(flowPath(projectId, flow.flow_id), flow)
-  return flow
+  const saved = withFlowRevision({ ...flow, events: normalizeFlowEvents(flow.events), updated_at: new Date().toISOString() })
+  writeJson(flowPath(projectId, flow.flow_id), saved)
+  return saved
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {

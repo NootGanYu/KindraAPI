@@ -183,7 +183,7 @@ const api = {
     list: (projectId: string) => invoke('flow:list', projectId),
     get: (projectId: string, flowId: string) => invoke('flow:get', projectId, flowId),
     create: (projectId: string, name: string) => invoke('flow:create', projectId, name),
-    save: (projectId: string, flow: unknown) => invoke('flow:save', projectId, flow),
+    save: (projectId: string, flow: unknown, expectedRevision: string) => invoke('flow:save', projectId, flow, expectedRevision),
     delete: (projectId: string, flowId: string) => invoke('flow:delete', projectId, flowId),
     run: (projectId: string, flowId: string, environmentId?: string) =>
       invoke('flow:run', projectId, flowId, environmentId),

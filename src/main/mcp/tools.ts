@@ -35,6 +35,7 @@ import { apiDocumentationProperties, HTTP_URL_DESCRIPTION, successSchema, writeA
 import { resolveDocumentedTarget, responseDocs } from '../docs/definition'
 import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
+import { normalizeFlowEvents, hasStructuredEvents } from '../flow/definition'
 import { applyRequestInput } from '../flow/engine'
 import { runSavedFlow } from '../flow/service'
 import { generateSchemaExample } from '../schema/example'
@@ -290,18 +291,35 @@ function stepEvents(projectId: string, steps: unknown): FlowEvent[] {
     if (!targetId) throw new Error('每个步骤都需要 target_id')
     const target = store.getTarget(projectId, targetId)
     if (!target || target.target_type !== 'api') throw new Error(`接口不存在: ${targetId}`)
+    for (const key of ['event_id', 'step_id', 'logical_step_id', 'pre_event_id', 'post_event_id']) {
+      if (step[key] !== undefined && (typeof step[key] !== 'string' || !step[key])) throw new Error(`${key} 必须是非空字符串`)
+    }
+    const stepId = typeof step.step_id === 'string' ? step.step_id
+      : typeof step.event_id === 'string' ? step.event_id : createId('step')
+    const eventId = typeof step.event_id === 'string' ? step.event_id : `${stepId}:api`
+    const identity = { step_id: stepId, logical_step_id: typeof step.logical_step_id === 'string' ? step.logical_step_id : stepId }
     if (typeof step.pre_script === 'string' && step.pre_script) {
-      events.push(createFlowEvent('script', { name: `${target.name} · 预执行`, script: step.pre_script }))
+      events.push(createFlowEvent('script', {
+        ...identity,
+        event_id: typeof step.pre_event_id === 'string' ? step.pre_event_id : `${eventId}:pre`,
+        name: `${target.name} · 预执行`, script: step.pre_script
+      }))
     }
     events.push(
       createFlowEvent('api', {
+        ...identity,
+        event_id: eventId,
         name: target.name,
         target_id: targetId,
         input: (step.input ?? {}) as FlowRequestInput
       })
     )
     if (typeof step.post_script === 'string' && step.post_script) {
-      events.push(createFlowEvent('script', { name: `${target.name} · 后执行`, script: step.post_script }))
+      events.push(createFlowEvent('script', {
+        ...identity,
+        event_id: typeof step.post_event_id === 'string' ? step.post_event_id : `${eventId}:post`,
+        name: `${target.name} · 后执行`, script: step.post_script
+      }))
     }
   }
   return events
@@ -980,7 +998,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_execution_flow',
-    description: '创建业务流程。steps 为接口步骤数组，可带 pre_script / post_script。',
+    description: '创建业务流程。events 支持完整事件树；或传 legacy steps（两者互斥）。',
     requires_write: true,
     requires_execute: true,
     input_schema: schema(
@@ -989,12 +1007,18 @@ const TOOLS: ToolDefinition[] = [
         name: { type: 'string' },
         description: { type: 'string' },
         environment_id: S.environment,
+        events: { type: 'array', items: { type: 'object', description: '完整 FlowEvent，支持 api/request/script/assert/if/wait/begin/loop 和 children' } },
         steps: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
               target_id: { type: 'string' },
+              event_id: { type: 'string' },
+              step_id: { type: 'string' },
+              logical_step_id: { type: 'string' },
+              pre_event_id: { type: 'string' },
+              post_event_id: { type: 'string' },
               input: { type: 'object' },
               pre_script: { type: 'string' },
               post_script: { type: 'string' }
@@ -1002,15 +1026,16 @@ const TOOLS: ToolDefinition[] = [
           }
         }
       },
-      ['project_id', 'name', 'steps']
+      ['project_id', 'name']
     ),
     handler: (args) => {
       const projectId = projectIdOf(args)
       const flow = createFlow(projectId, requiredStr(args, 'name'), str(args, 'environment_id'))
       flow.description = str(args, 'description')
-      flow.events = stepEvents(projectId, args.steps)
-      store.saveFlow(projectId, flow)
-      return { flow_id: flow.flow_id, name: flow.name, message: 'created' }
+      if (args.events !== undefined && args.steps !== undefined) throw new Error('events 与 steps 互斥')
+      flow.events = args.events !== undefined ? normalizeFlowEvents(args.events) : stepEvents(projectId, args.steps)
+      const saved = store.saveFlow(projectId, flow)
+      return { flow_id: saved.flow_id, name: saved.name, revision: saved.revision, message: 'created' }
     }
   },
   {
@@ -1025,20 +1050,30 @@ const TOOLS: ToolDefinition[] = [
         name: { type: 'string' },
         description: { type: 'string' },
         environment_id: S.environment,
-        steps: { type: 'array' }
+        steps: { type: 'array' },
+        events: { type: 'array', items: { type: 'object' } },
+        expected_revision: { type: 'string', description: '完整 events 更新必填；从 get_execution_flow 的 revision 获取' }
       },
       ['project_id', 'flow_id']
     ),
     handler: (args) => {
       const projectId = projectIdOf(args)
-      const flow = store.getFlow(projectId, requiredStr(args, 'flow_id'))
-      if (!flow) throw new Error('流程不存在')
-      if (args.name !== undefined) flow.name = str(args, 'name') || flow.name
-      if (args.description !== undefined) flow.description = str(args, 'description')
-      if (args.environment_id !== undefined) flow.env_id = str(args, 'environment_id')
-      if (args.steps !== undefined) flow.events = stepEvents(projectId, args.steps)
-      store.saveFlow(projectId, flow)
-      return { flow_id: flow.flow_id, name: flow.name, message: 'updated' }
+      if (args.events !== undefined && args.steps !== undefined) throw new Error('events 与 steps 互斥')
+      if (args.events !== undefined && !str(args, 'expected_revision')) throw new Error('完整 events 更新需要 expected_revision')
+      if (args.expected_revision !== undefined && !str(args, 'expected_revision')) throw new Error('expected_revision 必须是非空字符串')
+      const flow = store.updateFlowChecked(projectId, requiredStr(args, 'flow_id'),
+        args.expected_revision === undefined ? undefined : str(args, 'expected_revision'), current => {
+          if (args.name !== undefined) current.name = str(args, 'name') || current.name
+          if (args.description !== undefined) current.description = str(args, 'description')
+          if (args.environment_id !== undefined) current.env_id = str(args, 'environment_id')
+          if (args.steps !== undefined) {
+            if (hasStructuredEvents(current.events)) throw new Error('含条件、循环或分组的流程请使用完整 events 更新，不能用 legacy steps 覆盖')
+            current.events = stepEvents(projectId, args.steps)
+          }
+          if (args.events !== undefined) current.events = normalizeFlowEvents(args.events)
+          return current
+        })
+      return { flow_id: flow.flow_id, name: flow.name, revision: flow.revision, message: 'updated' }
     }
   },
   {
@@ -1056,7 +1091,8 @@ const TOOLS: ToolDefinition[] = [
           description: flow.description,
           env_id: flow.env_id,
           event_count: flow.events.length,
-          updated_at: flow.updated_at
+          updated_at: flow.updated_at,
+          revision: flow.revision
         }))
       }
     }
