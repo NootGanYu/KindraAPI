@@ -271,6 +271,7 @@ export interface ApiBridge {
     save(projectId: string, flow: Flow, expectedRevision: string): Promise<Result<Flow>>
     delete(projectId: string, flowId: string): Promise<Result<boolean>>
     run(projectId: string, flowId: string, environmentId?: string): Promise<Result<FlowRun>>
+    startRun(projectId: string, flowId: string, environmentId: string | undefined, requestId: string): Promise<Result<FlowRun>>
     runs(projectId: string, limit?: number): Promise<Result<FlowRunSummary[]>>
     getRun(projectId: string, runId: string): Promise<Result<FlowRun | null>>
   }

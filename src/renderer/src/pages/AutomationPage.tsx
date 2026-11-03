@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
   Button,
@@ -111,7 +111,10 @@ export default function AutomationPage(): JSX.Element {
   const [run, setRun] = useState<FlowRun | null>(null)
   const [envId, setEnvId] = useState('')
   const [saving, setSaving] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const running = starting || run?.status === 'running'
+  const selection = useRef('')
+  selection.current = `${project?.project_id ?? ''}/${flow?.flow_id ?? ''}`
 
   const apiTargets = useMemo(
     () => targets.filter((target) => target.target_type === 'api'),
@@ -164,6 +167,28 @@ export default function AutomationPage(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.project_id])
 
+  useEffect(() => {
+    if (!project || !run || run.status !== 'running') return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const projectId = project.project_id
+    const runId = run.run_id
+    const poll = async (): Promise<void> => {
+      const result = await window.api.flows.getRun(projectId, runId)
+      if (stopped) return
+      if (result.ok && result.data) {
+        setRun(result.data)
+        if (result.data.status !== 'running') {
+          await reloadRuns(result.data.flow_id)
+          return
+        }
+      }
+      timer = setTimeout(() => void poll(), 300)
+    }
+    void poll()
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
+  }, [project?.project_id, run?.run_id, run?.status])
+
   const patchFlow = (patch: Partial<Flow>): void => {
     setFlow((current) => (current ? { ...current, ...patch } : current))
     setDirty(true)
@@ -206,21 +231,23 @@ export default function AutomationPage(): JSX.Element {
 
   const executeFlow = async (): Promise<void> => {
     if (!project || !flow) return
-    const saved = await saveFlow(false)
-    if (!saved) return
-    setRunning(true)
+    if (dirty) {
+      message.warning('请先主动保存流程，再运行')
+      return
+    }
+    const selected = selection.current
+    setStarting(true)
     try {
-      const result = await window.api.flows.run(project.project_id, flow.flow_id, envId)
+      const result = await window.api.flows.startRun(project.project_id, flow.flow_id, envId, crypto.randomUUID())
+      if (selection.current !== selected) return
       if (!result.ok) {
         message.error(result.error)
         return
       }
       setRun(result.data)
       await reloadRuns(flow.flow_id)
-      if (result.data.status === 'passed') message.success('流程运行通过')
-      else message.error('流程存在失败事件')
     } finally {
-      setRunning(false)
+      setStarting(false)
     }
   }
 
@@ -303,6 +330,7 @@ export default function AutomationPage(): JSX.Element {
         <div className="automation-panel-head">
           <span>{flow ? flow.name : '流程编辑器'}</span>
           {dirty ? <Tag color="warning">未保存</Tag> : null}
+          {flow ? <span className="muted">编辑版本：{flow.revision?.slice(0, 8) ?? '未保存'}</span> : null}
           <span style={{ flex: 1 }} />
           <Button
             size="small"
@@ -406,8 +434,8 @@ export default function AutomationPage(): JSX.Element {
         <div className="automation-panel-head">
           <span>运行结果</span>
           {run ? (
-            <Tag color={run.status === 'passed' ? 'success' : 'error'}>
-              {run.status === 'passed' ? '通过' : '失败'}
+            <Tag color={run.status === 'running' ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
+              {run.status === 'running' ? '运行中' : run.status === 'passed' ? '通过' : '失败'}
             </Tag>
           ) : null}
         </div>
@@ -489,8 +517,8 @@ export default function AutomationPage(): JSX.Element {
                   className={`run-history-row${run?.run_id === item.run_id ? ' active' : ''}`}
                   onClick={() => void openRun(item.run_id)}
                 >
-                  <span className={item.status === 'passed' ? 'run-status passed' : 'run-status failed'}>
-                    {item.status === 'passed' ? '通过' : '失败'}
+                  <span className={item.status === 'running' ? 'run-status' : item.status === 'passed' ? 'run-status passed' : 'run-status failed'}>
+                    {item.status === 'running' ? '运行中' : item.status === 'passed' ? '通过' : '失败'}
                   </span>
                   <span className="run-history-time">
                     {new Date(item.started_at).toLocaleString()}

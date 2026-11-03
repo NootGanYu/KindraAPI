@@ -731,7 +731,8 @@ async function runEvents(
 export async function runFlow(
   projectId: string,
   flow: Flow,
-  environmentId?: string
+  environmentId?: string,
+  options: { runId?: string; startedAt?: number } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -754,12 +755,12 @@ export async function runFlow(
     environment_id: env?.env_id ?? '',
     requests: [...runtime.definitions].map(([event_id, definition]) => ({ event_id, target_id: definition.target.target_id, files: definition.files, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }))
   }
-  const startedAt = Date.now()
+  const startedAt = options.startedAt ?? Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
   const finishedAt = Date.now()
   const run: FlowRun = {
-    run_id: createId('run'),
     snapshot,
+    run_id: options.runId ?? createId('run'),
     project_id: projectId,
     flow_id: flow.flow_id,
     flow_name: flow.name,
