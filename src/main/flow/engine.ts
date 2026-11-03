@@ -9,6 +9,7 @@ import type {
   FlowAssertion,
   FlowEvent,
   FlowEventResult,
+  FlowExecutionSnapshot,
   FlowRequestInput,
   FlowResponseSnapshot,
   FlowRun,
@@ -732,7 +733,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { runId?: string; startedAt?: number } = {}
+  options: { runId?: string; startedAt?: number; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -743,18 +744,29 @@ export async function runFlow(
   const runtime = new FlowRuntime(projectId, env, globals)
   const capture = (events: FlowEvent[]): void => {
     for (const event of events) {
-      const target = event.type === 'api' && event.target_id ? store.getTarget(projectId, event.target_id) : event.type === 'request' ? inlineTarget(projectId, event) : null
-      if (target) runtime.definitions.set(event.event_id, captureRequestDefinition(projectId, applyRequestInput(target, event.input), env))
+      const target = event.type === 'api' && event.target_id
+        ? store.getTarget(projectId, event.target_id)
+        : event.type === 'request' ? inlineTarget(projectId, event) : null
+      if (target) {
+        runtime.definitions.set(event.event_id,
+          captureRequestDefinition(projectId, applyRequestInput(target, event.input), env))
+      }
       capture(event.children ?? [])
     }
   }
   capture(flow.events)
-  const snapshot = {
+  const snapshot: FlowExecutionSnapshot = {
     flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
     captured_at: Date.now(),
     environment_id: env?.env_id ?? '',
-    requests: [...runtime.definitions].map(([event_id, definition]) => ({ event_id, target_id: definition.target.target_id, files: definition.files, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }))
+    requests: [...runtime.definitions].map(([event_id, definition]) => ({
+      event_id,
+      target_id: definition.target.target_id,
+      files: definition.files,
+      revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex')
+    }))
   }
+  options.onSnapshot?.(snapshot)
   const startedAt = options.startedAt ?? Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
   const finishedAt = Date.now()

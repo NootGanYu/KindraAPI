@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as store from '../src/main/storage/store'
 import { createEnvironment, createFlow, createFlowEvent, createParam, createRequest } from '../src/shared/factories'
-import { runSavedFlow } from '../src/main/flow/service'
+import { runSavedFlow, startFlowRun, waitForFlowRun } from '../src/main/flow/service'
 import { sendRequest } from '../src/main/request/executor'
 import { callTool } from '../src/main/mcp/tools'
 
@@ -136,6 +136,12 @@ async function main(): Promise<void> {
     assert.equal(fileNext.status, 'passed')
     assert.equal(requests[1].body, 'changed-file')
     console.log('PASS a new Run captures current file bytes and dispatches them')
+    const captured = startFlowRun(pid, flow.flow_id, envs[1].env_id, 'snapshot-evidence')
+    assert.equal(captured.snapshot!.flow_revision, store.getFlow(pid, flow.flow_id)!.revision)
+    assert.equal(captured.snapshot!.environment_id, envs[1].env_id)
+    assert.equal(captured.snapshot!.requests.length, 3)
+    await waitForFlowRun(pid, captured.run_id)
+    console.log('PASS async start exposes the captured saved revision before completion')
 
   } finally {
     await Promise.all(servers.map(server => new Promise<void>(resolve => server.close(() => resolve()))))
