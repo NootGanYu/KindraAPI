@@ -37,7 +37,7 @@ import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { normalizeFlowEvents, hasStructuredEvents } from '../flow/definition'
 import { applyRequestInput } from '../flow/engine'
-import { runSavedFlow } from '../flow/service'
+import { startFlowRun, getFlowRun, waitForFlowRun } from '../flow/service'
 import { generateSchemaExample } from '../schema/example'
 import {
   fieldDocsFromSchema,
@@ -1128,6 +1128,26 @@ const TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: 'start_flow_run',
+    description: '异步启动已保存流程，使用 request_id 防止重复执行。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema({ project_id: S.project, flow_id: S.flow, environment_id: S.environment, request_id: { type: 'string', description: '项目内唯一的启动请求标识' } }, ['project_id', 'flow_id', 'request_id']),
+    handler: args => startFlowRun(projectIdOf(args), requiredStr(args, 'flow_id'), str(args, 'environment_id') || undefined, requiredStr(args, 'request_id'), 'mcp')
+  },
+  {
+    name: 'get_flow_run',
+    description: '查询流程运行的当前状态及已可用结果。',
+    requires_write: false,
+    requires_execute: false,
+    input_schema: schema({ project_id: S.project, run_id: { type: 'string' } }, ['project_id', 'run_id']),
+    handler: args => {
+      const run = getFlowRun(projectIdOf(args), requiredStr(args, 'run_id'))
+      if (!run) throw new Error('运行记录不存在')
+      return run
+    }
+  },
+  {
     name: 'execute_flow',
     description: '执行一个业务流程并返回执行摘要。',
     requires_write: false,
@@ -1138,11 +1158,11 @@ const TOOLS: ToolDefinition[] = [
     ),
     handler: async (args) => {
       const projectId = projectIdOf(args)
-      const run = await runSavedFlow(
-        projectId,
-        requiredStr(args, 'flow_id'),
-        str(args, 'environment_id') || undefined
+      const started = startFlowRun(
+        projectId, requiredStr(args, 'flow_id'), str(args, 'environment_id') || undefined,
+        createId('request'), 'mcp'
       )
+      const run = await waitForFlowRun(projectId, started.run_id)
       return {
         run_id: run.run_id,
         project_id: projectId,

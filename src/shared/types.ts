@@ -531,6 +531,8 @@ export interface FlowEventResult {
   iteration?: number
 }
 
+export type FlowRunStatus = 'running' | 'passed' | 'failed'
+
 export interface FlowRun {
   run_id: string
   project_id: string
@@ -539,11 +541,15 @@ export interface FlowRun {
   env_id: string
   started_at: number
   finished_at: number
-  status: 'passed' | 'failed'
+  status: FlowRunStatus
   elapsed_ms: number
   variables: Record<string, string>
   events: FlowEventResult[]
   console: ConsoleEntry[]
+  request_id?: string
+  request_environment_id?: string
+  source?: 'ui' | 'mcp'
+  error?: string
 }
 
 export interface FlowRunSummary {
@@ -552,7 +558,7 @@ export interface FlowRunSummary {
   flow_id: string
   flow_name: string
   started_at: number
-  status: 'passed' | 'failed'
+  status: FlowRunStatus
   elapsed_ms: number
   passed: number
   failed: number
