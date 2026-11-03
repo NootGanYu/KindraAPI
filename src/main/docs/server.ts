@@ -717,23 +717,24 @@ function renderBody(
   target: Target,
   settings: DocSettings,
   warnings: ExampleWarning[] = [],
-  editablePrefix?: string
+  editablePrefix?: string,
+  actions = ''
 ): string {
   if (!settings.show_request || !settings.show_body) return ''
   const body = target.request?.body
   if (!body) return ''
   const mode = body.mode || 'none'
-  if (mode === 'none') return '<h4>请求体</h4><p class="muted">无请求体</p>'
+  if (mode === 'none') return `<h4>请求体</h4><p class="muted">无请求体</p>${actions}`
 
   if (mode === 'urlencoded' || mode === 'formdata') {
     const params = activeParams(mode === 'formdata' ? body.formdata : body.urlencoded)
     if (params.length === 0) return ''
     const title = mode === 'formdata' ? 'form-data' : 'x-www-form-urlencoded'
-    return `<h4>${title}</h4>${editablePrefix ? renderEditableParamTable(params, 'b') : renderParamTable(params)}`
+    return `<h4>${title}</h4>${editablePrefix ? renderEditableParamTable(params, 'b') : renderParamTable(params)}${actions}`
   }
   if (mode === 'binary') {
     if (!body.binary?.file_name) return ''
-    return `<h4>二进制文件</h4><pre>${escapeHtml(body.binary.file_name)}</pre>`
+    return `<h4>二进制文件</h4><pre>${escapeHtml(body.binary.file_name)}</pre>${actions}`
   }
   const raw = mode === 'json' ? body.raw ?? body.json : body.raw
   const fieldRows =
@@ -742,13 +743,13 @@ function renderBody(
       : []
   const fieldTable = renderFieldDocsTable(fieldRows)
   const warningBlock = renderWarning(warnings, raw ?? '')
-  if (!raw && !fieldTable) return warningBlock
+  if (!raw && !fieldTable) return `${warningBlock}${actions}`
   const prettyBody = raw
     ? editablePrefix
       ? `<h4>请求体</h4><pre class="body-view">${escapeHtml(pretty(raw))}</pre><textarea class="body-edit" name="body" spellcheck="false">${escapeHtml(pretty(raw))}</textarea>`
       : `<h4>请求体</h4><pre>${escapeHtml(pretty(raw))}</pre>`
     : ''
-  return `${warningBlock}${prettyBody}${fieldTable}`
+  return `${warningBlock}${prettyBody}${actions}${fieldTable}`
 }
 
 function renderScripts(target: Target, settings: DocSettings): string {
@@ -885,18 +886,22 @@ function renderApi(
       ].join('')
     : ''
 
+  const debugActions = debug
+    ? `<div class="try-actions"><button type="submit" class="try-send">发送请求</button><span class="try-hint">请求由分享者本机代理发出，仅限本分享内的接口。</span></div>`
+    : ''
+  const actionsInBody = Boolean(
+    target.request?.body && settings.show_request && settings.show_body
+  )
   const bodyBlock = renderBody(
     target,
     settings,
     warnings?.requestBodies.get(target.target_id) ?? [],
-    debug ? 'body' : undefined
+    debug ? 'body' : undefined,
+    actionsInBody ? debugActions : ''
   )
-  const debugActions = debug
-    ? `<div class="try-actions"><button type="submit" class="try-send">发送请求</button><span class="try-hint">请求由分享者本机代理发出，仅限本分享内的接口。</span></div>`
-    : ''
   const requestDetails =
     paramBlock || bodyBlock
-      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}${debugActions}</div>`
+      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}${actionsInBody ? '' : debugActions}</div>`
       : debug
         ? `<div class="api-block"><h3>在线调试</h3><pre>${escapeHtml(requestExample)}</pre>${debugActions}</div>`
         : ''
