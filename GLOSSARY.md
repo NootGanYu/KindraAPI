@@ -32,6 +32,16 @@ _Avoid_: 项目文档（指单个分享时）、导出范围（指分享范围�
 字段标识：`attribute_id`、`field_name`、`field_type`、`extra`（选项）。
 _Avoid_: 自定义属性（与「接口属性」混用）、展示属性（指分享勾选项时）
 
+**Online Debug（在线调试）**
+分享页在授权后允许访问者直接发送接口请求的能力；默认关闭，只允许本次分享范围内的接口，由分享者本机代理执行。
+字段标识：`allow_debug`。
+_Avoid_: 调试（指该开关时）、在线测试
+
+**Share Address（分享地址）**
+分享服务对外展示和复制链接时使用的本机地址；默认自动选择内网网卡，也可手动覆盖。
+字段标识：`host_override`、`base_url`。
+_Avoid_: 本地地址（指可被同事访问的地址时）
+
 **Request（请求定义）**
 API 上的 `request` 对象：auth / header / query / restful / cookie / body / 前后置任务。
 
@@ -89,8 +99,8 @@ API 的样例数据，可在测试用例里作为 `sample` 事件引用。
 
 ## 自动化
 
-**Testing（测试用例）**
-一棵可执行的事件树，字段标识：`testing_id`、`event_list`。
+**Testing（原应用的测试用例）**
+Original App 中一棵可执行的事件树，字段标识：`testing_id`、`event_list`。
 UI 上也叫“接口用例/测试用例”。
 
 **Event（事件）**
@@ -102,10 +112,18 @@ Testing 树中的节点，字段标识：`event_id`、`type`、`data`、`childre
 一次 MCP 接口/流程执行的记录。字段标识：`run_id`。
 Testing 的汇总报告用的是 `report_id`，不要与 `run_id` 混用。
 
-**MCP Execution Flow（MCP 执行流程）**
-由 MCP 工具创建、保存于 `executions/flows/` 的步骤序列。
+**MCP Execution Flow（原应用的 MCP 执行流程）**
+Original App 中由 MCP 工具创建、保存于 `executions/flows/` 的步骤序列。
 字段标识：`flow_id`、`steps[].step_id`。
 **不要**把它与 Testing 事件树都简称为“流程”；必要时写全称。
+
+**API Case（接口用例，Kindra）**
+针对单个接口定义的参数覆盖与断言，用于验证该接口的不同情形。
+_Avoid_: 执行流程、原应用 Testing
+
+**Execution Flow（执行流程，Kindra）**
+由跨接口请求、条件、循环等步骤组成的可执行流程。
+_Avoid_: 接口用例、原应用 MCP Execution Flow
 
 ## 字典
 
@@ -198,6 +216,28 @@ _Avoid_: 遗言、最后消息
 **Shared Subscription（共享订阅）**
 多个客户端分摊同一订阅的 MQTT 特性，主题以 `$share/<group>/` 开头；本期只做识别与展示。
 _Avoid_: 集群订阅
+
+## Agent
+
+**Agent Conversation（Agent 会话）**
+围绕一个项目持续记录用户意图、助手回复与操作结果的对话上下文；区别于接口发送记录和执行流程。
+_Avoid_: 发送记录、执行流程
+
+**Change Proposal（变更提案）**
+模型建议对接口或执行流程草稿作出的改动；采纳前不属于草稿或已保存定义。
+_Avoid_: 草稿、已保存定义
+
+**Candidate Version（待确认版本）**
+记录 Agent 修改、冲突或退出暂存的候选内容；它尚未成为正式保存的定义。
+_Avoid_: 已保存版本
+
+**Saved Version（已保存版本）**
+已经正式保存的接口定义版本，区别于待确认版本。
+_Avoid_: 待确认版本
+
+**Agent Plan（Agent 操作计划）**
+一轮任务中可获批准的目标、修改、执行环境和操作范围；不等同于可复用的 Execution Flow。
+_Avoid_: 执行流程
 
 ## 两个系统
 

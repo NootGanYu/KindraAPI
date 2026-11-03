@@ -35,6 +35,7 @@ import {
 import type { TargetSummary } from '@shared/types'
 import { methodColor, methodLabel } from '@shared/httpMethods'
 import { useApp } from '../store'
+import { useRefreshFeedback } from '../useRefreshFeedback'
 import ApiDescriptionDialog from './ApiDescriptionDialog'
 
 interface Props {
@@ -114,19 +115,10 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
   const [keyword, setKeyword] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [ascending, setAscending] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const { refreshing, run: runRefreshFeedback } = useRefreshFeedback()
 
-  const refreshTree = async (): Promise<void> => {
-    if (refreshing) return
-    setRefreshing(true)
-    const started = Date.now()
-    try {
-      await reloadTargets()
-    } finally {
-      // 与顶栏刷新一致：至少完整旋转一圈，保证可见反馈。
-      const remain = Math.max(0, 600 - (Date.now() - started))
-      window.setTimeout(() => setRefreshing(false), remain)
-    }
+  const refreshTree = (): void => {
+    void runRefreshFeedback(() => reloadTargets())
   }
   const [expanded, setExpanded] = useState<React.Key[] | null>(null)
   const [newOpen, setNewOpen] = useState(false)
@@ -480,7 +472,7 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
             aria-label="刷新接口树"
             aria-busy={refreshing}
             disabled={refreshing}
-            onClick={() => void refreshTree()}
+            onClick={refreshTree}
           >
             <ReloadOutlined style={{ fontSize: 13 }} />
           </button>

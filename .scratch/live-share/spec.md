@@ -61,6 +61,7 @@ Feature: live-share
 
 - 现有 `show_request / show_body / show_response / show_headers / show_scripts` 继续生效。
 - 新增 `show_design / show_cases`，默认 `true`；在 `DocSettings`、`DocShareDialog` 中增加勾选项。
+- 新增 `allow_debug`，默认 `false`：允许访问者在分享页直接发送请求（服务端代理，仅限分享范围内接口）。
 - 文件夹说明不受开关控制，始终展示（属于目录信息）。
 
 ### 下载
@@ -99,7 +100,7 @@ Feature: live-share
 
 - 单元：范围解析（project/folder/api/custom、删除 target、父子重建）、ZIP 字节结构（用系统 `unzip -l` 校验）、文件名清洗、页码路由参数校验。
 - 集成（smoke）：创建分享 → 修改接口 → 请求页面断言新内容；文件夹新增接口 → 断言出现；删除接口 → 断言 404/移除；下载 ZIP 并校验条目；密码错误拒绝；三个按钮的置灰状态。
-- 分享页无前端 JS 的假设保持不变；分页导航为服务端生成的普通链接。
+- 分享页默认仍为服务端渲染、无前端 JS；分页导航为服务端生成的普通链接。在线调试是可选增强：开启 `allow_debug` 后加载同源脚本以原地发送请求，脚本不可用时退化为服务端表单提交并跳转结果页。
 
 ## Out of Scope
 

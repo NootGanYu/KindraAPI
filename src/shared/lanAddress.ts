@@ -20,7 +20,7 @@ function ipv4Octets(address: string): number[] | null {
 }
 
 /** RFC1918 私有内网地址。 */
-export function isPrivateIpv4(address: string): boolean {
+function isPrivateIpv4(address: string): boolean {
   const octets = ipv4Octets(address)
   if (!octets) return false
   const [a, b] = octets

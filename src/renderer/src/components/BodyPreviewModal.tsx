@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Modal } from 'antd'
 import type { RawBodyLanguage } from '@shared/types'
 import { tryPrettyJson } from '@shared/pretty'
-import JsonCode, { isJsonText } from './JsonCode'
+import JsonText from './JsonText'
 
 interface Props {
   open: boolean
@@ -40,8 +40,8 @@ export default function BodyPreviewModal({
           <div className="field-banner error">JSON 结构错误：{preview.error}</div>
         ) : null}
         {preview.text ? (
-          language === 'json' && isJsonText(preview.text) ? (
-            <JsonCode text={preview.text} className="body-preview-code" />
+          language === 'json' ? (
+            <JsonText text={preview.text} className="body-preview-code" />
           ) : (
             <pre className="body-preview-code">{preview.text}</pre>
           )

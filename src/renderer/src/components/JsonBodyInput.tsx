@@ -1,14 +1,17 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { Input } from 'antd'
 import type { TextAreaProps, TextAreaRef } from 'antd/es/input/TextArea'
-import { highlightJson } from './JsonCode'
+import { highlightJsonHtml } from '@shared/jsonHighlight'
 
 type Props = Omit<TextAreaProps, 'value' | 'autoSize'> & { value: string; highlight: boolean }
 
 export default function JsonBodyInput({ value, highlight, className = '', onScroll, ...props }: Props): JSX.Element {
   const input = useRef<TextAreaRef>(null)
   const backdrop = useRef<HTMLPreElement>(null)
-  const content = useMemo(() => highlight ? highlightJson(value) : null, [value, highlight])
+  const content = useMemo(
+    () => (highlight ? { __html: highlightJsonHtml(value) } : null),
+    [value, highlight]
+  )
 
   const sync = (): void => {
     const textarea = input.current?.resizableTextArea?.textArea
@@ -35,7 +38,14 @@ export default function JsonBodyInput({ value, highlight, className = '', onScro
 
   return (
     <div className={`json-body-input${highlight ? ' is-highlighted' : ''}${props.readOnly ? ' is-readonly' : ''}`}>
-      {highlight && <pre ref={backdrop} className="json-code-layer" aria-hidden="true">{content}<span>{'\u200b'}</span></pre>}
+      {highlight && content && (
+        <pre
+          ref={backdrop}
+          className="json-code-layer"
+          aria-hidden="true"
+          dangerouslySetInnerHTML={{ __html: content.__html + '\u200b' }}
+        />
+      )}
       <Input.TextArea
         {...props}
         ref={input}

@@ -1,6 +1,6 @@
 import JsonFieldTable from './JsonFieldTable'
 import { JsonView, PreviewView } from './ResponseViews'
-import JsonCode, { isJsonText } from './JsonCode'
+import JsonText from './JsonText'
 import DebugResponseBody from './DebugResponseBody'
 import { ActualRequest, ResponseCookies, ResponseAssertions } from './ResponseDiagnostics'
 import { fieldDocsFromSchema, mergeFieldDocs } from '@shared/jsonFields'
@@ -461,7 +461,7 @@ export default function ResponsePanel({
             </div>
           )}
           {debug ? <DebugResponseBody key={example.example_id} body={raw} mime={example.expect?.content_type ?? 'application/json'} filename={example.expect?.name ?? 'response'} /> : viewMode === 'pretty' ? (
-            isJsonText(raw) ? <JsonCode className="resp-code" text={pretty(raw)} /> : <pre className="resp-code">{pretty(raw) || '(空响应示例)'}</pre>
+            <JsonText className="resp-code" text={pretty(raw)} emptyText="(空响应示例)" />
           ) : viewMode === 'raw' ? (
             <Input.TextArea aria-label="响应示例 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={raw} readOnly={Boolean(exampleModelId) || !onChangeExamples || debug} onChange={event => changeExample({ raw: event.target.value })} />
           ) : viewMode === 'preview' ? (
@@ -530,13 +530,10 @@ export default function ResponsePanel({
           {body ? (
             <>
               <div style={{ height: 10 }} />
-              {isJsonText(typeof body === 'string' ? body : JSON.stringify(body, null, 2)) ? (
-                <JsonCode className="resp-code" text={typeof body === 'string' ? body : JSON.stringify(body, null, 2)} />
-              ) : (
-                <pre className="resp-code">
-                  {typeof body === 'string' ? body : JSON.stringify(body, null, 2)}
-                </pre>
-              )}
+              <JsonText
+                className="resp-code"
+                text={typeof body === 'string' ? body : JSON.stringify(body, null, 2)}
+              />
             </>
           ) : null}
         </div>
@@ -604,7 +601,7 @@ export default function ResponsePanel({
           {response && <DebugResponseBody key={record.record_id} body={bodyText} mime={response.mime.mime} base64={response.body_base64} charset={response.charset} filename={record.target_name} truncated={response.body_truncated}
             actions={onChangeExamples && <Dropdown trigger={['click']} menu={{ items: [{ key: 'new', label: '新增响应示例' }, { key: 'update', label: '更新当前示例（保留字段规则）', disabled: !example }], onClick: ({ key }) => saveRecordedExample(key === 'update') }}><button aria-label="保存为响应示例">保存为响应示例 <DownOutlined /></button></Dropdown>} />}
         </> : viewMode === 'pretty' ? (
-          isJsonText(bodyText) ? <JsonCode className="resp-code" text={pretty(bodyText)} /> : <pre className="resp-code">{pretty(bodyText) || '(空响应体)'}</pre>
+          <JsonText className="resp-code" text={pretty(bodyText)} emptyText="(空响应体)" />
         ) : viewMode === 'raw' ? (
           <pre className="resp-code">{bodyText || '(空响应体)'}</pre>
         ) : viewMode === 'preview' ? (

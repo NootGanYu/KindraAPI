@@ -604,6 +604,15 @@ function renderParamTable(params: Param[], showValue = true): string {
   return renderDocumentationTable(['参数名', '类型', ...(showValue ? ['值'] : []), ...RULE_HEADINGS], params.map(p => [p.key, p.field_type || '待补充', ...(showValue ? [p.field_type === 'file' ? fileNameOf(p.value) : p.value] : []), ...ruleCells(p)]))
 }
 
+const PARAM_PREFIX = {
+  path: 'p',
+  query: 'q',
+  header: 'h',
+  cookie: 'c',
+  bodyParam: 'b',
+  bodyRaw: 'body'
+} as const
+
 function renderEditableParamTable(params: Param[], prefix: string): string {
   const headings = ['参数名', '类型', '值', ...RULE_HEADINGS]
   const rows = params.map((param) => {
@@ -730,7 +739,7 @@ function renderBody(
     const params = activeParams(mode === 'formdata' ? body.formdata : body.urlencoded)
     if (params.length === 0) return ''
     const title = mode === 'formdata' ? 'form-data' : 'x-www-form-urlencoded'
-    return `<h4>${title}</h4>${editablePrefix ? renderEditableParamTable(params, 'b') : renderParamTable(params)}${actions}`
+    return `<h4>${title}</h4>${editablePrefix ? renderEditableParamTable(params, PARAM_PREFIX.bodyParam) : renderParamTable(params)}${actions}`
   }
   if (mode === 'binary') {
     if (!body.binary?.file_name) return ''
@@ -746,7 +755,7 @@ function renderBody(
   if (!raw && !fieldTable) return `${warningBlock}${actions}`
   const prettyBody = raw
     ? editablePrefix
-      ? `<h4>请求体</h4><pre class="body-view">${escapeHtml(pretty(raw))}</pre><textarea class="body-edit" name="body" spellcheck="false">${escapeHtml(pretty(raw))}</textarea>`
+      ? `<h4>请求体</h4><pre class="body-view">${escapeHtml(pretty(raw))}</pre><textarea class="body-edit" name="${PARAM_PREFIX.bodyRaw}" spellcheck="false">${escapeHtml(pretty(raw))}</textarea>`
       : `<h4>请求体</h4><pre>${escapeHtml(pretty(raw))}</pre>`
     : ''
   return `${warningBlock}${prettyBody}${actions}${fieldTable}`
@@ -848,14 +857,19 @@ function customAttributeRows(
   return rows
 }
 
+interface RenderApiOptions {
+  apiHref?: string
+  warnings?: ShareWarnings
+  variables?: Record<string, string>
+  shareId?: string
+}
+
 function renderApi(
   target: Target,
   settings: DocSettings,
-  apiHref?: string,
-  warnings?: ShareWarnings,
-  variables?: Record<string, string>,
-  shareId?: string
+  options: RenderApiOptions = {}
 ): string {
+  const { apiHref, warnings, variables, shareId } = options
   const modelWarnings = modelDocumentationWarnings(target)
   target = resolveDocumentedTarget(target)
   // 模型展开会重新生成示例与字段说明，因此变量替换必须在其后进行。
@@ -879,10 +893,10 @@ function renderApi(
 
   const paramBlock = settings.show_request
     ? [
-        renderParamGroup('Path 参数', request?.restful?.parameter ?? [], debug ? 'p' : undefined),
-        renderParamGroup('Query 参数', request?.query?.parameter ?? [], debug ? 'q' : undefined),
-        renderParamGroup('Header 参数', request?.header?.parameter ?? [], debug ? 'h' : undefined),
-        renderParamGroup('Cookie 参数', request?.cookie?.parameter ?? [], debug ? 'c' : undefined)
+        renderParamGroup('Path 参数', request?.restful?.parameter ?? [], debug ? PARAM_PREFIX.path : undefined),
+        renderParamGroup('Query 参数', request?.query?.parameter ?? [], debug ? PARAM_PREFIX.query : undefined),
+        renderParamGroup('Header 参数', request?.header?.parameter ?? [], debug ? PARAM_PREFIX.header : undefined),
+        renderParamGroup('Cookie 参数', request?.cookie?.parameter ?? [], debug ? PARAM_PREFIX.cookie : undefined)
       ].join('')
     : ''
 
@@ -945,7 +959,7 @@ ${
 <div class="api-head">
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${heading}</h2>
-${debug ? '<button type="button" class="try-toggle" data-debug-toggle>调试</button>' : ''}
+${debug ? '<button type="button" class="try-toggle" data-debug-toggle>在线调试</button>' : ''}
 </div>
 ${attributeBlock}
 ${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
@@ -1302,7 +1316,14 @@ function renderListing(ctx: RenderCtx, parentId: string): string {
   return `${folders.map((folder) => renderFolderCard(ctx, folder)).join('')}${
     apis.length
       ? `<div class="section-title">接口（${apis.length}）</div>${apis
-          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api), ctx.view.warnings, ctx.view.environment?.vars, ctx.offline ? undefined : ctx.share.share_id))
+          .map((api) =>
+            renderApi(api, ctx.share.settings, {
+              apiHref: hrefFor(ctx, api),
+              warnings: ctx.view.warnings,
+              variables: ctx.view.environment?.vars,
+              shareId: ctx.offline ? undefined : ctx.share.share_id
+            })
+          )
           .join('')}`
       : ''
   }`
@@ -1376,7 +1397,11 @@ function renderApiPage(ctx: RenderCtx, apiId: string): string | null {
   const api = ctx.view.byId.get(apiId)
   if (!api || api.target_type !== 'api') return null
   const main = `${renderHero(ctx, { current: api, downloadApiId: api.target_id })}
-${renderApi(api, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars, ctx.offline ? undefined : ctx.share.share_id)}`
+${renderApi(api, ctx.share.settings, {
+  warnings: ctx.view.warnings,
+  variables: ctx.view.environment?.vars,
+  shareId: ctx.offline ? undefined : ctx.share.share_id
+})}`
   return renderShareShell(
     ctx,
     `${api.name} · ${ctx.share.name}`,
@@ -1391,7 +1416,11 @@ function renderCompleteListing(ctx: RenderCtx, parentId: string): string {
   return items
     .map((target) => {
       if (target.target_type === 'api') {
-        return renderApi(target, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars, ctx.offline ? undefined : ctx.share.share_id)
+        return renderApi(target, ctx.share.settings, {
+          warnings: ctx.view.warnings,
+          variables: ctx.view.environment?.vars,
+          shareId: ctx.offline ? undefined : ctx.share.share_id
+        })
       }
       return `<section class="folder-card" id="folder-${escapeHtml(target.target_id)}">
 <h2>${escapeHtml(target.name)}</h2>
@@ -2500,14 +2529,14 @@ function applyShareForm(target: Target, form: URLSearchParams): Target {
       param.value = value.slice(0, 10_000)
     }
   }
-  apply('q', request.query?.parameter)
-  apply('p', request.restful?.parameter)
-  apply('h', request.header?.parameter)
-  apply('c', request.cookie?.parameter)
+  apply(PARAM_PREFIX.query, request.query?.parameter)
+  apply(PARAM_PREFIX.path, request.restful?.parameter)
+  apply(PARAM_PREFIX.header, request.header?.parameter)
+  apply(PARAM_PREFIX.cookie, request.cookie?.parameter)
   const body = request.body
   if (body) {
     if (body.mode === 'json' || body.mode === 'raw') {
-      const raw = form.get('body')
+      const raw = form.get(PARAM_PREFIX.bodyRaw)
       if (raw !== null) {
         if (body.mode === 'json' && raw.trim()) {
           try {
@@ -2521,7 +2550,7 @@ function applyShareForm(target: Target, form: URLSearchParams): Target {
     } else if (body.mode === 'urlencoded' || body.mode === 'formdata') {
       for (const param of body[body.mode] ?? []) {
         if (!param.key) continue
-        const value = form.get(`b:${param.key}`)
+        const value = form.get(`${PARAM_PREFIX.bodyParam}:${param.key}`)
         if (value !== null) param.value = value.slice(0, 10_000)
       }
     }
@@ -2536,7 +2565,7 @@ function renderExecuteResultPage(share: DocShare, target: Target, record: SendRe
     ? `${response.response_time} ms · ${response.mime.mime} · ${response.size} B`
     : record.error?.message ?? ''
   const body = record.error ? record.error.message : response?.body ?? ''
-  const clipped = body.length > 200_000 ? `${body.slice(0, 200_000)}\n…（响应过大，已截断）` : body
+  const clipped = clipResponseBody(body)
   const headerRows = response
     ? Object.entries(response.headers)
         .map(

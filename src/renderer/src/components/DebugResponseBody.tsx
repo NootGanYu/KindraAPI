@@ -2,7 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 import { App, Input, Select, Tooltip } from 'antd'
 import { CopyOutlined, DownloadOutlined, SearchOutlined, CloseOutlined, EnterOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
 import { JsonView, PreviewView } from './ResponseViews'
-import { highlightJson, isJsonText } from './JsonCode'
+import { isJsonText } from './JsonCode'
+import { highlightJsonHtml } from '@shared/jsonHighlight'
 
 interface Props { body: string; mime: string; base64?: string; charset?: string; filename?: string; truncated?: boolean; actions?: React.ReactNode }
 type View = 'pretty' | 'raw' | 'preview' | 'visual' | 'table'
@@ -63,7 +64,11 @@ export default function DebugResponseBody({ body, mime, base64, charset, filenam
   }
   const highlighted = (): React.ReactNode => {
     if (!positions.length) {
-      return isJsonText(text) ? highlightJson(text) : text || '(空响应体)'
+      return isJsonText(text) ? (
+        <span dangerouslySetInnerHTML={{ __html: highlightJsonHtml(text) }} />
+      ) : (
+        text || '(空响应体)'
+      )
     }
     const chunks: React.ReactNode[] = []; let cursor = 0
     positions.forEach((position, index) => {

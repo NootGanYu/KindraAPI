@@ -1,10 +1,13 @@
+import { highlightJsonHtml } from '@shared/jsonHighlight'
+
 /**
  * 分享页在线调试脚本（同源静态资源）。
  * 渐进增强：脚本不可用时，表单仍可原生提交到 /execute 并跳转结果页。
+ * 高亮函数直接复用 shared 实现，避免前后端两套 tokenizer。
  */
-export const DEBUG_SCRIPT = String.raw`(function () {
+export const DEBUG_SCRIPT = `(function () {
   'use strict'
-  var TOKEN = /"(?:\\[\s\S]|[^"\\])*"?|-?\b\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?\b|\b(?:true|false|null)\b/g
+  var highlightJson = ${highlightJsonHtml.toString()}
   function escapeHtml(text) {
     return String(text == null ? '' : text)
       .replace(/&/g, '&amp;')
@@ -15,25 +18,6 @@ export const DEBUG_SCRIPT = String.raw`(function () {
   }
   function pretty(text) {
     try { return JSON.stringify(JSON.parse(text), null, 2) } catch (e) { return text }
-  }
-  function highlight(text) {
-    var out = '', cursor = 0, match
-    TOKEN.lastIndex = 0
-    while ((match = TOKEN.exec(text))) {
-      out += escapeHtml(text.slice(cursor, match.index))
-      var token = match[0], cls = 'l'
-      if (token.charAt(0) === '"') {
-        var next = match.index + token.length
-        while (next < text.length && /\s/.test(text.charAt(next))) next++
-        cls = text.charAt(next) === ':' ? 'k' : 's'
-      } else if (/^-?\d/.test(token)) {
-        cls = 'n'
-      }
-      out += '<span class="json-' + cls + '">' + escapeHtml(token) + '</span>'
-      cursor = match.index + token.length
-    }
-    out += escapeHtml(text.slice(cursor))
-    return out
   }
   function renderResponse(el, data) {
     el.hidden = false
@@ -61,7 +45,7 @@ export const DEBUG_SCRIPT = String.raw`(function () {
     var body = data.body || ''
     var isJson = false
     try { JSON.parse(body); isJson = true } catch (e) {}
-    html += '<pre class="try-body">' + (isJson ? highlight(pretty(body)) : escapeHtml(body || '（空响应体）')) + '</pre>'
+    html += '<pre class="try-body">' + (isJson ? highlightJson(pretty(body)) : escapeHtml(body || '（空响应体）')) + '</pre>'
     el.innerHTML = html
   }
   function initCard(form) {
@@ -72,7 +56,7 @@ export const DEBUG_SCRIPT = String.raw`(function () {
     if (toggle) {
       toggle.addEventListener('click', function () {
         var editing = card.classList.toggle('editing')
-        toggle.textContent = editing ? '退出调试' : '调试'
+        toggle.textContent = editing ? '退出调试' : '在线调试'
         toggle.classList.toggle('on', editing)
         if (!editing && response) response.hidden = true
       })
