@@ -8,9 +8,19 @@ export function projectRedactor(projectId: string, extra: string[] = [], objects
   const secrets = new Set(extra.filter(Boolean))
   function collect(value: unknown, secret = false): void {
     if (typeof value === 'string') {
+      // URL userinfo is credential material even when stored in an ordinary url/description field.
+      for (const match of value.matchAll(/\b[a-z][a-z\d+.-]*:\/\/([^/\s?#@]+)@/gi)) {
+        const userinfo = match[1]
+        const colon = userinfo.indexOf(':')
+        const components = colon < 0 ? [userinfo] : [userinfo.slice(0, colon), userinfo.slice(colon + 1)]
+        const decoded = components.map(part => { try { return decodeURIComponent(part) } catch { return part } })
+        for (const part of [userinfo, ...components, ...decoded]) if (part) secrets.add(part)
+        if (colon >= 0) secrets.add(Buffer.from(decoded.join(':')).toString('base64'))
+      }
+
       if (secret && value) {
         secrets.add(value)
-        if (/^Bearer\s+/i.test(value)) secrets.add(value.replace(/^Bearer\s+/i, ''))
+        if (/^(Bearer|Basic)\s+/i.test(value)) secrets.add(value.replace(/^(Bearer|Basic)\s+/i, ''))
       } else if (/^\s*[\[{]/.test(value)) {
         try { collect(JSON.parse(value)) } catch { /* Plain text is sanitized separately. */ }
       }
@@ -29,9 +39,9 @@ export function projectRedactor(projectId: string, extra: string[] = [], objects
   objects.forEach(object => collect(object))
   const sorted = [...secrets].sort((a, b) => b.length - a.length)
   function text(value: string): string {
-    let result = value
+    let result = value.replace(/(\b[a-z][a-z\d+.-]*:\/\/)[^/\s?#@]+@/gi, '$1')
     for (const secret of sorted) result = result.split(secret).join(hidden)
-    return result.replace(/(Bearer\s+)[^\s"'<>,;]+/gi, `$1${hidden}`)
+    return result.replace(/((?:Bearer|Basic)\s+)[^\s"'<>,;]+/gi, `$1${hidden}`)
       .replace(/((?:api[_-]?key|token|password|secret|authorization|cookie)\s*[:=]\s*)[^\s"'&,;]+/gi, `$1${hidden}`)
   }
   function visit(value: unknown, key = ''): unknown {

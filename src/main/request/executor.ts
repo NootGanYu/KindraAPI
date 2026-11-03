@@ -38,6 +38,31 @@ interface ResolvedRequest {
   baseUrl: string
 }
 
+/** In-memory execution snapshot. Captured once; never persisted into a Target definition. */
+export interface RequestExecutionContext {
+  projectId: string
+  target: Target
+  settings: ReturnType<typeof store.getSettings>
+  env: Environment | null
+  globals: ReturnType<typeof store.getGlobalVars>
+  resolved: ResolvedRequest
+  dependencies: Array<Target | RequestModel>
+}
+export interface RequestExecutionPolicy {
+  beforeRequest(request: { method: string; url: { toString(): string } }): void
+  fileResolver: unknown
+  followRedirects: boolean
+  persistVariables: boolean
+}
+export function captureRequestContext(projectId: string, target: Target, environmentId?: string): RequestExecutionContext {
+  // Explicit absence means no environment for this captured run, never the manual fallback.
+  const env = environmentId ? store.listEnvironments(projectId).find(env => env.env_id === environmentId) : null
+  if (environmentId && !env) throw new Error('环境不存在')
+  return structuredClone({ projectId, target, settings: store.getSettings(), env: env ?? null,
+    globals: store.getGlobalVars(projectId), resolved: resolveRequest(projectId, target, env ?? null),
+    dependencies: [store.readProjectRequestDefaults(projectId), ...getChain(projectId, target)] })
+}
+
 /** 供代码生成复用的有效请求描述（已完成环境变量/服务前缀替换）。 */
 export interface EffectiveRequest {
   url: string
@@ -387,11 +412,14 @@ export async function sendRequest(
   projectId: string,
   target: Target,
   environmentId?: string,
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal; context?: RequestExecutionContext; policy?: RequestExecutionPolicy } = {}
 ): Promise<SendRecord> {
-  const settings = store.getSettings()
-  const { env, globals } = loadScopes(projectId, environmentId)
-  const resolved = resolveRequest(projectId, target, env)
+  const context = options.context
+  if (context && (context.projectId !== projectId || context.target.target_id !== target.target_id)) throw new Error('执行快照不属于当前项目和接口')
+  if (context) target = structuredClone(context.target)
+  const settings = context?.settings ?? store.getSettings()
+  const { env, globals } = context ?? loadScopes(projectId, environmentId)
+  const resolved = context?.resolved ?? resolveRequest(projectId, target, env)
 
   const environmentValues: Record<string, { current_value?: string; value?: string }> = env
     ? Object.fromEntries(
@@ -482,7 +510,7 @@ export async function sendRequest(
       {
         requester: {
           strictSSL: !(settings.ignore_tls > 0),
-          followRedirects: settings.auto_redirect > 0,
+          followRedirects: options.policy?.followRedirects ?? settings.auto_redirect > 0,
           maxRedirects: Math.max(settings.max_redirect_time, 5),
           followOriginalHttpMethod: settings.follow_original_method > 0,
           protocolVersion: resolved.protocolVersion,
@@ -497,7 +525,7 @@ export async function sendRequest(
         abortOnError: true,
         stopOnScriptError: true,
         iterationCount: 1,
-        fileResolver: fs,
+        fileResolver: options.policy?.fileResolver ?? fs,
         environment: environmentScope,
         globals: globalScope,
         localVariables: new VariableScope({ values: [] })
@@ -513,6 +541,17 @@ export async function sendRequest(
         let responseError: Error | null = null
         run.start({
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
+            if (options.policy) {
+              try { options.policy.beforeRequest(request as any) }
+              catch (error) {
+                controls.abort()
+                runtimeRun?.abort()
+                for (const active of activeRequests.values()) active.abort()
+                runtimeRun?.host?.dispose()
+                finish({ error: { type: 'authorization', message: error instanceof Error ? error.message : '请求超出授权范围' }, response: null, request: null })
+                return
+              }
+            }
             requestRef = request
             activeRequests.set(controls.httpRequestId, controls)
             if (options.signal?.aborted) controls.abort()
@@ -588,7 +627,7 @@ export async function sendRequest(
   })
 
   const finishedAt = Date.now()
-  if (result.error?.type !== 'cancelled') {
+  if (options.policy?.persistVariables !== false && result.error?.type !== 'cancelled') {
     if (env) {
       const current = store.listEnvironments(projectId).find(item => item.env_id === env.env_id)
       if (current) {
