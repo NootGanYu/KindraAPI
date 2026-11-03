@@ -27,9 +27,10 @@ async function main(): Promise<void> {
  const originalFiles = new Map((fs.readdirSync(projectRoot, { recursive: true }) as string[]).filter(name=>fs.statSync(path.join(projectRoot,name)).isFile()).map(name=>[name,fs.readFileSync(path.join(projectRoot,name),'utf8')]))
  execFileSync('git',['-C',projectRoot,'init'],{stdio:'pipe'}); execFileSync('git',['-C',projectRoot,'add','.'],{stdio:'pipe'})
  let save = false, saveOnly = false, patch: unknown = { name: '修改流程', description: '第一版说明', env_id: store.listEnvironments(pid)[0].env_id, events: [...flow.events, { ...createFlowEvent('script'), script: 'console.log(\"saved script\")' }] }
+ const modelInputs: any[] = []
  const server = http.createServer(async (req,res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
-  const body = decodeModelRequest(req, JSON.parse(raw), protocol)
+  const body = decodeModelRequest(req, JSON.parse(raw), protocol); modelInputs.push(body)
   const calls = body.tools?.[0]?.function.name === 'kindra_capability_probe' ? [{ name:'kindra_capability_probe', args:{token:'kindra-probe'} }] : [
    ...(!saveOnly ? [{ name:'propose_flow_change', args:{ project_id:pid, flow_id:flow.flow_id, step_id:'edit', patch, depends_on:[] } }] : []),
    ...(save ? [{name:'save_flow',args:{project_id:pid,flow_id:flow.flow_id,step_id:'save',depends_on:[]}}] : [])
@@ -101,6 +102,9 @@ async function main(): Promise<void> {
   assert(commands.listFlowCandidates(pid).find(c=>c.candidate_id===staged.candidate_id)!.saved_version)
   assert.deepEqual(execFileSync('git',['-C',projectRoot,'diff','--name-only'],{encoding:'utf8'}).trim().split('\n'),[`executions/flows/${flow.flow_id}.json`])
   assert.equal(execFileSync('git',['-C',projectRoot,'ls-files','--others','--exclude-standard'],{encoding:'utf8'}).trim(),'','versions/candidates/review links must never enter project Git')
+  const saveOutputs = modelInputs.flatMap(body => body.messages ?? []).filter(message => message.role === 'tool').map(message => JSON.parse(message.content)).filter(value=>value.saved_version)
+  assert(saveOutputs.length)
+  assert(saveOutputs.every(value=>value.saved_version.revision === undefined),'Flow content signatures must not leak full definitions through model save results')
   console.log(protocol,'PASS standalone save_flow adopts only its candidate and links v2 without second approval')
  } finally {server.closeAllConnections(); await new Promise<void>(r=>server.close(()=>r()))}
 }

@@ -227,7 +227,10 @@ async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
               if (context.mode === 'save') context.flows.set(step.flow_id!, candidate.proposal)
               step.result = context.redact({ kind: 'flow', flow_id: candidate.flow_id, candidate_id: candidate.candidate_id, number: candidate.number, status: candidate.status, message: 'Flow 候选待审阅；未保存或执行。' })
             } else if (call.name === 'save_flow') {
-              step.result = context.redact(saveApprovedFlow(projectId, plan.plan_id, step.flow_id!, context.flowRevisions.get(step.flow_id!)!, context.flowCandidates.get(step.flow_id!) ?? []))
+              const result = saveApprovedFlow(projectId, plan.plan_id, step.flow_id!, context.flowRevisions.get(step.flow_id!)!, context.flowCandidates.get(step.flow_id!) ?? [])
+              // Flow's local signature contains its definition; only version identifiers cross the model boundary.
+              const { revision: _localRevision, ...savedVersion } = result.saved_version
+              step.result = context.redact({ saved_version: savedVersion, candidate_ids: result.candidate_ids })
             } else if (call.name === 'save_api') {
               const candidateIds = context.candidates.get(step.target_id) ?? []
               step.result = context.redact(await saveApprovedApi(projectId, plan.plan_id, step.target_id, context.revisions.get(step.target_id)!, candidateIds))
