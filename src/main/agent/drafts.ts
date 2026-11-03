@@ -83,7 +83,7 @@ function review(candidate: AgentCandidate, status: AgentCandidate['status'], err
   return { ...candidate, status, error, merge, application }
 }
 export function validatePatch(patch: unknown): asserts patch is Partial<Target> {
-  const allowed = ['name', 'description', 'method', 'url', 'request', 'response', 'custom_attributes', 'mark_id']
+  const allowed = ['name', 'description', 'method', 'url', 'request', 'response', 'custom_attributes', 'mark_id', 'cases']
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length || Object.keys(patch).some(key => !allowed.includes(key))) throw new Error('提案包含不允许修改的字段')
   for (const key of ['request', 'response', 'custom_attributes']) if (key in patch && (!(patch as any)[key] || typeof (patch as any)[key] !== 'object' || Array.isArray((patch as any)[key]))) throw new Error('提案对象字段类型无效')
   validateNestedPatch(patch)
