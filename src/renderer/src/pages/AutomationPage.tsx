@@ -232,6 +232,29 @@ export default function AutomationPage(): JSX.Element {
     } finally { setControlling(false) }
   }
 
+  const reviewRunScope = (): void => {
+    if (!run?.refresh_preview || !ensureSavedRunApis()) return
+    const preview = run.refresh_preview
+    modal.confirm({
+      title: '确认扩大本轮执行范围',
+      content: <div>
+        <p>仅对下面列出的版本生效。确认后仍需采用更新并手动继续。</p>
+        <div>固定运行环境：{run.env_id || '无环境'}</div>
+        {preview.references.filter(item => item.scope_changes.length).map(item => <div key={item.event_id} style={{ marginTop: 8 }}>
+          <b>{item.name}</b> · {item.next_revision.slice(0, 8)}
+          {item.scope_changes.map((change, index) => <div key={index}>{change}</div>)}
+        </div>)}
+      </div>,
+      okText: '确认本轮范围', cancelText: '保持暂停',
+      onOk: async () => {
+        if (!ensureSavedRunApis()) throw new Error('请先保存相关接口')
+        const result = await window.api.flows.approveRunScope(run.project_id, run.run_id, preview.preview_id)
+        if (!result.ok) { message.error(result.error); throw new Error(result.error) }
+        setRun(current => current?.run_id === run.run_id ? result.data : current)
+      }
+    })
+  }
+
   const controlRun = async (action: 'pause' | 'resume' | 'cancel'): Promise<void> => {
     if (!run) return
     if (action === 'resume' && !ensureSavedRunApis()) return
@@ -553,15 +576,19 @@ export default function AutomationPage(): JSX.Element {
                     <b>{reference.name}</b> · 剩余 {reference.remaining_instances} 次
                     <div className="mono">{reference.previous_revision.slice(0,8)} → {reference.next_revision.slice(0,8)}</div>
                     <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(reference.effective_request, null, 2)}</pre>
+                    {reference.scope_changes.map((change, index) => <div key={index}>范围变化：{change}</div>)}
                   </div>)}
                   {run.refresh_preview.references.length === 0 ? <div>没有需要更新的剩余引用</div> : null}
                   {run.refresh_preview.blockers.map((blocker,index) => <div className="run-error" key={index}>{blocker}</div>)}
+                  {run.refresh_preview.references.some(item => item.scope_changes.length) ? run.refresh_preview.scope_approval
+                    ? <div>范围已确认；采用后仍需手动继续。</div>
+                    : <Button onClick={reviewRunScope}>审阅执行范围</Button> : null}
                   <Button disabled={run.refresh_preview.blockers.length > 0 || run.refresh_preview.references.length === 0 || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} loading={controlling} onClick={() => void refreshRun(true)}>采用剩余引用更新</Button>
                 </div> : null}
               </div> : null}
               {run.version_switches?.length ? <div style={{ padding: 12 }} aria-label="快照版本切换">
                 <b>快照版本切换</b>
-                {run.version_switches.map(change => <div key={change.preview_id}>{new Date(change.applied_at).toLocaleTimeString()} · {change.references.map(item=>`${item.name} ${item.previous_revision.slice(0,8)} → ${item.next_revision.slice(0,8)}`).join('；')}</div>)}
+                {run.version_switches.map(change => <div key={change.preview_id}>{new Date(change.applied_at).toLocaleTimeString()}{change.scope_approval ? ' · 范围已确认' : ''} · {change.references.map(item=>`${item.name} ${item.previous_revision.slice(0,8)} → ${item.next_revision.slice(0,8)}`).join('；')}</div>)}
               </div> : null}
               <div className="run-section-title">事件</div>
               <ResultRows events={run.events} depth={0} />
