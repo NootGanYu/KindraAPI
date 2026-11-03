@@ -89,14 +89,19 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
-    getConnection(): Promise<Result<AgentConnection | null>>
-    saveConnection(input: AgentConnectionInput): Promise<Result<AgentConnection>>
-    testConnection(): Promise<Result<AgentConnectionTest>>
+    getConnection(connectionId?: string): Promise<Result<AgentConnection | null>>
+    listConnections(): Promise<Result<AgentConnection[]>>
+    createConnection(input: AgentConnectionInput): Promise<Result<AgentConnection>>
+    deleteConnection(connectionId: string): Promise<Result<boolean>>
+    getProjectConnection(projectId: string): Promise<Result<AgentConnection | null>>
+    setProjectConnection(projectId: string, connectionId: string | null): Promise<Result<AgentConnection | null>>
+    saveConnection(input: AgentConnectionInput, connectionId?: string): Promise<Result<AgentConnection>>
+    testConnection(connectionId?: string): Promise<Result<AgentConnectionTest>>
     createConversation(projectId: string): Promise<Result<AgentConversation>>
     listConversations(projectId: string): Promise<Result<AgentConversation[]>>
     getConversation(projectId: string, id: string): Promise<Result<AgentConversation>>
     deleteConversation(projectId: string, id: string): Promise<Result<boolean>>
-    sendMessage(projectId: string, id: string, content: string): Promise<Result<AgentConversation>>
+    sendMessage(projectId: string, id: string, content: string, connectionId?: string): Promise<Result<AgentConversation>>
     cancelMessage(projectId: string, id: string): Promise<Result<boolean>>
     onChanged(callback: (event: AgentEvent) => void): () => void
   }
