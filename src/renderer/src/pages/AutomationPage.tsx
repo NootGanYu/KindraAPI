@@ -433,6 +433,9 @@ export default function AutomationPage(): JSX.Element {
       <aside className="automation-panel">
         <div className="automation-panel-head">
           <span>运行结果</span>
+          {run ? <Tooltip title={run.snapshot?.flow_revision ?? '旧记录未记录快照版本'}>
+            <Tag>运行版本：{run.snapshot?.flow_revision.slice(0, 8) ?? '旧记录'}</Tag>
+          </Tooltip> : null}
           {run ? (
             <Tag color={run.status === 'running' ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
               {run.status === 'running' ? '运行中' : run.status === 'passed' ? '通过' : '失败'}
