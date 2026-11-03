@@ -28,9 +28,58 @@ export function normalizeFlowEvents(value: unknown): FlowEvent[] {
       return event
     })
   }
-  return visit(value)
+  const events = visit(value)
+  validateFlowDependencies(events)
+  return events
 }
 
 export function hasStructuredEvents(events: FlowEvent[]): boolean {
   return events.some(event => containerTypes.has(event.type) || (event.children?.length ?? 0) > 0)
+}
+
+/** Includes implicit sequence/group edges so explicit declarations cannot hide a cycle. */
+function validateFlowDependencies(events: FlowEvent[]): void {
+  const nodes = new Map<string, FlowEvent>()
+  const groups = new Map<string, string[]>()
+  const edges = new Map<string, Set<string>>()
+  function collect(list: FlowEvent[]): void {
+    const previous: string[] = []
+    for (const event of list) {
+      nodes.set(event.event_id, event)
+      if (event.depends_on !== undefined && (!Array.isArray(event.depends_on) || event.depends_on.some(id => typeof id !== 'string' || !id))) {
+        throw new Error('depends_on 必须是非空 event_id 的数组；空数组表示明确独立')
+      }
+      const deps = new Set(event.depends_on ?? previous)
+      if (event.logical_step_id) {
+        const members = groups.get(event.logical_step_id) ?? []
+        members.forEach(id => deps.add(id))
+        members.push(event.event_id)
+        groups.set(event.logical_step_id, members)
+      }
+      for (const child of event.children ?? []) deps.add(child.event_id)
+      edges.set(event.event_id, deps)
+      collect(event.children ?? [])
+      previous.push(event.event_id)
+    }
+  }
+  collect(events)
+  for (const [id, dependencies] of edges) {
+    for (const dependency of [...dependencies]) {
+      const target = nodes.get(dependency)
+      if (!target) throw new Error(`依赖事件不存在：${dependency}`)
+      if (target.logical_step_id && target.logical_step_id !== nodes.get(id)?.logical_step_id) {
+        for (const member of groups.get(target.logical_step_id) ?? []) dependencies.add(member)
+      }
+    }
+  }
+  const visited = new Set<string>(), visiting = new Set<string>()
+  function check(id: string): void {
+    if (visiting.has(id)) throw new Error(`流程存在依赖环：${id}`)
+    if (visited.has(id)) return
+    visiting.add(id)
+    for (const dependency of edges.get(id) ?? []) check(dependency)
+    visiting.delete(id)
+    visited.add(id)
+  }
+  for (const id of nodes.keys()) check(id)
 }

@@ -18,6 +18,7 @@ import type {
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
 import { sendRequest } from '../request/executor'
+import { FlowDependencies } from './dependencies'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
@@ -134,6 +135,7 @@ class FlowRuntime {
   localValues: Record<string, string> = {}
   consoleEntries: ConsoleEntry[] = []
   lastResponse: FlowResponseSnapshot | null = null
+  dependencies!: FlowDependencies
   private envDirty = false
   private globalsDirty = false
 
@@ -528,8 +530,20 @@ function skipped(events: FlowEvent[] | undefined, detail: string): FlowEventResu
   }))
 }
 
+function blockedChildren(events: FlowEvent[] | undefined, detail: string): FlowEventResult[] {
+  return (events ?? []).map(event => result(event, 'blocked', Date.now(), { detail, children: blockedChildren(event.children, detail) }))
+}
+
 function hasFailure(events: FlowEventResult[]): boolean {
   return events.some((event) => event.status === 'failed' || hasFailure(event.children ?? []))
+}
+
+function hasBlocked(events: FlowEventResult[]): boolean {
+  return events.some(event => event.status === 'blocked' || hasBlocked(event.children ?? []))
+}
+
+function completedStatus(events: FlowEventResult[]): 'blocked' | 'failed' | 'passed' {
+  return hasBlocked(events) ? 'blocked' : hasFailure(events) ? 'failed' : 'passed'
 }
 
 function countFailed(events: FlowEventResult[]): number {
@@ -602,10 +616,10 @@ async function runRequestEvent(
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
 
-    const assertions = (event.assertions ?? []).map((assertion) =>
+    const assertions = [...record.assertions, ...(event.assertions ?? []).map((assertion) =>
       evalAssertion(assertion, runtime.lastResponse)
-    )
-    const failed = assertions.some((assertion) => !assertion.passed)
+    )]
+    const failed = assertions.some((assertion) => !assertion.passed && !assertion.skipped)
     const status: FlowEventResult['status'] = record.error || !record.response || failed ? 'failed' : 'passed'
     const detail = record.error
       ? record.error.message
@@ -709,7 +723,7 @@ async function runEvent(
       }
       const children = await runEvents(projectId, event.children ?? [], runtime, flow)
       const failed = hasFailure(children)
-      return result(event, failed ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `条件成立：${event.condition ?? ''}`,
         children
       })
@@ -717,7 +731,7 @@ async function runEvent(
 
     if (event.type === 'begin') {
       const children = await runEvents(projectId, event.children ?? [], runtime, flow)
-      return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `分组 ${children.length} 个事件`,
         children
       })
@@ -728,11 +742,11 @@ async function runEvent(
       const children: FlowEventResult[] = []
       for (let index = 0; index < count; index += 1) {
         runtime.setLocal('loop_index', String(index))
-        const iterationResults = await runEvents(projectId, event.children ?? [], runtime, flow)
+        const iterationResults = await runEvents(projectId, event.children ?? [], runtime, flow, children)
         children.push(...iterationResults.map((item) => ({ ...item, iteration: index })))
       }
       runtime.unsetLocal('loop_index')
-      return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `循环 ${count} 轮`,
         children
       })
@@ -748,11 +762,17 @@ async function runEvents(
   projectId: string,
   events: FlowEvent[],
   runtime: FlowRuntime,
-  flow: Flow
+  flow: Flow,
+  previousIterations: FlowEventResult[] = []
 ): Promise<FlowEventResult[]> {
   const results: FlowEventResult[] = []
   for (const event of events) {
-    results.push(await runEvent(projectId, event, runtime, flow))
+    const reason = runtime.dependencies.blockedReason(event, [...previousIterations, ...results])
+    const entry = reason
+      ? result(event, 'blocked', Date.now(), { detail: reason, children: blockedChildren(event.children, reason) })
+      : await runEvent(projectId, event, runtime, flow)
+    results.push(entry)
+    runtime.dependencies.record(entry)
   }
   return results
 }
@@ -769,6 +789,7 @@ export async function runFlow(
   const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
   const globals = store.getGlobalVars(projectId)
   const runtime = new FlowRuntime(projectId, env, globals)
+  runtime.dependencies = new FlowDependencies(flow.events)
   const startedAt = options.startedAt ?? Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
   runtime.persist()
@@ -781,7 +802,7 @@ export async function runFlow(
     env_id: env?.env_id ?? '',
     started_at: startedAt,
     finished_at: finishedAt,
-    status: hasFailure(events) ? 'failed' : 'passed',
+    status: completedStatus(events),
     elapsed_ms: finishedAt - startedAt,
     variables: { ...runtime.envValues },
     events,
