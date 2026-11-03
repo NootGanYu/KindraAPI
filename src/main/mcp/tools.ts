@@ -35,7 +35,8 @@ import { apiDocumentationProperties, HTTP_URL_DESCRIPTION, successSchema, writeA
 import { resolveDocumentedTarget, responseDocs } from '../docs/definition'
 import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
-import { applyRequestInput, runFlow } from '../flow/engine'
+import { applyRequestInput } from '../flow/engine'
+import { runSavedFlow } from '../flow/service'
 import { generateSchemaExample } from '../schema/example'
 import {
   fieldDocsFromSchema,
@@ -1101,13 +1102,15 @@ const TOOLS: ToolDefinition[] = [
     ),
     handler: async (args) => {
       const projectId = projectIdOf(args)
-      const flow = store.getFlow(projectId, requiredStr(args, 'flow_id'))
-      if (!flow) throw new Error('流程不存在')
-      const run = await runFlow(projectId, flow, str(args, 'environment_id') || undefined)
+      const run = await runSavedFlow(
+        projectId,
+        requiredStr(args, 'flow_id'),
+        str(args, 'environment_id') || undefined
+      )
       return {
         run_id: run.run_id,
         project_id: projectId,
-        flow_id: flow.flow_id,
+        flow_id: run.flow_id,
         status: run.status,
         scope: 'flow',
         elapsed_ms: run.elapsed_ms
