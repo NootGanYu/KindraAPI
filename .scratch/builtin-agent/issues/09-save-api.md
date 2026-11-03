@@ -4,7 +4,7 @@
 
 **Blocked by:** [08 接口字段并发合并与冲突审阅](08-api-conflict-merge.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 
