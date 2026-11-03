@@ -4,7 +4,7 @@
 
 **Blocked by:** 08: 暂停后保存并刷新剩余引用
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] 新 API 修改被步骤覆盖的字段时展示冲突，body 整体覆盖亦展示；未冲突覆盖保留。
 - [ ] 用户可逐项选择新 API 值或保留步骤覆盖，并看到实际生效请求。

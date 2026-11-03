@@ -27,7 +27,13 @@ export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
         if (item && typeof item === 'object' && sensitive.test(String(item.key ?? item.name ?? ''))) remember(item.value)
         collect(item)
       })
-    } else if (value && typeof value === 'object') Object.entries(value).forEach(([k,v]) => collect(v,k))
+    } else if (value && typeof value === 'object') {
+      const conflict = value as Record<string, unknown>
+      if (typeof conflict.field === 'string' && sensitive.test(conflict.field)) {
+        remember(conflict.old_value); remember(conflict.new_value); remember(conflict.override_value)
+      }
+      Object.entries(value).forEach(([k,v]) => collect(v,k))
+    }
   }
   collect(value); seeds.forEach(seed => collect(seed))
   const ordered = [...secrets].sort((a,b) => b.length-a.length)

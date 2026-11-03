@@ -564,6 +564,8 @@ export interface FlowRefreshConflict {
   old_value?: unknown
   new_value?: unknown
   override_value?: unknown
+  reason?: 'changed' | 'deleted' | 'type_changed'
+  resolution?: 'api' | 'override'
 }
 export interface FlowRefreshReference {
   event_id: string
