@@ -15,6 +15,7 @@ async function main(): Promise<void> {
   await app.whenReady()
   const project = store.ensureDefaultProject(), projectId = project.project_id
   const config = { ...store.getMcpConfig(), enabled: true, allow_write: true, allow_execute: true, allowed_project_ids: [projectId] }
+  store.saveMcpConfig(config)
   const call = async (name: string, args: Record<string, unknown>): Promise<any> => {
     const result = await callTool(name, { project_id: projectId, ...args }, config)
     assert(result.ok, result.ok ? '' : result.error)
