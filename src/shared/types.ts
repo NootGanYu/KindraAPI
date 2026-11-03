@@ -461,6 +461,9 @@ export interface FlowAssertion {
 
 export interface FlowEvent {
   event_id: string
+  /** Stable legacy step identity and full-step pause boundary. */
+  step_id?: string
+  logical_step_id?: string
   type: FlowEventType
   name: string
   enabled: boolean
@@ -486,6 +489,8 @@ export interface FlowEvent {
 }
 
 export interface Flow {
+  /** Content signature returned by storage; required for checked updates. */
+  revision?: string
   flow_id: string
   project_id: string
   name: string
