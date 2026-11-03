@@ -30,12 +30,12 @@ async function main() {
   const origin = `http://127.0.0.1:${(server.address() as any).port}`
   try {
     const pid = store.ensureDefaultProject().project_id
-    async function paused(input?: any, environmentId?: string, setup?: (target: ReturnType<typeof createTarget>) => void) {
+    async function paused(input?: any, environmentId?: string, setup?: (target: ReturnType<typeof createTarget>) => void, source: 'ui' | 'mcp' = 'ui') {
       const target = createTarget(pid, 'api'); target.url = origin + '/api'; setup?.(target); store.saveTarget(pid, target)
       const flow = createFlow(pid, '范围审阅')
       flow.events = [createFlowEvent('request', { url: origin + '/hold' }), createFlowEvent('api', { target_id: target.target_id, input })]
       store.saveFlow(pid, flow); arrival = new Promise<void>(r => arrived = r)
-      const run = service.startFlowRun(pid, flow.flow_id, environmentId ?? '', flow.flow_id)
+      const run = service.startFlowRun(pid, flow.flow_id, environmentId ?? '', flow.flow_id, source)
       await arrival; service.pauseFlowRun(pid, run.run_id); release(); await until(pid, run.run_id, 'paused')
       return { target, flow, run }
     }
@@ -115,6 +115,19 @@ async function main() {
     const smaller = service.previewFlowRunRefresh(pid, disabled.run.run_id)
     assert.equal(smaller.references[0].scope_changes.length, 0)
     console.log('PASS fixed environment stays bound; inherited file scope reviewed; disabling scripts does not expand scope')
+    const config = store.saveMcpConfig({ ...store.getMcpConfig(), enabled: true, allow_execute: true, allow_write: true, allowed_project_ids: [pid] })
+    const authorized = await paused(undefined, undefined, undefined, 'mcp')
+    authorized.target.method = 'POST'; store.saveTarget(pid, authorized.target)
+    const permissionPreview = service.previewFlowRunRefresh(pid, authorized.run.run_id)
+    api.approveFlowRunScope(pid, authorized.run.run_id, permissionPreview.preview_id)
+    service.applyFlowRunRefresh(pid, authorized.run.run_id, permissionPreview.preview_id)
+    store.saveMcpConfig({ ...config, allow_execute: false })
+    const beforeDenied = hits.length
+    assert.throws(() => service.resumeFlowRun(pid, authorized.run.run_id), /权限/)
+    assert.equal(service.getFlowRun(pid, authorized.run.run_id)?.status, 'paused'); assert.equal(hits.length, beforeDenied)
+    await service.cancelFlowRun(pid, authorized.run.run_id)
+    console.log('PASS scope approval cannot bypass revoked MCP permission and UI cancellation still works')
+
 
 
   } finally {
