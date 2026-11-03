@@ -544,6 +544,7 @@ export interface FlowEventResult {
   error?: string
   children?: FlowEventResult[]
   iteration?: number
+  definition_revision?: string
 }
 
 export interface FlowFileDependency {
@@ -557,11 +558,44 @@ export interface FlowExecutionSnapshot {
   environment_id: string
   requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
 }
+export interface FlowRefreshConflict {
+  event_id: string
+  field: string
+  old_value?: unknown
+  new_value?: unknown
+  override_value?: unknown
+}
+export interface FlowRefreshReference {
+  event_id: string
+  target_id: string
+  name: string
+  remaining_instances: number
+  previous_revision: string
+  next_revision: string
+  api_revision: string
+  effective_request: { method: string; url: string; headers: Array<{ key: string; value: string }>; body?: unknown }
+  conflicts: FlowRefreshConflict[]
+  scope_changes: string[]
+}
+export interface FlowRefreshPreview {
+  preview_id: string
+  created_at: number
+  references: FlowRefreshReference[]
+  blockers: string[]
+}
+export interface FlowVersionSwitch {
+  after_instance_id?: string
+  preview_id: string
+  applied_at: number
+  references: FlowRefreshReference[]
+}
 export type FlowRunStatus = 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
   cursor?: FlowExecutionCursor
   snapshot?: FlowExecutionSnapshot
+  refresh_preview?: FlowRefreshPreview
+  version_switches?: FlowVersionSwitch[]
   run_id: string
   project_id: string
   flow_id: string
