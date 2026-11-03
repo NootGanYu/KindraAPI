@@ -137,6 +137,9 @@ window.app.fileDB.projectRead(projectId, "apis/<id>.json")
 | `10-字典模块实现计划.md` | 数据字典、数据模型、MySQL 连接与导入、API 引用、MCP 工具、存储与校验计划 |
 | `adr/0001-model-reference-live-generation.md` | 模型引用采用实时生成而非快照 |
 | `adr/0002-mysql-only-plaintext-credentials.md` | 首版仅 MySQL、凭据明文、SSH 仅记录 |
+| `adr/0008-flow-pause-and-saved-definition-refresh.md` | 执行计划步骤边界暂停与保存后更新剩余步骤 |
+| `13-AI执行计划分析.md` | 原版单机执行计划、MCP 与 Kindra 执行底座分析及已确认暂停交互 |
+| [AI 执行计划规格](../.scratch/ai-execution-plan/spec.md) | ready-for-agent：外部 MCP 编排、运行快照、暂停保存后手动续跑及验收边界 |
 | `../GLOSSARY.md` | 规范术语表：Project / Target / API / Folder / Send Record / Testing / Event / Run / MCP Execution Flow / Dictionary / Data Model |
 
 ---
