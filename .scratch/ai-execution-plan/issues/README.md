@@ -38,4 +38,4 @@ flowchart LR
 - 1180px Electron 实际界面确认结果标题单行、控制按钮在面板内换行；保存、冲突选择、范围确认、采用与继续保持独立操作。
 - 最终验证通过：`npm run typecheck`（node/web）、`npm run build`、全部 20 个 `test:flow-*` 脚本（14 个真实存储/loopback/IPC/MCP 回归，6 个实际 Electron UI 操作）、`git diff --check`。文件 UI 测试首次因“已暂停”同时出现在历史与结果栏而命中严格选择器，限定结果栏后重跑通过。
 - 新增前置条件回归：`scripts/flow-prerequisites-smoke.ts`；文件 UI 回归：`scripts/flow-file-review-ui.cjs`。既有 snapshot/progress 测试补充文件审查、无重放、环境兼容与数字凭据持久化验证。
-- 原有 `npm run smoke` 的文档断言 `doc html excludes orphan field docs` 在实施前已复现，属于无关基线失败；未修改文档服务以掩盖该问题。
+- 完整 `npm run smoke` 已重跑：更新公开 Run 明文 token 的过期断言，改为验证 loopback `/orders` 恰好收到一次正确 Bearer token，同时公开证据脱敏；TCP 与 stdio 工具目录包含新增 4 个 Run 工具且保持一致。登录/token、MCP 与 MQTT 验证通过后，仅停在实施前已有的文档断言 `doc html excludes orphan field docs`；未修改文档服务以掩盖该基线问题。
