@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import type { AgentConversation, AgentEvent, AgentConnectionTest } from '@shared/agent'
 import { getProject } from '../storage/store'
 import { agentRoot, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, connectionSnapshot, recordCapability, readLocal, writeLocal } from './store'
-import { completeModel, redactKey, redactStreamingKey } from './model'
+import { completeModel } from './model'
 
 const active = new Map<string, AbortController>()
 const listeners = new Set<(event: AgentEvent) => void>()
@@ -105,7 +105,7 @@ async function sendMessage(projectId: string, id: string, content: string, conne
       } catch (error) {
         conversation.status = controller.signal.aborted ? 'interrupted' : 'error'
         conversation.messages[conversation.messages.length - 1].status = controller.signal.aborted ? 'interrupted' : 'error'
-        conversation.error = redactKey(error instanceof Error ? error.message : '模型请求失败', snapshot.api_key)
+        conversation.error = redact(error instanceof Error ? error.message : '模型请求失败')
       } finally { active.delete(id); persist(conversation) }
     })()
     return conversation

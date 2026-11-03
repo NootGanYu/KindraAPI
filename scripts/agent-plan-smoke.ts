@@ -55,7 +55,8 @@ async function main(): Promise<void> {
     const env = store.listEnvironments(pid)[0]
     env.env_var_list = { password: { current_value: 'env-secret', initial_value: 'initial-secret' } as any }
     store.saveEnvironment(pid, env)
-    draft.description += ' env-secret request-token cookie-secret'
+    draft.request!.body.raw = JSON.stringify({ password: 'body-secret', nested: { api_key: 'nested-secret' } })
+    draft.description += ' env-secret request-token cookie-secret body-secret nested-secret'
     const approved = await agentCommands.proposeReadPlan(pid, { goal: '解释这个接口 env-secret', targetId: target.target_id, environmentId: env.env_id, draft })
     assert.throws(() => agentCommands.getPlan(other.project_id, approved.plan_id), /不存在/)
     const completed = await agentCommands.approvePlan(pid, approved.plan_id)
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     assert.equal(completed.explanation, '这是当前草稿的接口解释。')
     const toolResult = received.flatMap(body => body.messages).find((m: any) => m.role === 'tool')
     assert(toolResult.content.includes('未保存的草稿说明'))
-    for (const secret of ['env-secret', 'initial-secret', 'request-token', 'cookie-secret']) {
+    for (const secret of ['env-secret', 'initial-secret', 'request-token', 'cookie-secret', 'body-secret', 'nested-secret']) {
       assert(!JSON.stringify(received).includes(secret), 'model input must redact ' + secret)
       assert(!JSON.stringify(agentCommands.listPlans(pid)).includes(secret), 'plan records must redact ' + secret)
     }

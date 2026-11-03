@@ -33,7 +33,7 @@ import {
 } from '@shared/factories'
 import * as store from '../storage/store'
 import { apiDocumentationProperties, HTTP_URL_DESCRIPTION, successSchema, writeApiDocumentation, patchSuccessResponse, patchParams, patchBody, documentationIssues } from './apiDocumentation'
-import { resolveDocumentedTarget, responseDocs } from '../docs/definition'
+import { responseDocs } from '../docs/definition'
 import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { applyRequestInput, runFlow } from '../flow/engine'
@@ -41,8 +41,7 @@ import { generateSchemaExample } from '../schema/example'
 import {
   fieldDocsFromSchema,
   mergeFieldDocs,
-  normalizeFieldDocs,
-  withDisplayPath
+  normalizeFieldDocs
 } from '@shared/jsonFields'
 import { importDbTables, testDbConnection } from '../db/mysql'
 import * as mqttStore from '../mqtt/store'

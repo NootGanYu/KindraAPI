@@ -7,7 +7,15 @@ export interface ProjectRedactor { <T>(value: T): T; stream(text: string): strin
 export function projectRedactor(projectId: string, extra: string[] = [], objects: unknown[] = []): ProjectRedactor {
   const secrets = new Set(extra.filter(Boolean))
   function collect(value: unknown, secret = false): void {
-    if (typeof value === 'string') { if (secret && value) { secrets.add(value); if (/^Bearer\s+/i.test(value)) secrets.add(value.replace(/^Bearer\s+/i, '')) }; return }
+    if (typeof value === 'string') {
+      if (secret && value) {
+        secrets.add(value)
+        if (/^Bearer\s+/i.test(value)) secrets.add(value.replace(/^Bearer\s+/i, ''))
+      } else if (/^\s*[\[{]/.test(value)) {
+        try { collect(JSON.parse(value)) } catch { /* Plain text is sanitized separately. */ }
+      }
+      return
+    }
     if (!value || typeof value !== 'object') return
     if (Array.isArray(value)) { for (const item of value) collect(item, secret); return }
     const record = value as Record<string, unknown>
