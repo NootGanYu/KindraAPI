@@ -193,6 +193,14 @@ export function previewFlowRunRefresh(projectId: string, runId: string): FlowRef
   store.saveFlowRun(projectId, active.run)
   return preview
 }
+/** User-only review operation; choices affect this Run, never the stored Flow. */
+export function resolveFlowRunConflict(projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override'): FlowRefreshPreview {
+  const active = refreshableRun(projectId, runId)
+  const preview = active.refresh!.resolveConflict(previewId, eventId, field, choice)
+  active.run.refresh_preview = preview
+  store.saveFlowRun(projectId, active.run)
+  return preview
+}
 export function approveFlowRunScope(projectId: string, runId: string, previewId: string): FlowRun {
   const active = refreshableRun(projectId, runId)
   active.run.refresh_preview = active.refresh!.approveScope(previewId)

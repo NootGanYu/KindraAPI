@@ -232,6 +232,16 @@ export default function AutomationPage(): JSX.Element {
     } finally { setControlling(false) }
   }
 
+  const resolveRunConflict = async (eventId: string, field: string, choice: 'api' | 'override'): Promise<void> => {
+    if (!run?.refresh_preview || !ensureSavedRunApis()) return
+    setControlling(true)
+    try {
+      const result = await window.api.flows.resolveRunConflict(run.project_id, run.run_id, run.refresh_preview.preview_id, eventId, field, choice)
+      if (!result.ok) { message.error(result.error); return }
+      setRun(current => current?.run_id === run.run_id ? { ...current, refresh_preview: result.data } : current)
+    } finally { setControlling(false) }
+  }
+
   const reviewRunScope = (): void => {
     if (!run?.refresh_preview || !ensureSavedRunApis()) return
     const preview = run.refresh_preview
@@ -575,7 +585,17 @@ export default function AutomationPage(): JSX.Element {
                   {run.refresh_preview.references.map(reference => <div key={reference.event_id} style={{ marginTop: 10 }}>
                     <b>{reference.name}</b> · 剩余 {reference.remaining_instances} 次
                     <div className="mono">{reference.previous_revision.slice(0,8)} → {reference.next_revision.slice(0,8)}</div>
-                    <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(reference.effective_request, null, 2)}</pre>
+                    {reference.conflicts.map(conflict => <div key={conflict.field} aria-label={`步骤覆盖冲突 ${reference.event_id} ${conflict.field}`} style={{ padding: 8, border: '1px solid var(--border-color)', marginTop: 8 }}>
+                      <b>{conflict.field}</b> · {conflict.reason === 'deleted' ? '字段已删除' : conflict.reason === 'type_changed' ? '字段类型已变化' : '接口值已变化'}
+                      <div>新 API 值：<code>{conflict.new_value === undefined ? '（已删除）' : JSON.stringify(conflict.new_value)}</code></div>
+                      <div>步骤覆盖：<code>{JSON.stringify(conflict.override_value)}</code></div>
+                      <Space>
+                        <Button disabled={controlling || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} onClick={() => void resolveRunConflict(reference.event_id, conflict.field, 'api')}>采用新 API 值</Button>
+                        <Button disabled={controlling || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} onClick={() => void resolveRunConflict(reference.event_id, conflict.field, 'override')}>保留步骤覆盖</Button>
+                      </Space>
+                      <div>{conflict.resolution ? `已选择：${conflict.resolution === 'api' ? '新 API 值' : '步骤覆盖'}` : '请选择本轮使用的值'}</div>
+                    </div>)}
+                    <pre aria-label={`实际生效请求 ${reference.event_id}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(reference.effective_request, null, 2)}</pre>
                     {reference.scope_changes.map((change, index) => <div key={index}>范围变化：{change}</div>)}
                   </div>)}
                   {run.refresh_preview.references.length === 0 ? <div>没有需要更新的剩余引用</div> : null}

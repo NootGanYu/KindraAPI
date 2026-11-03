@@ -432,7 +432,7 @@ function mergeParams(
       existing.value = value
       existing.is_checked = 1
     } else {
-      params.push(createParam({ key, value }))
+      params.push(createParam({ param_id: `flow-input:${keyOf(key)}`, key, value }))
     }
   }
   return params

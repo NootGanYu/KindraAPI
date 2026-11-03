@@ -12,6 +12,7 @@ interface Candidate {
     definition: RequestExecutionDefinition;
     apiRevision: string;
     reference: FlowRefreshReference;
+    input: FlowRequestInput;
 }
 /** In-memory definitions and review state; public evidence is always projected before leaving this module. */
 export class FlowRefreshController {
@@ -60,7 +61,7 @@ export class FlowRefreshController {
                 const reference: FlowRefreshReference = { event_id: event.event_id, target_id: event.target_id, name: event.name, remaining_instances: count,
                     previous_revision: definitionRevision(previous), next_revision: definitionRevision(definition), api_revision: current.revision, effective_request, conflicts, scope_changes };
                 preview.references.push(reference);
-                candidates.push({ event, raw: clone(current.target), definition, apiRevision: current.revision, reference });
+                candidates.push({ event, raw: clone(current.target), definition, apiRevision: current.revision, reference, input: clone(event.input ?? {}) });
 
             }
             catch (error) {
@@ -71,6 +72,42 @@ export class FlowRefreshController {
         this.rebuildBlockers();
         return redactEvidence(clone(preview), [this.variables()]);
     }
+    resolveConflict(previewId: string, eventId: string, field: string, choice: 'api' | 'override'): FlowRefreshPreview {
+        const pending = this.pending;
+        if (!pending || pending.preview.preview_id !== previewId)
+            throw new Error('预览已失效，请重新审阅');
+        if (this.reviewed === pending.candidates)
+            throw new Error('该预览已采用，请重新预览后再选择');
+        if (choice !== 'api' && choice !== 'override')
+            throw new Error('无效的冲突选择');
+        const candidate = pending.candidates.find(item => item.event.event_id === eventId);
+        const conflict = candidate?.reference.conflicts.find(item => item.field === field);
+        if (!candidate || !conflict)
+            throw new Error('冲突不存在，请重新审阅');
+        this.validate(pending.candidates);
+        const input = clone(candidate.input);
+        if (field === 'body') {
+            if (choice === 'api') delete input.body;
+            else input.body = candidate.event.input!.body;
+        } else {
+            const separator = field.indexOf('.');
+            const key = field.slice(separator + 1);
+            const section = field.slice(0, separator) as 'headers' | 'query' | 'path' | 'cookies';
+            input[section] = { ...input[section] };
+            if (choice === 'api') delete input[section]![key];
+            else input[section]![key] = candidate.event.input![section]![key];
+        }
+        const definition = captureRequestDefinition(this.projectId, this.applyInput(candidate.raw, input), this.environment);
+        const effective = this.effective(definition, true);
+        candidate.input = input;
+        candidate.definition = definition;
+        conflict.resolution = choice;
+        candidate.reference.next_revision = definitionRevision(definition);
+        candidate.reference.effective_request = effective;
+        candidate.reference.scope_changes = this.scopeChanges(this.definitions.get(eventId)!, definition);
+        this.rebuildBlockers();
+        return redactEvidence(clone(pending.preview), [this.variables()]);
+    }
     apply(previewId: string): FlowVersionSwitch {
         if (!this.pending || this.pending.preview.preview_id !== previewId)
             throw new Error('预览已失效，请重新审阅');
@@ -79,6 +116,7 @@ export class FlowRefreshController {
             throw new Error(this.pending.preview.blockers.join('；'));
         this.validate(this.pending.candidates);
         for (const item of this.pending.candidates) {
+            item.event.input = clone(item.input);
             this.definitions.set(item.event.event_id, item.definition);
             this.originals.set(item.event.event_id, item.raw);
         }
@@ -131,7 +169,7 @@ export class FlowRefreshController {
         if (preview.scope_approval && !this.scopeApprovalMatches()) delete preview.scope_approval;
         preview.blockers = [...baseBlockers];
         for (const item of candidates) {
-            if (item.reference.conflicts.length) preview.blockers.push(`${item.event.name} 存在步骤覆盖冲突，需逐项审阅`);
+            if (item.reference.conflicts.some(conflict => !conflict.resolution)) preview.blockers.push(`${item.event.name} 存在步骤覆盖冲突，需逐项审阅`);
             if (item.reference.scope_changes.length && !this.scopeApprovalMatches()) preview.blockers.push(`${item.event.name} 执行范围扩大，需明确审阅确认`);
         }
     }
@@ -140,7 +178,7 @@ export class FlowRefreshController {
             const current = store.readTargetSnapshot(this.projectId, item.event.target_id!);
             if (!current.target || current.revision !== item.apiRevision)
                 throw new Error('接口 revision 已变化或被删除，请重新审阅');
-            const captured = captureRequestDefinition(this.projectId, this.applyInput(current.target, item.event.input), this.environment);
+            const captured = captureRequestDefinition(this.projectId, this.applyInput(current.target, item.input), this.environment);
             if (definitionRevision(captured) !== definitionRevision(item.definition))
                 throw new Error('继承、模型或文件定义已变化，请重新审阅');
             this.effective(item.definition, true);
@@ -170,11 +208,11 @@ export class FlowRefreshController {
                 const value = (target: Target) => target.request?.[requestKey]?.parameter.find(p => inputKey === 'headers' ? p.key.toLowerCase() === key.toLowerCase() : p.key === key);
                 const before = value(old), after = value(current);
                 if (JSON.stringify(before) !== JSON.stringify(after))
-                    conflicts.push({ event_id: event.event_id, field: `${inputKey}.${key}`, old_value: before?.value, new_value: after?.value, override_value: override });
+                    conflicts.push({ event_id: event.event_id, field: `${inputKey}.${key}`, old_value: before?.value, new_value: after?.value, override_value: override, reason: !after ? 'deleted' : before?.field_type !== after.field_type ? 'type_changed' : 'changed' });
             }
         }
         if (event.input?.body !== undefined && JSON.stringify(old.request?.body) !== JSON.stringify(current.request?.body))
-            conflicts.push({ event_id: event.event_id, field: 'body', old_value: old.request?.body, new_value: current.request?.body, override_value: event.input.body });
+            conflicts.push({ event_id: event.event_id, field: 'body', old_value: old.request?.body, new_value: current.request?.body, override_value: event.input.body, reason: old.request?.body?.mode !== current.request?.body?.mode ? 'type_changed' : 'changed' });
         return conflicts;
     }
     private scopeChanges(before: RequestExecutionDefinition, after: RequestExecutionDefinition): string[] {

@@ -51,6 +51,8 @@
     "test:flow-cancel": "esbuild scripts/flow-cancel-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-cancel-smoke.cjs && electron node_modules/.tmp/flow-cancel-smoke.cjs",
     "test:flow-cancel-ui": "node scripts/flow-cancel-ui.cjs",
     "test:flow-loop-resume": "esbuild scripts/flow-loop-resume-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-loop-resume-smoke.cjs && electron node_modules/.tmp/flow-loop-resume-smoke.cjs",
+    "test:flow-conflicts": "esbuild scripts/flow-conflicts-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-conflicts-smoke.cjs && electron node_modules/.tmp/flow-conflicts-smoke.cjs",
+    "test:flow-conflicts-ui": "node scripts/flow-conflicts-ui.cjs",
     "test:flow-scope": "esbuild scripts/flow-scope-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-scope-smoke.cjs && electron node_modules/.tmp/flow-scope-smoke.cjs",
     "test:flow-scope-ui": "node scripts/flow-scope-ui.cjs",
     "test:flow-revocation": "esbuild scripts/flow-revocation-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-revocation-smoke.cjs && electron node_modules/.tmp/flow-revocation-smoke.cjs"
