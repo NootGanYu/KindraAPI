@@ -2,8 +2,8 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-execution-ui-'))
-let app, pid, targetId, hits = []
-const api = http.createServer(async (req, res) => { let body = ''; for await (const chunk of req) body += chunk; hits.push({ method: req.method, url: req.url, body }); res.end('execution-ui-result') })
+let app, pid, targetId, hits = [], hold = false
+const api = http.createServer(async (req, res) => { let body = ''; for await (const chunk of req) body += chunk; hits.push({ method: req.method, url: req.url, body }); if (!hold) res.end('execution-ui-result') })
 const model = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
   const body = JSON.parse(raw), name = body.tools?.[0]?.function?.name
@@ -11,6 +11,7 @@ const model = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
 })
 async function launch() { app = await _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData } }); return app.firstWindow() }
+async function expectHits(n) { const deadline = Date.now() + 5000; while (hits.length < n && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(hits.length, n) }
 async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)); app = null } }
 ;(async () => {
   await Promise.all([new Promise(resolve => api.listen(0, '127.0.0.1', resolve)), new Promise(resolve => model.listen(0, '127.0.0.1', resolve))])
@@ -36,5 +37,18 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0));
   function files(dir) { return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(path.join(dir, e.name)) : [path.join(dir, e.name)]) }
   assert(!files(info.paths.projectRoot).some(file => fs.readFileSync(file, 'utf8').includes('执行报告已生成')))
   await stop(); page = await launch(); await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('button', { name: '执行草稿', exact: true }).click(); await page.getByText('执行报告已生成', { exact: true }).waitFor(); assert.equal(hits.length, 1)
+  hold = true
+  await page.getByRole('combobox', { name: '计划接口' }).click(); await page.locator('.ant-select-item-option').filter({ hasText: '执行测试接口' }).click(); await page.getByRole('combobox', { name: '计划接口' }).press('Escape')
+  await page.getByRole('button', { name: '生成执行计划', exact: true }).click()
+  await page.getByRole('button', { name: '批准执行计划', exact: true }).click()
+  await expectHits(2)
+  const closed = app.waitForEvent('close')
+  await app.evaluate(({ app }) => app.quit())
+  await page.getByRole('button', { name: '停止并退出', exact: true }).click()
+  await closed; app = null; hold = false
+  page = await launch()
+  const plans = await page.evaluate(async pid => (await window.api.agent.listPlans(pid)).data, pid)
+  assert(plans.some(plan => plan.status === 'interrupted' && plan.steps.some(step => step.status === 'unknown')))
+  assert.equal(hits.length, 2, 'restart must not replay an interrupted request')
   console.log('PASS Electron execution scope, rejection, one approved draft request, local report and restart without replay')
 })().catch(async error => { if (app) { const page = await app.firstWindow(); console.error(await page.locator('.ant-drawer-body').innerText().catch(() => '')) }; console.error(error); process.exitCode = 1 }).finally(async () => { await stop(); api.closeAllConnections(); model.closeAllConnections(); api.close(); model.close() })
