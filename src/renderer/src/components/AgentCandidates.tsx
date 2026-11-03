@@ -1,5 +1,5 @@
 import AgentConflictReview from './AgentConflictReview'
-import { candidateDiff } from './candidateDiff'
+import SnapshotDiff from './SnapshotDiff'
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Space, Tag } from 'antd'
 import type { AgentCandidate } from '@shared/agentDraft'
@@ -38,9 +38,6 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
     } catch (error) { setError((error as Error).message) }
   }
   if (!items.length) return null
-  const before = candidate ? JSON.stringify(targetDefinition(candidate.base), null, 2).split('\n') : []
-  const after = candidate ? JSON.stringify(targetDefinition(candidate.proposal), null, 2).split('\n') : []
-  const rows = candidateDiff(before, after)
   return <section aria-label="Agent 候选版本" style={{ marginBottom: 20 }}>
     <h3>Agent 候选版本</h3>
     <Alert type="info" message="应用、恢复和撤销只改变本机草稿；不采纳保留历史且不撤回已应用内容。只有单独获批的保存步骤或手工保存才会写入正式定义。" />
@@ -57,8 +54,6 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
       </Space>{item.error && <p>{item.error}</p>}
     </div>)}
     {candidate && <AgentConflictReview key={candidate.merge?.review_id ?? candidate.candidate_id} candidate={candidate} onUpdated={load} onError={setError} />}
-    {candidate && <div aria-label="候选双栏差异" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, marginTop: 16 }}>
-      {(['before', 'after'] as const).map(side => <div key={side}><strong>{side === 'before' ? '基线' : 'Agent 提案'}</strong><pre style={{ overflow: 'auto', maxHeight: 420, fontSize: 12, background: '#fafafa', padding: 8 }}>{rows.map((row, index) => <div key={index} data-diff={row.changed && row[side] !== undefined ? (side === 'before' ? 'removed' : 'added') : 'same'} style={{ minHeight: '1.5em', background: row.changed && row[side] !== undefined ? (side === 'before' ? '#fff0ef' : '#edfaef') : undefined }}><span style={{ opacity: .4 }}>{String(row[side === 'before' ? 'beforeNumber' : 'afterNumber'] ?? '').padStart(3)} </span>{row.changed && row[side] !== undefined ? (side === 'before' ? '- ' : '+ ') : '  '}{row[side] ?? ' '}</div>)}</pre></div>)}
-    </div>}
+    {candidate && <SnapshotDiff before={targetDefinition(candidate.base)} after={targetDefinition(candidate.proposal)} />}
   </section>
 }

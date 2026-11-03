@@ -1,3 +1,4 @@
+import type { AgentFlowCandidate } from '@shared/agentFlowDraft'
 import { useEffect, useState } from 'react'
 import { Button, Radio, Space, Typography } from 'antd'
 import type { AgentCandidate, AgentConflictChoice, AgentFieldConflict } from '@shared/agentDraft'
@@ -8,7 +9,7 @@ function valueText(conflict: AgentFieldConflict, side: AgentConflictChoice): str
   const value = conflict[side]
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
-export default function AgentConflictReview({ candidate, onUpdated, onError }: { candidate: AgentCandidate; onUpdated: () => Promise<void>; onError: (text: string) => void }): JSX.Element | null {
+export default function AgentConflictReview({ candidate, onUpdated, onError }: { candidate: AgentCandidate | AgentFlowCandidate; onUpdated: () => Promise<void>; onError: (text: string) => void }): JSX.Element | null {
   const [choices, setChoices] = useState<Record<string, AgentConflictChoice>>({})
   const [busy, setBusy] = useState(false)
   const merge = candidate.merge
@@ -20,7 +21,7 @@ export default function AgentConflictReview({ candidate, onUpdated, onError }: {
     setBusy(true)
     try {
       await flushAgentDrafts()
-      const result = await window.api.agent[undo ? 'resolveCandidateUndo' : 'resolveCandidate'](candidate.project_id, candidate.candidate_id, merge.review_id, choices)
+      const result = await window.api.agent['kind' in candidate && candidate.kind === 'flow' ? 'resolveFlowCandidate' : undo ? 'resolveCandidateUndo' : 'resolveCandidate'](candidate.project_id, candidate.candidate_id, merge.review_id, choices)
       if (!result.ok) throw new Error(result.error)
       if (result.data.status === 'conflict') onError('审阅期间内容发生变化，已刷新冲突；请检查最新内容再选择。')
       else onError('')
