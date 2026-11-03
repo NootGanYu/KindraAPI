@@ -2,6 +2,7 @@ import type { Target } from './types'
 
 export interface ReadPlanInput {
   goal: string
+  connectionId?: string
   targetId: string
   environmentId?: string
   /** An unsaved editor snapshot, never a request to persist the definition. */

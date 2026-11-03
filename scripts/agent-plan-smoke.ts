@@ -35,6 +35,7 @@ async function main(): Promise<void> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     await agentCommands.saveConnection({ name: '计划模型', base_url: `http://127.0.0.1:${(server.address() as any).port}/v1`, model: 'plans', protocol: 'chat-completions' })
+    await assert.rejects(() => agentCommands.proposeReadPlan(pid, { goal: '读取', targetId: target.target_id }), /工具计划/)
     await agentCommands.testConnection()
     const plan = await agentCommands.proposeReadPlan(pid, { goal: '解释这个接口', targetId: target.target_id })
     assert.equal(plan.status, 'pending')

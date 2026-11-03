@@ -41,5 +41,15 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0));
   await page.getByRole('button', { name: '批准只读计划', exact: true }).click()
   await page.getByText('只读计划已解释接口，正式定义保持原状。', { exact: true }).waitFor()
   assert.equal(toolReads, 1)
-  console.log('PASS Electron plan scope display, rejection, approval and explanation')
+  const paths = (await page.evaluate(() => window.api.paths())).data
+  function files(dir) { return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(path.join(dir, e.name)) : [path.join(dir, e.name)]) }
+  assert(!files(paths.projectRoot).some(file => fs.readFileSync(file, 'utf8').includes('只读计划已解释接口')))
+  await stop()
+  app = await _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData } })
+  const restarted = await app.firstWindow()
+  await restarted.getByRole('link', { name: 'Agent' }).click()
+  await restarted.getByRole('button', { name: '只读计划', exact: true }).click()
+  await restarted.getByText('只读计划已解释接口，正式定义保持原状。', { exact: true }).waitFor()
+  assert.equal(toolReads, 1)
+  console.log('PASS Electron plan scope display, rejection, approval, explanation, local restart and Git boundary')
 })().catch(async error => { if (app) { const page = await app.firstWindow(); console.error(await page.locator('.ant-drawer-body').innerText()); await page.screenshot({ path: '/tmp/kindra-builtin-agent-context/plan-ui-04.png' }) }; console.error(error); process.exitCode = 1 }).finally(async () => { await stop(); server.closeAllConnections(); server.close() })

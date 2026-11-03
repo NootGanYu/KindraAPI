@@ -52,7 +52,7 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput): Promise
   if (input.draft && (input.draft.project_id !== projectId || input.draft.target_id !== input.targetId || input.draft.target_type !== 'api')) throw new Error('草稿不属于所选项目和接口')
   const environment = input.environmentId ? store.listEnvironments(projectId).find(item => item.env_id === input.environmentId) : null
   if (input.environmentId && !environment) throw new Error('环境不存在')
-  const model = await connectionSnapshot()
+  const model = await connectionSnapshot(input.connectionId, projectId)
   if (model.capability !== 'tools' || model.protocol !== 'chat-completions') throw new Error('当前连接尚不支持已检测的只读工具计划，请先测试连接')
   const redact = projectRedactor(projectId, [model.api_key], [input.draft ?? saved])
   const plan: AgentPlan = { plan_id: randomUUID(), project_id: projectId, project_name: redact(store.getProject(projectId)!.name), target_id: input.targetId, target_name: redact(saved.name), environment_id: environment?.env_id ?? null, environment_name: redact(environment?.name ?? '不读取环境'), goal: redact(input.goal.trim()), connection_id: model.connection_id, model: model.model, source: input.draft ? 'draft' : 'saved', status: 'generating', steps: [], created_at: new Date().toISOString() }

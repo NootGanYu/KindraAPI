@@ -5,7 +5,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AgentConversation, AgentEvent, AgentConnectionTest } from '@shared/agent'
 import { getProject } from '../storage/store'
-import { agentRoot, getConnection, saveConnection, connectionSnapshot, recordCapability, readLocal, writeLocal } from './store'
+import { agentRoot, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, connectionSnapshot, recordCapability, readLocal, writeLocal } from './store'
 import { completeModel, redactKey, redactStreamingKey } from './model'
 
 const active = new Map<string, AbortController>()
@@ -60,8 +60,8 @@ function deleteConversation(projectId: string, id: string): boolean {
   for (const listener of listeners) listener({ project_id: projectId, conversation_id: id, conversation: null })
   return true
 }
-async function testConnection(): Promise<AgentConnectionTest> {
-  const snapshot = await connectionSnapshot()
+async function testConnection(connectionId?: string): Promise<AgentConnectionTest> {
+  const snapshot = await connectionSnapshot(connectionId)
   await completeModel(snapshot, [{ role: 'user', content: 'Reply briefly with OK.' }])
   let capability: AgentConnectionTest['capability'] = 'text-only'
   try {
@@ -71,14 +71,16 @@ async function testConnection(): Promise<AgentConnectionTest> {
   recordCapability(snapshot, capability)
   return { capability, message: capability === 'tools' ? '连接成功，支持文本和工具调用' : '连接成功，仅文本对话；连续工具操作不可用' }
 }
-async function sendMessage(projectId: string, id: string, content: string): Promise<AgentConversation> {
+async function sendMessage(projectId: string, id: string, content: string, connectionId?: string): Promise<AgentConversation> {
   if (typeof content !== 'string' || !content.trim() || content.length > 100_000) throw new Error('消息不能为空且不能超过 100000 字符')
   const conversation = getConversation(projectId, id)
   if (active.has(id)) throw new Error('当前会话仍在回复中')
   const controller = new AbortController()
   active.set(id, controller)
   try {
-    const snapshot = await connectionSnapshot()
+    const snapshot = await connectionSnapshot(connectionId, projectId)
+    const { api_key: _secret, ...publicSnapshot } = snapshot
+    conversation.connection = publicSnapshot
     const now = new Date().toISOString()
     const redact = projectRedactor(projectId, [snapshot.api_key])
     const userText = redact(content.trim())
@@ -116,4 +118,4 @@ function cancelMessage(projectId: string, id: string): boolean {
 }
 export function shutdownAgent(): void { shutdownPlans(); for (const controller of active.values()) controller.abort() }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...planCommands, getConnection, saveConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

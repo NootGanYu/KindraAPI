@@ -42,7 +42,7 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
     try {
       const state = useApp.getState()
       const draft = state.project?.project_id === projectId ? state.drafts[targetId] : undefined
-      unwrap(await window.api.agent.proposeReadPlan(projectId, { goal, targetId, environmentId, draft }))
+      unwrap(await window.api.agent.proposeReadPlan(projectId, { goal, targetId, environmentId, draft, connectionId: connection?.connection_id }))
     } catch (e) { setError((e as Error).message) }
     finally { setBusy(false) }
   }
