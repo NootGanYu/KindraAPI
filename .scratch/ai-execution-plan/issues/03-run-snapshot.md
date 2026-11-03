@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 共享 UI 与 MCP 运行入口
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Run 固定 Project、Environment、Server、Flow、API、继承、模型与脚本定义；两个环境的 loopback 地址与脚本变量一致。
 - [ ] API 和全局变量在运行中的普通编辑不悄悄改变本轮，下一轮使用已保存新定义。

@@ -526,7 +526,20 @@ export interface FlowEventResult {
   iteration?: number
 }
 
+export interface FlowFileDependency {
+  path: string
+  sha256: string | null
+}
+
+export interface FlowExecutionSnapshot {
+  flow_revision: string
+  captured_at: number
+  environment_id: string
+  requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
+}
+
 export interface FlowRun {
+  snapshot?: FlowExecutionSnapshot
   run_id: string
   project_id: string
   flow_id: string

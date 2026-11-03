@@ -1,4 +1,6 @@
 import vm from 'node:vm'
+import crypto from 'node:crypto'
+import { FlowFileChangedError } from '../request/files'
 import type {
   AssertionResult,
   ConsoleEntry,
@@ -17,7 +19,7 @@ import type {
 } from '@shared/types'
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
-import { sendRequest } from '../request/executor'
+import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
@@ -134,8 +136,9 @@ class FlowRuntime {
   localValues: Record<string, string> = {}
   consoleEntries: ConsoleEntry[] = []
   lastResponse: FlowResponseSnapshot | null = null
-  private envDirty = false
-  private globalsDirty = false
+  readonly definitions = new Map<string, RequestExecutionDefinition>()
+  readonly settings = store.getSettings()
+  fileReviewRequired = false
 
   constructor(projectId: string, env: Environment | null, globals: GlobalVars) {
     this.projectId = projectId
@@ -161,12 +164,10 @@ class FlowRuntime {
 
   setEnv(key: string, value: string): void {
     this.envValues[key] = value
-    this.envDirty = true
   }
 
   setGlobal(key: string, value: string): void {
     this.globalValues[key] = value
-    this.globalsDirty = true
   }
 
   setLocal(key: string, value: string): void {
@@ -189,41 +190,6 @@ class FlowRuntime {
         }
       })
     })
-  }
-
-  persist(): void {
-    if (this.env && this.envDirty) {
-      for (const [key, value] of Object.entries(this.envValues)) {
-        const existing = this.env.env_var_list[key]
-        if (existing) {
-          existing.current_value = value
-          existing.is_checked = existing.is_checked > 0 ? existing.is_checked : 1
-        } else {
-          this.env.env_var_list[key] = {
-            current_value: value,
-            initial_value: '',
-            description: '',
-            is_checked: 1
-          }
-        }
-      }
-      store.saveEnvironment(this.projectId, this.env)
-      this.envDirty = false
-    }
-    if (this.globalsDirty) {
-      for (const [key, value] of Object.entries(this.globalValues)) {
-        const existing = this.globals.vars[key]
-        if (existing) existing.current_value = value
-        else
-          this.globals.vars[key] = {
-            current_value: value,
-            initial_value: '',
-            description: ''
-          }
-      }
-      store.saveGlobalVars(this.projectId, this.globals)
-      this.globalsDirty = false
-    }
   }
 }
 
@@ -588,16 +554,19 @@ async function runRequestEvent(
   let target: Target | null = null
   if (event.type === 'api') {
     if (!event.target_id) return result(event, 'failed', startedAt, { error: '未选择接口' })
-    target = store.getTarget(projectId, event.target_id)
+    target = runtime.definitions.get(event.event_id)?.target ?? null
     if (!target) return result(event, 'failed', startedAt, { error: '接口不存在或已删除' })
   } else {
     target = inlineTarget(projectId, event)
   }
 
   const prepared = applyRequestInput(target, event.input)
-  runtime.persist()
   try {
-    const record = await sendRequest(projectId, prepared, flow.env_id || undefined)
+    const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
+      definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
+      scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
+    })
+    if (record.error?.type === 'file-changed') runtime.fileReviewRequired = true
     store.addSendRecord(projectId, record)
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
@@ -631,6 +600,7 @@ async function runRequestEvent(
       error: record.error?.message
     })
   } catch (error) {
+    if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -656,7 +626,6 @@ async function runEvent(
 
     if (event.type === 'script') {
       const scriptResult = runScript(runtime, event.script ?? '')
-      runtime.persist()
       const failed = Boolean(scriptResult.error) || scriptResult.assertions.some((a) => !a.passed)
       const passedCount = scriptResult.assertions.filter((a) => a.passed).length
       const detail = scriptResult.error
@@ -740,6 +709,7 @@ async function runEvent(
 
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
+    if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -752,7 +722,8 @@ async function runEvents(
 ): Promise<FlowEventResult[]> {
   const results: FlowEventResult[] = []
   for (const event of events) {
-    results.push(await runEvent(projectId, event, runtime, flow))
+    if (runtime.fileReviewRequired) results.push(...skipped([event], '外部文件变更，需审查后重新运行'))
+    else results.push(await runEvent(projectId, event, runtime, flow))
   }
   return results
 }
@@ -767,13 +738,28 @@ export async function runFlow(
   const preferredEnvId = environmentId || flow.env_id || settings.environment_id
   const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
   const globals = store.getGlobalVars(projectId)
+  flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
+  const capture = (events: FlowEvent[]): void => {
+    for (const event of events) {
+      const target = event.type === 'api' && event.target_id ? store.getTarget(projectId, event.target_id) : event.type === 'request' ? inlineTarget(projectId, event) : null
+      if (target) runtime.definitions.set(event.event_id, captureRequestDefinition(projectId, applyRequestInput(target, event.input), env))
+      capture(event.children ?? [])
+    }
+  }
+  capture(flow.events)
+  const snapshot = {
+    flow_revision: crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
+    captured_at: Date.now(),
+    environment_id: env?.env_id ?? '',
+    requests: [...runtime.definitions].map(([event_id, definition]) => ({ event_id, target_id: definition.target.target_id, files: definition.files, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }))
+  }
   const startedAt = Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
-  runtime.persist()
   const finishedAt = Date.now()
   const run: FlowRun = {
     run_id: createId('run'),
+    snapshot,
     project_id: projectId,
     flow_id: flow.flow_id,
     flow_name: flow.name,
