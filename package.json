@@ -51,7 +51,10 @@
     "test:agent-drafts": "esbuild scripts/agent-draft-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-draft-smoke.cjs && electron node_modules/.tmp/agent-draft-smoke.cjs",
     "test:agent-draft-ui": "node scripts/agent-draft-ui-smoke.cjs",
     "test:agent-execution": "esbuild scripts/agent-execution-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-execution-smoke.cjs && electron node_modules/.tmp/agent-execution-smoke.cjs && electron node_modules/.tmp/agent-execution-smoke.cjs --responses",
-    "test:agent-execution-ui": "node scripts/agent-execution-ui-smoke.cjs"
+    "test:agent-execution-ui": "node scripts/agent-execution-ui-smoke.cjs",
+    "test:agent-merge": "esbuild scripts/agent-merge-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-merge-smoke.cjs && electron node_modules/.tmp/agent-merge-smoke.cjs",
+    "test:agent-merge-ui": "node scripts/agent-merge-ui-smoke.cjs",
+    "test:agent-editor-lifecycle": "esbuild scripts/agent-editor-lifecycle-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-editor-lifecycle-smoke.cjs && electron node_modules/.tmp/agent-editor-lifecycle-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

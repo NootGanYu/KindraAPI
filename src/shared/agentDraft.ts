@@ -20,10 +20,32 @@ export interface AgentCandidate {
   created_at: string
   status: 'pending' | 'applied' | 'conflict' | 'rejected'
   error?: string
+  merge?: AgentCandidateMerge
 }
 export interface AgentDraftEvent {
   project_id: string
   target_id: string
   draft?: AgentDraft
   previous?: Target
+}
+export type AgentConflictChoice = 'base' | 'current' | 'agent'
+export interface AgentFieldConflict {
+  id: string
+  path: string
+  base?: unknown
+  current?: unknown
+  agent?: unknown
+  base_present: boolean
+  current_present: boolean
+  agent_present: boolean
+  reason: 'value' | 'order'
+}
+export interface AgentCandidateMerge {
+  review_id: string
+  current: Target
+  result: Target
+  draft_signature: string
+  saved_revision: string | null
+  conflicts: AgentFieldConflict[]
+  choices: Record<string, AgentConflictChoice>
 }
