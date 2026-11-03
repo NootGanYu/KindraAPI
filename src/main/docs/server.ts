@@ -418,16 +418,24 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
 .api-attrs{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0 0;font-size:12.5px;color:var(--text)}
 .api-attr b{color:var(--muted);font-weight:500;margin-right:6px}
-.try-toggle{margin-left:auto;border:1px solid var(--line);background:#fff;color:var(--text);padding:4px 12px;border-radius:5px;font-size:12px;cursor:pointer}
+.try-toggle{display:none;margin-left:auto;border:1px solid var(--line);background:#fff;color:var(--text);padding:4px 12px;border-radius:5px;font-size:12px;cursor:pointer}
 .try-toggle.on{background:#8a6b3b;border-color:#8a6b3b;color:#fff}
-.value-edit{display:none;width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--line);border-radius:4px;font:13px var(--mono,ui-monospace,Menlo,monospace)}
-.editing .value-view{display:none}
-.editing .value-edit{display:block}
-.body-edit{display:none;width:100%;min-height:140px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:4px;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace);resize:vertical;box-sizing:border-box}
-.editing .body-view{display:none}
-.editing .body-edit{display:block}
-.try-actions{display:none;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
-.editing .try-actions{display:flex}
+.js-ready .try-toggle{display:inline-block}
+.value-view{display:none}
+.value-edit{display:block;width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--line);border-radius:4px;font:13px var(--mono,ui-monospace,Menlo,monospace)}
+.js-ready .value-view{display:inline}
+.js-ready .value-edit{display:none}
+.js-ready .editing .value-view{display:none}
+.js-ready .editing .value-edit{display:block}
+.body-view{display:none}
+.body-edit{display:block;width:100%;min-height:140px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:4px;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace);resize:vertical;box-sizing:border-box}
+.js-ready .body-view{display:block}
+.js-ready .body-edit{display:none}
+.js-ready .editing .body-view{display:none}
+.js-ready .editing .body-edit{display:block}
+.try-actions{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.js-ready .try-actions{display:none}
+.js-ready .editing .try-actions{display:flex}
 .try-send{border:0;border-radius:5px;background:#2f8f62;color:#fff;padding:8px 20px;font-size:13px;cursor:pointer}
 .try-send:disabled{opacity:.6;cursor:default}
 .try-hint{color:var(--muted);font-size:12px}
@@ -894,7 +902,7 @@ function renderApi(
         : ''
   const requestSection =
     debug && shareId
-      ? `<form class="try-form" method="post" action="/share/${escapeHtml(shareId)}/execute" data-debug-form><input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">${requestDetails}<noscript><style>.value-view{display:none}.value-edit{display:block}.try-actions{display:flex}</style></noscript></form><div class="try-response" hidden></div>`
+      ? `<form class="try-form" method="post" action="/share/${escapeHtml(shareId)}/execute" data-debug-form><input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">${requestDetails}</form><div class="try-response" hidden></div>`
       : requestDetails
 
   const responseSection = settings.show_response

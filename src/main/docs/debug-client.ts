@@ -99,6 +99,7 @@ export const DEBUG_SCRIPT = String.raw`(function () {
     })
   }
   function init() {
+    document.documentElement.classList.add('js-ready')
     document.querySelectorAll('[data-debug-form]').forEach(initCard)
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init)
