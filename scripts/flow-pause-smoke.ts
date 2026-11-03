@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     assert.equal(hits.filter(hit => hit === '/legacy-after').length, 1)
     console.log('PASS real UI pause and legacy MCP returns pausing immediately; permissions and project binding')
 
-    const loop = createFlow(projectId, '循环暂不支持暂停')
+    const loop = createFlow(projectId, '循环支持步骤边界暂停')
     loop.events = [createFlowEvent('loop', { loop_count: 1, children: [createFlowEvent('request', { url: `${origin}/first-loop` })] })]
     store.saveFlow(projectId, loop)
     arrival = new Promise<void>(resolve => { arrived = resolve })
@@ -129,16 +129,22 @@ async function main(): Promise<void> {
     assert(loopStart.ok)
     await arrival
     const loopPause = await callTool('pause_flow_run', { project_id: projectId, run_id: loopStart.data.run_id }, config)
-    assert(!loopPause.ok && loopPause.error.includes('循环'))
+    assert(loopPause.ok && (loopPause.result as FlowRun).status === 'pausing')
     const stillRunning = await invoke<FlowRun>('flow:run:get', projectId, loopStart.data.run_id)
-    assert(stillRunning.ok && stillRunning.data.status === 'running')
+    assert(stillRunning.ok && stillRunning.data.status === 'pausing')
     release!()
     await until(async () => {
       const result = await invoke<FlowRun>('flow:run:get', projectId, loopStart.data.run_id)
       assert(result.ok)
       return result.data
+    }, run => run.status === 'paused')
+    assert((await invoke<FlowRun>('flow:run:resume', projectId, loopStart.data.run_id)).ok)
+    await until(async () => {
+      const result = await invoke<FlowRun>('flow:run:get', projectId, loopStart.data.run_id)
+      assert(result.ok)
+      return result.data
     }, run => run.status === 'passed')
-    console.log('PASS loop pause explicitly rejected without false paused state')
+    console.log('PASS loop pause waits for complete step and UI resume finishes')
 
   } finally {
     release?.()

@@ -512,8 +512,21 @@ export interface FlowResponseSnapshot {
   response_time: number
 }
 
+export interface FlowIteration {
+  event_id: string
+  iteration: number
+}
+
+export interface FlowExecutionCursor {
+  /** Root to current child list; ancestors still point at their active container. */
+  stack: Array<{ parent_event_id?: string; next_event_index: number; iteration?: number }>
+  after_instance_id?: string
+}
+
 export interface FlowEventResult {
   event_id: string
+  instance_id?: string
+  iteration_path?: FlowIteration[]
   name: string
   type: FlowEventType
   status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked'
@@ -547,6 +560,7 @@ export interface FlowExecutionSnapshot {
 export type FlowRunStatus = 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
+  cursor?: FlowExecutionCursor
   snapshot?: FlowExecutionSnapshot
   run_id: string
   project_id: string

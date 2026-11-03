@@ -43,7 +43,7 @@ export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
     if (/^(script|pre_script|post_script)$/.test(key) && typeof value === 'string' && value) return HIDDEN
     if (typeof value === 'string') {
       // These opaque identifiers are needed to query and deduplicate the same Run.
-      if (/^(?:run_id|project_id|flow_id|event_id|step_id|logical_step_id|target_id|env_id|environment_id|request_id|request_environment_id|revision|flow_revision|sha256)$/.test(key)) return value
+      if (/^(?:run_id|project_id|flow_id|event_id|instance_id|after_instance_id|parent_event_id|step_id|logical_step_id|target_id|env_id|environment_id|request_id|request_environment_id|revision|flow_revision|sha256)$/.test(key)) return value
       try {
         const decoded: unknown = JSON.parse(value)
         if (decoded && typeof decoded === 'object') return JSON.stringify(project(decoded))
