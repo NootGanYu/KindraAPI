@@ -31,6 +31,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0));
   await page.getByLabel('计划目标').fill('解释当前接口')
   await page.getByRole('combobox', { name: '计划接口' }).click()
   await page.locator('.ant-select-item-option').first().click()
+  await page.getByRole('combobox', { name: '计划接口' }).press('Escape')
   await page.getByRole('button', { name: '生成只读计划', exact: true }).click()
   await page.getByRole('button', { name: '批准只读计划', exact: true }).waitFor()
   assert.equal(toolReads, 0)
