@@ -2,6 +2,7 @@ import { App as AntApp, Tooltip } from 'antd'
 import { NavLink } from 'react-router-dom'
 import {
   ApiOutlined,
+  RobotOutlined,
   BranchesOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
@@ -12,6 +13,7 @@ import {
 } from '@ant-design/icons'
 
 const items = [
+  { to: '/agent', icon: <RobotOutlined />, label: 'Agent' },
   { to: '/history', icon: <HistoryOutlined />, label: '最近' },
   { to: '/apis', icon: <ApiOutlined />, label: 'APIs' },
   { to: '/docs', icon: <FileTextOutlined />, label: '文档' },

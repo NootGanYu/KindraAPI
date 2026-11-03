@@ -13,6 +13,7 @@ import SchemasPage from './pages/SchemasPage'
 import DocsPage from './pages/DocsPage'
 import GitPage from './pages/GitPage'
 import MqttPage from './pages/MqttPage'
+import AgentPage from './pages/AgentPage'
 
 function Shell(): JSX.Element {
   return (
@@ -30,6 +31,7 @@ function Shell(): JSX.Element {
             <Route path="/automation" element={<AutomationPage />} />
             <Route path="/git" element={<GitPage />} />
             <Route path="/mqtt" element={<MqttPage />} />
+            <Route path="/agent" element={<AgentPage />} />
             <Route path="*" element={<Navigate to="/apis" replace />} />
           </Routes>
         </div>

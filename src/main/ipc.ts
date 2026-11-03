@@ -1,3 +1,4 @@
+import { registerAgentIpc } from './agent/ipc'
 import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -109,6 +110,7 @@ function handle<T>(
 }
 
 export function registerIpc(): void {
+  registerAgentIpc()
   handle('app:paths', () => store.getPaths())
   handle('app:openPath', (targetPath: string) => shell.openPath(targetPath))
   handle('app:copyText', (text: string) => {
