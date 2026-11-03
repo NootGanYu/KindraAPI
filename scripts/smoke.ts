@@ -150,6 +150,7 @@ async function main(): Promise<void> {
   ;(app as unknown as { dock?: { hide(): void } }).dock?.hide()
   await app.whenReady()
 
+  const orderAuthorizations: Array<string | undefined> = []
   const httpServer = http.createServer((req, res) => {
     let body = ''
     req.on('data', (chunk) => (body += chunk))
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
       if (req.url === '/login') return send(200, { token: 'smoke-token' })
       if (req.url === '/ping') return send(200, { ok: true })
       if (req.url === '/orders') {
+        orderAuthorizations.push(req.headers.authorization)
         if (req.headers.authorization !== 'Bearer smoke-token') {
           return send(401, { error: 'unauthorized' })
         }
@@ -269,7 +271,11 @@ async function main(): Promise<void> {
 
   const run = await runFlow(project.project_id, flow, env.env_id)
   assert(run.status === 'passed', 'flow run passed')
-  assert(run.variables.token === 'smoke-token', 'token propagated')
+  assert(orderAuthorizations.length === 1, 'flow dispatches one authorized orders request')
+  assert(orderAuthorizations[0] === 'Bearer smoke-token', 'login token propagates to actual orders request')
+  assert(run.variables.token === '[REDACTED]', 'returned token evidence is redacted')
+  assert(!JSON.stringify(run).includes('smoke-token'), 'returned run evidence excludes raw token')
+  console.log('PASS flow propagates login token to real orders request and redacts public evidence')
 
   // -------------------------------------------------------------------------
   // Issue 01 · shared schema example generation
@@ -483,7 +489,10 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 71, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 75, 'mcp tool list includes controlled Run additions')
+  const toolNames = tools.result.tools.map((tool: { name: string }) => tool.name).sort()
+  assert(['start_flow_run', 'get_flow_run', 'pause_flow_run', 'cancel_flow_run', 'execute_flow'].every(name => toolNames.includes(name)), 'mcp controlled Run and legacy tools available')
+  assert(!toolNames.includes('resume_flow_run'), 'MCP cannot expose manual resume')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -1010,7 +1019,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 71, 'stdio tools/list')
+  assert(JSON.stringify(stdioTools.result?.tools?.map((tool: { name: string }) => tool.name).sort()) === JSON.stringify(toolNames), 'stdio tools/list matches TCP catalog')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}
