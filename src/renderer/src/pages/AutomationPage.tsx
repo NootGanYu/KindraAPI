@@ -98,9 +98,9 @@ function countRun(events: FlowEventResult[]): { passed: number; failed: number; 
   return acc
 }
 
-const isActiveRunStatus = (status: FlowRun['status']): boolean => ['running', 'pausing', 'paused'].includes(status)
+const isActiveRunStatus = (status: FlowRun['status']): boolean => ['running', 'pausing', 'paused', 'cancelling'].includes(status)
 function runStatusLabel(status: string): string {
-  return ({ running: '运行中', pausing: '正在暂停', paused: '已暂停', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知', blocked: '依赖阻塞' } as Record<string, string>)[status] ?? status
+  return ({ cancelling: '正在取消', cancelled: '已取消', running: '运行中', pausing: '正在暂停', paused: '已暂停', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知', blocked: '依赖阻塞' } as Record<string, string>)[status] ?? status
 }
 
 export default function AutomationPage(): JSX.Element {
@@ -208,11 +208,13 @@ export default function AutomationPage(): JSX.Element {
     return () => { stopped = true; if (timer) clearTimeout(timer) }
   }, [project?.project_id, run?.run_id, run?.status])
 
-  const controlRun = async (action: 'pause' | 'resume'): Promise<void> => {
+  const controlRun = async (action: 'pause' | 'resume' | 'cancel'): Promise<void> => {
     if (!run) return
     setControlling(true)
     try {
-      const result = action === 'pause'
+      const result = action === 'cancel'
+        ? await window.api.flows.cancelRun(run.project_id, run.run_id)
+        : action === 'pause'
         ? await window.api.flows.pauseRun(run.project_id, run.run_id)
         : await window.api.flows.resumeRun(run.project_id, run.run_id)
       if (!result.ok) { message.error(result.error); return }
@@ -471,6 +473,11 @@ export default function AutomationPage(): JSX.Element {
             </Button>
           ) : run?.status === 'paused' ? (
             <Button size="small" type="primary" loading={controlling} onClick={() => void controlRun('resume')}>继续原快照</Button>
+          ) : null}
+          {run && isActiveRunStatus(run.status) ? (
+            <Button size="small" danger disabled={run.status === 'cancelling'} loading={controlling} onClick={() => void controlRun('cancel')}>
+              {run.status === 'cancelling' ? '正在取消' : '取消运行'}
+            </Button>
           ) : null}
           {run ? <Tooltip title={run.snapshot?.flow_revision ?? '旧记录未记录快照版本'}>
             <Tag>运行版本：{run.snapshot?.flow_revision.slice(0, 8) ?? '旧记录'}</Tag>
@@ -884,7 +891,7 @@ function ResultRows({
             ) : null}
             <span className="muted">{event.elapsed_ms}ms</span>
             <span className={`run-status ${event.status}`}>
-              {event.status === 'running' ? '运行中' : event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : event.status === 'blocked' ? '依赖阻塞' : '跳过'}
+              {event.status === 'running' ? '运行中' : event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : event.status === 'blocked' ? '依赖阻塞' : event.status === 'cancelled' ? '已取消' : '跳过'}
             </span>
           </div>
           {event.detail ? <div className="run-detail">{event.detail}</div> : null}

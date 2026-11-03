@@ -407,7 +407,7 @@ export async function sendRequest(
   projectId: string,
   target: Target,
   environmentId?: string,
-  options: { signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
+  options: { onRequestStart?: () => void; signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
 ): Promise<SendRecord> {
   const settings = options.settings ?? store.getSettings()
   const { env, globals } = options.scopes ? { env: null, globals: { vars: {} } } : loadScopes(projectId, environmentId)
@@ -481,6 +481,7 @@ export async function sendRequest(
     let requestRef: any = null
     const activeRequests = new Map<string, { abort: () => void }>()
     const abort = (): void => {
+      if (settled) return
       // run.abort 只清后续队列，正在等待网络/脚本时还需中止实际资源。
       runtimeRun?.abort()
       for (const request of activeRequests.values()) request.abort()
@@ -532,6 +533,7 @@ export async function sendRequest(
           return
         }
         runtimeRun = run
+        if (settled) { run.abort(); run.host?.dispose(); return }
         if (options.signal?.aborted) { abort(); return }
         let responseRef: any = null
         let responseError: Error | null = null
@@ -540,12 +542,14 @@ export async function sendRequest(
             if (!settled && execution?._variables) finalLocalScope = execution._variables
           },
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
+            if (settled || options.signal?.aborted) { controls.abort(); return }
             try { files?.check() } catch (error) {
               controls.abort()
               finish({ error: { type: 'file-changed', message: (error as Error).message }, response: null, request: null })
               return
             }
             requestRef = request
+            options.onRequestStart?.()
             activeRequests.set(controls.httpRequestId, controls)
             if (options.signal?.aborted) controls.abort()
           },
@@ -574,6 +578,7 @@ export async function sendRequest(
             }
           },
           assertion: (_cursor: unknown, results: any[]) => {
+            if (settled) return
             for (const item of results ?? []) {
               const errorText = item.error
                 ? String(item.error.message ?? item.error)
@@ -587,9 +592,11 @@ export async function sendRequest(
             }
           },
           exception: (_cursor: unknown, error: Error) => {
+            if (settled) return
             responseError = error
           },
           console: (_cursor: unknown, level: string, ...args: unknown[]) => {
+            if (settled) return
             consoleEntries.push({
               time: Date.now(),
               level,

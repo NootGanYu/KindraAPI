@@ -46,6 +46,8 @@
     "test:flow-pause": "esbuild scripts/flow-pause-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-pause-smoke.cjs && electron node_modules/.tmp/flow-pause-smoke.cjs",
     "test:flow-progress": "esbuild scripts/flow-progress-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=scripts/.flow-progress-smoke.cjs && electron scripts/.flow-progress-smoke.cjs",
     "test:flow-progress-ui": "node scripts/flow-progress-ui.cjs",
+    "test:flow-cancel": "esbuild scripts/flow-cancel-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-cancel-smoke.cjs && electron node_modules/.tmp/flow-cancel-smoke.cjs",
+    "test:flow-cancel-ui": "node scripts/flow-cancel-ui.cjs",
     "test:flow-loop-resume": "esbuild scripts/flow-loop-resume-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-loop-resume-smoke.cjs && electron node_modules/.tmp/flow-loop-resume-smoke.cjs"
   },
   "dependencies": {

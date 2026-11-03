@@ -7,6 +7,7 @@ import { redactEvidence } from './evidence'
 interface ActiveRun {
   run: FlowRun
   completion?: Promise<FlowRun>
+  abortController: AbortController
   resume?: () => void
   stateListeners: Set<(run: FlowRun) => void>
 }
@@ -45,10 +46,10 @@ export function startFlowRun(
     request_environment_id: environmentId ?? '', source
   }
   store.saveFlowRun(projectId, run)
-  const active: ActiveRun = { run, stateListeners: new Set() }
+  const active: ActiveRun = { run, abortController: new AbortController(), stateListeners: new Set() }
   activeRuns.set(key, active)
   active.completion = runFlow(projectId, flow, environmentId, {
-    runId: run.run_id, startedAt: run.started_at,
+    runId: run.run_id, startedAt: run.started_at, signal: active.abortController.signal,
     onStepBoundary: async () => {
       if (active.run.status !== 'pausing') return
       await new Promise<void>(resolve => {
@@ -110,6 +111,28 @@ export function pauseFlowRun(projectId: string, runId: string): FlowRun {
   return copy(active.run)
 }
 
+/** Stops local advancement; already dispatched remote effects cannot be rolled back. */
+export async function cancelFlowRun(projectId: string, runId: string): Promise<FlowRun> {
+  const active = findActive(projectId, runId)
+  if (!active) {
+    const run = getFlowRun(projectId, runId)
+    if (!run) throw new Error('运行记录不存在')
+    return run
+  }
+  if (!active.abortController.signal.aborted) {
+    updateState(active, 'cancelling')
+    active.abortController.abort()
+    const resume = active.resume
+    active.resume = undefined
+    resume?.()
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([active.completion, new Promise<void>(resolve => { timer = setTimeout(resolve, 1000) })])
+    return copy(active.run)
+  } finally { if (timer) clearTimeout(timer) }
+}
+
 /** Called only by the user-facing IPC surface; no MCP tool exposes this action. */
 export function resumeFlowRun(projectId: string, runId: string): FlowRun {
   const active = findActive(projectId, runId)
@@ -161,7 +184,7 @@ export async function runSavedFlow(projectId: string, flowId: string, environmen
 /** Recovery only records loss of the execution stack. It never recreates an executor. */
 export function recoverFlowRuns(projectId: string): void {
   for (const run of store.readFlowRuns(projectId)) {
-    if (!['running', 'pausing', 'paused', 'reviewing'].includes(run.status)) continue
+    if (!['running', 'pausing', 'paused', 'reviewing', 'cancelling'].includes(run.status)) continue
     if (activeRuns.get(keyOf(projectId, run.flow_id))?.run.run_id === run.run_id) continue
     const now = Date.now()
     store.saveFlowRun(projectId, { ...run,
