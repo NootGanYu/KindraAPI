@@ -315,7 +315,9 @@ export function registerIpc(): void {
     const flow = createFlow(projectId, name, environments[0]?.env_id ?? '')
     return store.saveFlow(projectId, flow)
   })
-  handle('flow:save', (projectId: string, flow: Flow) => store.saveFlow(projectId, flow))
+  handle('flow:save', (projectId: string, flow: Flow, expectedRevision: string) =>
+    store.saveFlowChecked(projectId, flow, expectedRevision)
+  )
   handle('flow:delete', (projectId: string, flowId: string) => {
     store.deleteFlow(projectId, flowId)
     return true
