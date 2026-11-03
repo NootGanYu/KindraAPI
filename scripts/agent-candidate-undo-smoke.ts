@@ -11,8 +11,9 @@ async function main(): Promise<void> {
   app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-undo-'))); await app.whenReady()
   const pid = store.ensureDefaultProject().project_id
   const target = store.createTargetInProject(pid, '0', 'api')
+  delete target.custom_attributes
   target.description = '原始说明'; target.url = 'https://example.invalid/base'; store.saveTarget(pid, target)
-  let patch: unknown = { description: '候选说明' }
+  let patch: unknown = { description: '候选说明', custom_attributes: { owner: 'Agent' } }
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk
     const body = JSON.parse(raw), name = body.tools?.[0]?.function.name
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
     const undone = commands.undoCandidate(pid, first.candidate_id)
     assert.equal(undone.status, 'undone')
     const remaining = commands.getDraft(pid, target.target_id).target
+    assert.equal(remaining.custom_attributes, undefined, 'undo removes a field added by this candidate')
     assert.equal(remaining.description, '原始说明'); assert.equal(remaining.name, '后续人工名称')
     assert.equal(remaining.url, 'https://example.invalid/chain-two')
     assert.equal(commands.listCandidates(pid, target.target_id).find(c => c.candidate_id === second.candidate_id)!.status, 'applied')

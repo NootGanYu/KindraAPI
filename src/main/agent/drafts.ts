@@ -130,7 +130,7 @@ function applyMergedCandidate(candidate: AgentCandidate, current: Target, merge:
 }
 function buildMerge(candidate: AgentCandidate, current: Target, revision: string | null, choices: Record<string, AgentConflictChoice> = {}): AgentCandidateMerge {
   const merged = mergeDefinitions(targetDefinition(candidate.base), targetDefinition(current), targetDefinition(candidate.proposal), choices)
-  const result = preserveCaseRuns({ ...current, ...merged.result } as Target, current)
+  const result = preserveCaseRuns({ ...merged.result, created_at: current.created_at, updated_at: current.updated_at, version: current.version } as Target, current)
   return { base: candidate.base, proposal: candidate.proposal, review_id: randomUUID(), current, result, draft_signature: draftSignature(result), saved_revision: revision, conflicts: merged.conflicts, choices }
 }
 export function applyCandidate(pid: string, id: string): AgentCandidate {
