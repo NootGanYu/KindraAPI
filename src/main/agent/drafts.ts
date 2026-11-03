@@ -1,3 +1,5 @@
+import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
+import { validateAgentApiDocumentation } from './apiDocumentation'
 import { mergeDefinitions } from './merge'
 import { withTargetChanges } from '../storage/changes'
 import fs from 'node:fs'
@@ -45,7 +47,7 @@ export function syncEditorDraft(pid: string, target: Target, baseRevision?: stri
   }
   const saved = store.readTargetSnapshot(pid, target.target_id)
   if (draft.agent_owned && !listCandidates(pid, target.target_id).some(candidate => candidate.status === 'conflict') && saved.target && draftSignature(saved.target) === draftSignature(target)) {
-    draft.agent_owned = false; draft.base_revision = saved.revision
+    draft.agent_owned = false; draft.base_revision = saved.revision; draft.candidate_ids = []
     fs.rmSync(file(pid, 'drafts', target.target_id), { force: true })
   }
   persistDraft(draft)
@@ -82,6 +84,7 @@ export function validatePatch(patch: unknown): asserts patch is Partial<Target> 
   const allowed = ['name', 'description', 'method', 'url', 'request', 'response', 'custom_attributes', 'mark_id']
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length || Object.keys(patch).some(key => !allowed.includes(key))) throw new Error('提案包含不允许修改的字段')
   for (const key of ['request', 'response', 'custom_attributes']) if (key in patch && (!(patch as any)[key] || typeof (patch as any)[key] !== 'object' || Array.isArray((patch as any)[key]))) throw new Error('提案对象字段类型无效')
+  validateNestedPatch(patch)
   // Model-visible placeholders never become real credentials or definitions.
   if (/\[已隐藏\]|\[REDACTED\]/i.test(JSON.stringify(patch))) throw new Error('提案包含脱敏占位符，请只修改明确的业务字段')
   for (const key of ['name', 'description', 'method', 'url', 'mark_id']) if (key in patch && typeof (patch as any)[key] !== 'string') throw new Error('提案文本字段类型无效')
@@ -104,7 +107,8 @@ export function createCandidate(pid: string, planId: string, stepId: string, bas
   if (previous) return previous
   const sequenceFile = path.join(projectDir(pid), 'candidate-sequence.json')
   const sequence = readLocal<number>(sequenceFile, 0) + 1
-  const candidate: AgentCandidate = { candidate_id: randomUUID(), number: `P${sequence}`, project_id: pid, target_id: base.target_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), proposal: mergePatch(base, patch), created_at: new Date().toISOString(), status: 'pending' }
+  const candidate: AgentCandidate = { candidate_id: randomUUID(), number: `P${sequence}`, project_id: pid, target_id: base.target_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), patch: structuredClone(patch), proposal: mergePatch(base, patch), created_at: new Date().toISOString(), status: 'pending' }
+  validateSystemParameterOrigins(base, candidate.proposal)
   writeLocal(sequenceFile, sequence)
   writeLocal(file(pid, 'candidates', candidate.candidate_id), candidate)
   emit({ project_id: pid, target_id: base.target_id })
@@ -112,6 +116,7 @@ export function createCandidate(pid: string, planId: string, stepId: string, bas
 }
 function applyMergedCandidate(candidate: AgentCandidate, current: Target, merge: AgentCandidateMerge): AgentCandidate {
   const draft = getDraft(candidate.project_id, candidate.target_id)
+  draft.candidate_ids = [...new Set([...(draft.candidate_ids ?? []), candidate.candidate_id])]
   draft.target = merge.result; draft.agent_owned = true; draft.base_revision = candidate.base_revision
   persistDraft(draft)
   const result = review(candidate, merge.conflicts.length ? 'conflict' : 'applied', merge.conflicts.length ? '仅冲突字段需要确认，其他字段已合并到草稿。解决前不能正式保存。' : undefined, merge)
@@ -150,6 +155,39 @@ export function stashAgentDrafts(): number {
     review(candidate, 'applied'); added++
   }
   return added
+}
+/** Internal approved-save action; never registered as a standalone IPC command. */
+export async function saveApprovedApi(pid: string, planId: string, targetId: string, revision: string | null, candidateIds: string[]): Promise<{ saved_version: NonNullable<AgentCandidate['saved_version']>; candidate_ids: string[] }> {
+  return withTargetChanges('system', planId, () => {
+    const saved = store.readTargetSnapshot(pid, targetId)
+    const current = getDraft(pid, targetId)
+    if (!revision || saved.revision !== revision) throw new Error('正式定义 revision 已变化，保存已暂停，请重新核对计划')
+    if (current.base_revision !== revision) throw new Error('草稿保存基线已变化，保存已暂停，请重新核对计划')
+    for (const id of candidateIds) {
+      const candidate = readCandidate(pid, id)
+      if (candidate.plan_id !== planId || candidate.target_id !== targetId) throw new Error('保存候选超出获批计划')
+      const applied = candidate.status === 'pending' ? applyCandidate(pid, id) : candidate
+      if (applied.status !== 'applied') throw new Error(applied.error ?? '候选尚有未解决冲突，不能保存')
+    }
+    const draft = getDraft(pid, targetId)
+    if (draft.base_revision !== revision) throw new Error('草稿保存基线已变化，保存已暂停')
+    const linkedIds = [...new Set([...candidateIds, ...(draft.candidate_ids ?? [])])].filter(id => readCandidate(pid, id).status === 'applied')
+    validateSystemParameterOrigins(saved.target!, draft.target)
+    validateAgentApiDocumentation(draft.target, saved.target, linkedIds.flatMap(id => { const patch = readCandidate(pid, id).patch; return patch ? [patch] : [] }))
+    const beforeSave = structuredClone(draft.target)
+    const outcome = store.saveTargetChecked(pid, draft.target, revision)
+    if (outcome.status !== 'saved') throw new Error('正式定义已变化，保存已暂停')
+    const version = store.listTargetVersions(pid, targetId).find(item => item.version === outcome.target.version)!
+    const savedVersion = { version_id: version.version_id, version: version.version, revision: outcome.revision, plan_id: planId }
+    for (const id of linkedIds) {
+      const reviewFile = file(pid, 'candidate-reviews', id)
+      writeLocal(reviewFile, { ...readLocal<Record<string, unknown>>(reviewFile, {}), saved_version: savedVersion })
+    }
+    draft.target = outcome.target; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []
+    fs.rmSync(file(pid, 'drafts', targetId), { force: true }); persistDraft(draft)
+    emit({ project_id: pid, target_id: targetId, draft, previous: beforeSave, saved_revision: outcome.revision })
+    return { saved_version: savedVersion, candidate_ids: linkedIds }
+  })
 }
 /** Atomic quit-only boundary: an Agent transition cannot interleave with this check and save. */
 export function saveManualDraftOnQuit(pid: string, target: Target, revision: string): Promise<boolean> {

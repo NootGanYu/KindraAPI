@@ -42,13 +42,14 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
   const rows = candidateDiff(before, after)
   return <section aria-label="Agent 候选版本" style={{ marginBottom: 20 }}>
     <h3>Agent 候选版本</h3>
-    <Alert type="info" message="候选不会自动保存定义。应用只改变本机草稿；退出时仅暂存。" />
+    <Alert type="info" message="应用只改变本机草稿；只有单独获批的保存步骤或手工保存才会写入正式定义。" />
     {error && <Alert type="warning" message={error} closable onClose={() => setError('')} />}
     {items.map(item => <div key={item.candidate_id} style={{ padding: '12px 0', borderBottom: '1px solid #ddd' }}>
       <Space wrap><strong>{item.number}</strong><Tag color={item.status === 'conflict' ? 'error' : item.status === 'pending' ? 'warning' : 'default'}>{({ pending: '待确认', conflict: '冲突候选', applied: '已应用草稿', rejected: '未采纳' })[item.status]}</Tag>
         <Button size="small" onClick={() => setSelected(item.candidate_id)}>查看差异</Button>
         {item.status === 'conflict' && <Button size="small" onClick={() => { setSelected(item.candidate_id); void apply(item) }}>重新检查冲突</Button>}
         {item.status === 'pending' && <Button size="small" type="primary" onClick={() => void apply(item)}>应用到草稿</Button>}
+        {item.saved_version && <Tag color="success">已关联正式版本 v{item.saved_version.version}</Tag>}
       </Space>{item.error && <p>{item.error}</p>}
     </div>)}
     {candidate && <AgentConflictReview key={candidate.merge?.review_id ?? candidate.candidate_id} candidate={candidate} onUpdated={load} onError={setError} />}
