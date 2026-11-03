@@ -28,13 +28,23 @@ export default function TopBar(): JSX.Element {
 
   const [projectModal, setProjectModal] = useState(false)
   const [newName, setNewName] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   const openLocation = (): void => {
     if (paths) void window.api.app.openPath(paths.projectRoot)
   }
 
-  const refresh = (): void => {
-    void Promise.all([reloadTargets(), reloadEnvironments()])
+  const refresh = async (): Promise<void> => {
+    if (refreshing) return
+    setRefreshing(true)
+    const started = Date.now()
+    try {
+      await Promise.all([reloadTargets(), reloadEnvironments()])
+    } finally {
+      // 保证图标至少完整旋转一圈，刷新很快时也有可见反馈。
+      const remain = Math.max(0, 600 - (Date.now() - started))
+      window.setTimeout(() => setRefreshing(false), remain)
+    }
   }
 
   const toggleMcp = async (): Promise<void> => {
@@ -108,7 +118,13 @@ export default function TopBar(): JSX.Element {
           打开位置
         </button>
         <Tooltip title="刷新项目">
-          <button className="icon-btn" onClick={refresh}>
+          <button
+            className={`icon-btn${refreshing ? ' is-refreshing' : ''}`}
+            aria-label="刷新项目"
+            aria-busy={refreshing}
+            disabled={refreshing}
+            onClick={() => void refresh()}
+          >
             <ReloadOutlined style={{ fontSize: 14 }} />
           </button>
         </Tooltip>
