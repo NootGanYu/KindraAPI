@@ -37,7 +37,7 @@ import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { normalizeFlowEvents, hasStructuredEvents } from '../flow/definition'
 import { applyRequestInput } from '../flow/engine'
-import { startFlowRun, getFlowRun, waitForFlowRun } from '../flow/service'
+import { startFlowRun, getFlowRun, waitForFlowRun, pauseFlowRun } from '../flow/service'
 import { generateSchemaExample } from '../schema/example'
 import {
   fieldDocsFromSchema,
@@ -1134,6 +1134,14 @@ const TOOLS: ToolDefinition[] = [
     requires_execute: true,
     input_schema: schema({ project_id: S.project, flow_id: S.flow, environment_id: S.environment, request_id: { type: 'string', description: '项目内唯一的启动请求标识' } }, ['project_id', 'flow_id', 'request_id']),
     handler: args => startFlowRun(projectIdOf(args), requiredStr(args, 'flow_id'), str(args, 'environment_id') || undefined, requiredStr(args, 'request_id'), 'mcp')
+  },
+  {
+    name: 'pause_flow_run',
+    description: '请求在当前完整逻辑步骤结束后暂停；只能由用户在界面手动继续。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema({ project_id: S.project, run_id: { type: 'string' } }, ['project_id', 'run_id']),
+    handler: args => pauseFlowRun(projectIdOf(args), requiredStr(args, 'run_id'))
   },
   {
     name: 'get_flow_run',

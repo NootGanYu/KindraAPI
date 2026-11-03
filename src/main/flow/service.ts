@@ -1,4 +1,4 @@
-import type { FlowRun } from '@shared/types'
+import type { FlowEvent, FlowRun } from '@shared/types'
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { runFlow } from './engine'
@@ -6,6 +6,9 @@ import { runFlow } from './engine'
 interface ActiveRun {
   run: FlowRun
   completion?: Promise<FlowRun>
+  pauseSupported: boolean
+  resume?: () => void
+  stateListeners: Set<(run: FlowRun) => void>
 }
 const activeRuns = new Map<string, ActiveRun>()
 const keyOf = (projectId: string, flowId: string): string => JSON.stringify([projectId, flowId])
@@ -41,10 +44,18 @@ export function startFlowRun(
     request_environment_id: environmentId ?? '', source
   }
   store.saveFlowRun(projectId, run)
-  const active: ActiveRun = { run }
+  const containsLoop = (events: FlowEvent[]): boolean => events.some(event => event.type === 'loop' || containsLoop(event.children ?? []))
+  const active: ActiveRun = { run, pauseSupported: !containsLoop(flow.events), stateListeners: new Set() }
   activeRuns.set(key, active)
   active.completion = runFlow(projectId, flow, environmentId, {
     runId: run.run_id, startedAt: run.started_at,
+    onStepBoundary: async () => {
+      if (active.run.status !== 'pausing') return
+      await new Promise<void>(resolve => {
+        active.resume = resolve
+        updateState(active, 'paused')
+      })
+    },
     onSnapshot: snapshot => {
       run.snapshot = snapshot
       store.saveFlowRun(projectId, run)
@@ -72,20 +83,67 @@ export function getFlowRun(projectId: string, runId: string): FlowRun | null {
   return store.getFlowRun(projectId, runId)
 }
 
+function updateState(active: ActiveRun, status: FlowRun['status']): void {
+  active.run.status = status
+  active.run.elapsed_ms = Date.now() - active.run.started_at
+  store.saveFlowRun(active.run.project_id, active.run)
+  for (const listener of active.stateListeners) listener(active.run)
+}
+
+function findActive(projectId: string, runId: string): ActiveRun | undefined {
+  return [...activeRuns.values()].find(active => active.run.project_id === projectId && active.run.run_id === runId)
+}
+
+export function pauseFlowRun(projectId: string, runId: string): FlowRun {
+  const active = findActive(projectId, runId)
+  if (!active) {
+    const run = getFlowRun(projectId, runId)
+    if (!run) throw new Error('运行记录不存在')
+    return run
+  }
+  if (!active.pauseSupported) throw new Error('含循环的流程暂不支持暂停，请等待嵌套循环恢复支持')
+  if (active.run.status === 'running') updateState(active, 'pausing')
+  return copy(active.run)
+}
+
+/** Called only by the user-facing IPC surface; no MCP tool exposes this action. */
+export function resumeFlowRun(projectId: string, runId: string): FlowRun {
+  const active = findActive(projectId, runId)
+  if (!active) {
+    const run = getFlowRun(projectId, runId)
+    if (!run) throw new Error('运行记录不存在')
+    return run
+  }
+  if (active.run.status === 'pausing') throw new Error('当前完整步骤尚未结束，请等待暂停后继续')
+  if (active.run.status === 'paused') {
+    const resume = active.resume
+    active.resume = undefined
+    updateState(active, 'running')
+    resume?.()
+  }
+  return copy(active.run)
+}
+
 /** The compatibility wait is bounded independently of the lifetime of the Run. */
 export async function waitForFlowRun(projectId: string, runId: string, timeoutMs = 20_000): Promise<FlowRun> {
   const run = getFlowRun(projectId, runId)
   if (!run) throw new Error('运行记录不存在')
   const active = activeRuns.get(keyOf(projectId, run.flow_id))
-  if (!active || active.run.run_id !== runId || !active.completion) return run
+  if (!active || active.run.run_id !== runId || !active.completion || run.status !== 'running') return run
+  let onState: ((run: FlowRun) => void) | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return copy(await Promise.race([
       active.completion,
+      new Promise<FlowRun>(resolve => {
+        onState = changed => { if (changed.status !== 'running') resolve(changed) }
+        active.stateListeners.add(onState)
+      }),
       new Promise<FlowRun>(resolve => { timer = setTimeout(() => resolve(active.run), timeoutMs) })
     ]))
   } finally {
     if (timer) clearTimeout(timer)
+    if (onState) active.stateListeners.delete(onState)
   }
 }
 
