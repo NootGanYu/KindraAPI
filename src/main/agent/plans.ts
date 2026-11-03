@@ -248,12 +248,14 @@ function track<T>(operation: Promise<T>): Promise<T> {
 export async function shutdownPlans(): Promise<void> {
   stopping = true
   for (const context of contexts.values()) context.controller.abort()
-  await Promise.allSettled([...operations])
+  const results = await Promise.allSettled([...operations])
   for (const [id, context] of contexts) {
     contexts.delete(id)
     getPlan(context.projectId, id)
   }
   stopping = false
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure?.status === 'rejected') throw failure.reason
 }
 export function activePlanCount(): number { return contexts.size }
 const proposeEditPlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'edit')

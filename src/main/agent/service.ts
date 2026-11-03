@@ -81,7 +81,9 @@ async function sendMessage(projectId: string, id: string, content: string, conne
   const controller = new AbortController()
   active.set(id, controller)
   let finish!: () => void
-  const task = new Promise<void>(resolve => { finish = resolve })
+  let fail!: (error: unknown) => void
+  const task = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject })
+  void task.catch(() => {})
   tasks.add(task)
   try {
     const snapshot = await connectionSnapshot(connectionId, projectId)
@@ -112,7 +114,11 @@ async function sendMessage(projectId: string, id: string, content: string, conne
         conversation.status = controller.signal.aborted ? 'interrupted' : 'error'
         conversation.messages[conversation.messages.length - 1].status = controller.signal.aborted ? 'interrupted' : 'error'
         conversation.error = redact(error instanceof Error ? error.message : '模型请求失败')
-      } finally { active.delete(id); try { persist(conversation) } finally { tasks.delete(task); finish() } }
+      } finally {
+        active.delete(id)
+        try { persist(conversation); finish() } catch (error) { fail(error) }
+        finally { tasks.delete(task) }
+      }
     })()
     return conversation
   } catch (error) { active.delete(id); tasks.delete(task); finish(); throw error }
