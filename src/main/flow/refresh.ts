@@ -4,7 +4,7 @@ import { createId } from '@shared/factories';
 import * as store from '../storage/store';
 import { captureRequestDefinition, type RequestExecutionDefinition } from '../request/executor';
 import { verifiedFileResolver } from '../request/files';
-import { redactEvidence } from './evidence';
+import { authenticationSecrets, redactEvidence } from './evidence';
 export const definitionRevision = (definition: RequestExecutionDefinition): string => crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex');
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 interface Candidate {
@@ -28,7 +28,7 @@ export class FlowRefreshController {
     constructor(private projectId: string, private environment: Environment | null, private definitions: Map<string, RequestExecutionDefinition>, private remaining: () => Array<{
         event: FlowEvent;
         count: number;
-    }>, private applyInput: (target: Target, input?: FlowRequestInput) => Target, private variables: () => Record<string, string>, events: FlowEvent[], private position: () => string | undefined, private nextEvent: () => FlowEvent | undefined) {
+    }>, private applyInput: (target: Target, input?: FlowRequestInput) => Target, private variables: () => Record<string, string>, events: FlowEvent[], private position: () => string | undefined, private nextEvent: () => FlowEvent | undefined, private runEvidenceSeeds: () => unknown[]) {
         const capture = (items: FlowEvent[]): void => {
             for (const event of items) {
                 if (event.target_id) {
@@ -40,6 +40,10 @@ export class FlowRefreshController {
             }
         };
         capture(events);
+    }
+    private evidenceSeeds(): unknown[] {
+        const definitions = [...this.definitions.values(), ...(this.pending?.candidates.map(item => item.definition) ?? [])];
+        return [...this.runEvidenceSeeds(), this.variables(), { credential: definitions.flatMap(definition => authenticationSecrets(definition.resolved.auth, this.variables())) }];
     }
     preview(): FlowRefreshPreview {
         const preview: FlowRefreshPreview = { preview_id: createId('review'), created_at: Date.now(), references: [], blockers: [] };
@@ -72,7 +76,7 @@ export class FlowRefreshController {
         }
         this.pending = { preview, candidates, baseBlockers: [...preview.blockers] };
         this.rebuildBlockers();
-        return redactEvidence(clone(preview), [this.variables()]);
+        return redactEvidence(clone(preview), this.evidenceSeeds(), 'preview');
     }
     resolveConflict(previewId: string, eventId: string, field: string, choice: 'api' | 'override'): FlowRefreshPreview {
         const pending = this.pending;
@@ -108,7 +112,7 @@ export class FlowRefreshController {
         candidate.reference.effective_request = effective;
         candidate.reference.scope_changes = this.scopeChanges(this.definitions.get(eventId)!, definition);
         this.rebuildBlockers();
-        return redactEvidence(clone(pending.preview), [this.variables()]);
+        return redactEvidence(clone(pending.preview), this.evidenceSeeds(), 'preview');
     }
     apply(previewId: string): FlowVersionSwitch {
         if (!this.pending || this.pending.preview.preview_id !== previewId)
@@ -123,7 +127,7 @@ export class FlowRefreshController {
             this.originals.set(item.event.event_id, item.raw);
         }
         this.reviewed = this.pending.candidates;
-        return redactEvidence({ scope_approval: clone(this.pending.preview.scope_approval ?? null) ?? undefined, after_instance_id: this.position(), preview_id: previewId, applied_at: Date.now(), references: clone(this.pending.preview.references) }, [this.variables()]);
+        return redactEvidence({ scope_approval: clone(this.pending.preview.scope_approval ?? null) ?? undefined, after_instance_id: this.position(), preview_id: previewId, applied_at: Date.now(), references: clone(this.pending.preview.references) }, this.evidenceSeeds(), 'switch');
     }
     validateResume(): void {
         this.rebuildBlockers();
@@ -164,7 +168,7 @@ export class FlowRefreshController {
             references: expanded.map(item => ({ event_id: item.event.event_id, next_revision: item.reference.next_revision, changes: [...item.reference.scope_changes] }))
         };
         this.rebuildBlockers();
-        return redactEvidence(clone(preview), [this.variables()]);
+        return redactEvidence(clone(preview), this.evidenceSeeds(), 'preview');
     }
     private scopeFingerprint(): string {
         return crypto.createHash('sha256').update(JSON.stringify({

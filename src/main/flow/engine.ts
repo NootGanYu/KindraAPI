@@ -22,13 +22,15 @@ import type {
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
 import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
-import { redactEvidence } from './evidence'
+import { authenticationSecrets, redactEvidence } from './evidence'
 import { FlowDependencies } from './dependencies'
+import { selectFlowEnvironment } from './environment'
 import { FlowRefreshController, definitionRevision } from './refresh'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
 const SCRIPT_TIMEOUT_MS = 3_000
+const loopBound = (event: FlowEvent): number => Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise(resolve => {
@@ -151,10 +153,20 @@ class FlowRuntime {
   frames: FlowExecutionCursor['stack'] = []
   cursor: FlowExecutionCursor = { stack: [] }
   onProgress?: () => void
+  logicalStepDepth = 0
   requestInFlight = false
   remoteUnknown = false
   dependencies!: FlowDependencies
   refresh!: FlowRefreshController
+  private readonly authSecrets = new Set<string>()
+  rememberAuth(auth: unknown): void {
+    const variables = { ...this.globalValues, ...this.envValues, ...this.localValues }
+    for (const secret of authenticationSecrets(auth, variables)) this.authSecrets.add(secret)
+  }
+  evidenceSeeds(): unknown[] {
+    for (const definition of this.definitions.values()) this.rememberAuth(definition.resolved.auth)
+    return [this.globalValues, this.envValues, this.localValues, { credential: [...this.authSecrets] }]
+  }
   readonly definitions = new Map<string, RequestExecutionDefinition>()
   readonly settings = store.getSettings()
   onReviewRequired?: (message: string) => Promise<void>
@@ -601,13 +613,13 @@ async function runRequestEvent(
     const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
       signal: runtime.signal,
       requireResolvedVariables: runtime.refresh.validateDispatch,
-      onRequestStart: () => { dispatched = true; runtime.requestInFlight = true; runtime.onProgress?.() },
+      onRequestStart: auth => { runtime.rememberAuth(auth); dispatched = true; runtime.requestInFlight = true; runtime.onProgress?.() },
       definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
       scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
     })
     runtime.requestInFlight = false
     if (dispatched && record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
-    store.addSendRecord(projectId, redactEvidence(record, [runtime.envValues, runtime.globalValues, runtime.localValues]))
+    store.addSendRecord(projectId, redactEvidence(record, runtime.evidenceSeeds(), 'send'))
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
 
@@ -743,7 +755,7 @@ async function runEvent(
     }
 
     if (event.type === 'loop') {
-      const count = Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
+      const count = loopBound(event)
       const children: FlowEventResult[] = runtime.resultStack.at(-1)!.children = []
       const previousIndex = runtime.localValues.loop_index
       try {
@@ -820,7 +832,7 @@ async function runEvents(
       if (runtime.signal?.aborted) break
       let current: FlowEventResult
       {
-        const reason = runtime.dependencies.blockedReason(event, results)
+        const reason = runtime.dependencies.blockedReason(event, results, iterationPath)
         if (reason) {
           current = identify(result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) }))
           results.push(current)
@@ -830,7 +842,14 @@ async function runEvents(
           results.push(current)
           runtime.resultStack.push(current)
           runtime.onProgress?.()
-          Object.assign(current, await runEvent(projectId, event, runtime, flow))
+          // A container that belongs to a surrounding multi-member logical step
+          // cannot publish a child pause boundary before that outer step finishes.
+          const groupedContainer = Boolean(event.children && (event.logical_step_id || event.step_id) &&
+            ((index > 0 && logicalId(events[index - 1]) === logicalId(event)) ||
+              (events[index + 1] && logicalId(events[index + 1]) === logicalId(event))))
+          if (groupedContainer) runtime.logicalStepDepth++
+          try { Object.assign(current, await runEvent(projectId, event, runtime, flow)) }
+          finally { if (groupedContainer) runtime.logicalStepDepth-- }
           if (runtime.signal?.aborted) current.status = 'cancelled'
           identify(current)
           runtime.dependencies.record(current)
@@ -841,7 +860,7 @@ async function runEvents(
       updateCursor(current.instance_id)
       runtime.onProgress?.()
       const next = events[index + 1]
-      if (!runtime.signal?.aborted && (!next || logicalId(event) !== logicalId(next))) await runtime.onStepBoundary?.()
+      if (!runtime.signal?.aborted && runtime.logicalStepDepth === 0 && (!next || logicalId(event) !== logicalId(next))) await runtime.onStepBoundary?.()
     }
   } finally {
     runtime.frames.pop()
@@ -856,10 +875,7 @@ export async function runFlow(
   environmentId?: string,
   options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void>; onReviewRequired?: (message: string) => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
 ): Promise<FlowRun> {
-  const envs = store.listEnvironments(projectId)
-  const settings = store.getSettings()
-  const preferredEnvId = environmentId || flow.env_id || settings.environment_id
-  const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
+  const env = selectFlowEnvironment(projectId, flow, environmentId)
   const globals = store.getGlobalVars(projectId)
   flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
@@ -884,37 +900,42 @@ export async function runFlow(
   const byId = new Map<string, FlowEvent>()
   const indexEvents = (events: FlowEvent[]): void => { for (const event of events) { byId.set(event.event_id, event); indexEvents(event.children ?? []) } }
   indexEvents(flow.events)
+  const continuationAt = (index: number): { events: FlowEvent[]; suffix: FlowEvent[]; remainingIterations: number } => {
+    const frame = runtime.frames[index]
+    const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
+    const events = parent?.children ?? flow.events
+    // Ancestors still point at the active child; the deepest frame already advanced.
+    const offset = frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)
+    return { events, suffix: events.slice(offset),
+      remainingIterations: parent?.type === 'loop' ? loopBound(parent) - (frame.iteration ?? 0) - 1 : 0 }
+  }
   const remaining = (): Array<{ event: FlowEvent; count: number }> => {
     const pending = new Map<string, { event: FlowEvent; count: number }>()
     const add = (events: FlowEvent[], count = 1): void => { for (const event of events) {
       if (!event.enabled || count < 1) continue
       if (event.type === 'api' || event.type === 'request') pending.set(event.event_id, { event, count: count + (pending.get(event.event_id)?.count ?? 0) })
-      add(event.children ?? [], count * (event.type === 'loop' ? Math.min(Math.max(event.loop_count ?? 1, 1), MAX_LOOP) : 1))
+      add(event.children ?? [], count * (event.type === 'loop' ? loopBound(event) : 1))
     } }
     if (!runtime.frames.length) add(flow.events)
-    runtime.frames.forEach((frame, index) => {
-      const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
-      const events = parent?.children ?? flow.events
-      // Ancestors point at the active child; the deepest frame has already advanced past the completed step.
-      add(events.slice(frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)))
-      if (parent?.type === 'loop') add(events, Math.min(Math.max(parent.loop_count ?? 1, 1), MAX_LOOP) - (frame.iteration ?? 0) - 1)
+    runtime.frames.forEach((_frame, index) => {
+      const { events, suffix, remainingIterations } = continuationAt(index)
+      add(suffix)
+      add(events, remainingIterations)
     })
     return [...pending.values()]
   }
   const nextEvent = (): FlowEvent | undefined => {
     // The deepest frame is the continuation position; walk outward if its sequence ended.
     for (let index = runtime.frames.length - 1; index >= 0; index--) {
-      const frame = runtime.frames[index]
-      const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
-      const events = parent?.children ?? flow.events
-      const next = events.slice(frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)).find(event => event.enabled)
+      const { events, suffix, remainingIterations } = continuationAt(index)
+      const next = suffix.find(event => event.enabled)
       if (next) return next
-      if (parent?.type === 'loop' && (frame.iteration ?? 0) + 1 < Math.min(Math.max(parent.loop_count ?? 1, 1), MAX_LOOP)) return events.find(event => event.enabled)
+      if (remainingIterations > 0) return events.find(event => event.enabled)
     }
     return undefined
   }
   runtime.refresh = new FlowRefreshController(projectId, env, runtime.definitions, remaining, applyRequestInput,
-    () => ({ ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues }), flow.events, () => runtime.cursor.after_instance_id, nextEvent)
+    () => ({ ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues }), flow.events, () => runtime.cursor.after_instance_id, nextEvent, () => runtime.evidenceSeeds())
   options.onControl?.(runtime.refresh)
   const snapshot: FlowExecutionSnapshot = {
     flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
@@ -931,13 +952,13 @@ export async function runFlow(
 
   const startedAt = options.startedAt ?? Date.now()
   const runId = options.runId ?? createId('run')
-  runtime.onProgress = () => options.onProgress?.({
+  runtime.onProgress = () => options.onProgress?.(redactEvidence({
     run_id: runId, project_id: projectId, flow_id: flow.flow_id, flow_name: flow.name,
     env_id: env?.env_id ?? '', started_at: startedAt, finished_at: 0, status: 'running',
     elapsed_ms: Date.now() - startedAt, variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
     cursor: runtime.cursor, events: runtime.progressRoot, console: runtime.consoleEntries, request_in_flight: runtime.requestInFlight,
     remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined
-  })
+  }, runtime.evidenceSeeds(), 'run'))
   const events = await runEvents(projectId, flow.events, runtime, flow)
   const finishedAt = Date.now()
   const run: FlowRun = {
@@ -959,8 +980,9 @@ export async function runFlow(
     events,
     console: runtime.consoleEntries
   }
-  if (!options.onProgress) store.saveFlowRun(projectId, run)
-  return redactEvidence(run)
+  const evidence = redactEvidence(run, runtime.evidenceSeeds(), 'run')
+  if (!options.onProgress) store.saveFlowRun(projectId, evidence)
+  return evidence
 }
 
 export function flowRunFailureCount(run: FlowRun): number {
