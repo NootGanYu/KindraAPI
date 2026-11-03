@@ -25,7 +25,10 @@ export function getFlowDraft(pid: string, id: string): AgentFlowDraft {
   if (draft) return structuredClone(draft)
   const flow = store.getFlow(pid, id)
   if (!flow) throw new Error('Flow 不存在')
-  return { project_id: pid, flow_id: id, flow, base_revision: flowSignature(flow), agent_owned: false, updated_at: new Date().toISOString() }
+  const opened: AgentFlowDraft = { project_id: pid, flow_id: id, flow, base_revision: flowSignature(flow), agent_owned: false, updated_at: new Date().toISOString() }
+  // The editor baseline belongs to the first read, not a later first keystroke.
+  persist(opened)
+  return opened
 }
 export function listAgentFlowDrafts(pid: string): AgentFlowDraft[] {
   const dir = directory(pid, 'flow-drafts')
