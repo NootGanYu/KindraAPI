@@ -5,6 +5,7 @@ export interface ReadPlanInput {
   connectionId?: string
   targetId: string
   targetIds?: string[]
+  flowIds?: string[]
   drafts?: Record<string, Target>
   /** Saved revisions from the editor sessions that produced these drafts. */
   draftRevisions?: Record<string, string | null>
@@ -13,8 +14,10 @@ export interface ReadPlanInput {
   draft?: Target
 }
 export interface AgentPlanStep {
+  kind?: 'api' | 'flow'
+  flow_id?: string
   step_id: string
-  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api'
+  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api' | 'propose_flow_change'
   execution?: { method: string; url: string; effects: string[] }
   changes?: unknown
   target_name?: string
@@ -33,6 +36,8 @@ export interface AgentPlan {
   target_id: string
   target_name: string
   target_ids?: string[]
+  flow_ids?: string[]
+  flows?: Array<{ flow_id: string; name: string }>
   targets?: Array<{ target_id: string; name: string; source: 'draft' | 'saved' }>
   environment_id: string | null
   environment_name: string

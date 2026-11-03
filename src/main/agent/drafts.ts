@@ -1,3 +1,4 @@
+import { nextCandidateNumber } from './candidateSequence'
 import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
 import { validateAgentApiDocumentation } from './apiDocumentation'
 import { mergeDefinitions } from './merge'
@@ -106,11 +107,8 @@ export function createCandidate(pid: string, planId: string, stepId: string, bas
   validatePatch(patch)
   const previous = listCandidates(pid).find(c => c.plan_id === planId && c.step_id === stepId)
   if (previous) return previous
-  const sequenceFile = path.join(projectDir(pid), 'candidate-sequence.json')
-  const sequence = readLocal<number>(sequenceFile, 0) + 1
-  const candidate: AgentCandidate = { candidate_id: randomUUID(), number: `P${sequence}`, project_id: pid, target_id: base.target_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), patch: structuredClone(patch), proposal: mergePatch(base, patch), created_at: new Date().toISOString(), status: 'pending' }
+  const candidate: AgentCandidate = { candidate_id: randomUUID(), number: nextCandidateNumber(pid), project_id: pid, target_id: base.target_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), patch: structuredClone(patch), proposal: mergePatch(base, patch), created_at: new Date().toISOString(), status: 'pending' }
   validateSystemParameterOrigins(base, candidate.proposal)
-  writeLocal(sequenceFile, sequence)
   writeLocal(file(pid, 'candidates', candidate.candidate_id), candidate)
   emit({ project_id: pid, target_id: base.target_id })
   return candidate

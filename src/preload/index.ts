@@ -18,6 +18,15 @@ const subscribe = (
 
 const api = {
   agent: {
+    getFlowDraft: (pid: string, id: string) => invoke('agent:getFlowDraft', pid, id),
+    syncFlowEditorDraft: (pid: string, flow: unknown) => invoke('agent:syncFlowEditorDraft', pid, flow),
+    saveManualFlowForRun: (pid: string, flow: unknown) => invoke('agent:saveManualFlowForRun', pid, flow),
+    listAgentFlowDrafts: (pid: string) => invoke('agent:listAgentFlowDrafts', pid),
+    listFlowCandidates: (pid: string, id?: string) => invoke('agent:listFlowCandidates', pid, id),
+    applyFlowCandidate: (pid: string, id: string) => invoke('agent:applyFlowCandidate', pid, id),
+    rejectFlowCandidate: (pid: string, id: string) => invoke('agent:rejectFlowCandidate', pid, id),
+    resolveFlowCandidate: (pid: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveFlowCandidate', pid, id, reviewId, choices),
+    onFlowDraftChanged: (callback: (event: unknown) => void) => subscribe('agent:flow-draft-changed', callback),
     releaseEditorDraft: (projectId: string, id: string) => invoke('agent:releaseEditorDraft', projectId, id),
     resolveCandidate: (projectId: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveCandidate', projectId, id, reviewId, choices),
     saveManualDraftOnQuit: (projectId: string, target: unknown, revision: string) => invoke('agent:saveManualDraftOnQuit', projectId, target, revision),
