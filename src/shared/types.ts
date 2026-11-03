@@ -557,7 +557,7 @@ export interface FlowExecutionSnapshot {
   environment_id: string
   requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
 }
-export type FlowRunStatus = 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
+export type FlowRunStatus = 'permission_revoked' | 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
   cursor?: FlowExecutionCursor

@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   try {
     const projectId = store.ensureDefaultProject().project_id
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [projectId] }
+    store.saveMcpConfig(config)
     const api = createTarget(projectId, 'api')
     api.url = `${origin}/first?phase={{phase}}`
     api.request.pre_script = 'pm.environment.set("phase", pm.environment.get("phase") + "-api-pre");'

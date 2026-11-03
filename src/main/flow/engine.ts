@@ -157,6 +157,7 @@ class FlowRuntime {
   readonly settings = store.getSettings()
   fileReviewRequired = false
   signal?: AbortSignal
+  onBeforeStep?: () => Promise<void>
   onStepBoundary?: () => Promise<void>
 
 
@@ -791,6 +792,9 @@ async function runEvents(
       if (runtime.signal?.aborted) break
       frame.next_event_index = index
       updateCursor()
+      const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
+      if (!index || logicalId(events[index - 1]) !== logicalId(event)) await runtime.onBeforeStep?.()
+      if (runtime.signal?.aborted) break
       let current: FlowEventResult
       if (runtime.fileReviewRequired) {
         current = identify(skipped([event], '外部文件变更，需审查后重新运行')[0])
@@ -817,7 +821,6 @@ async function runEvents(
       updateCursor(current.instance_id)
       runtime.onProgress?.()
       const next = events[index + 1]
-      const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
       if (!runtime.signal?.aborted && (!next || logicalId(event) !== logicalId(next))) await runtime.onStepBoundary?.()
     }
   } finally {
@@ -831,7 +834,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void> } = {}
+  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void> } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -843,6 +846,7 @@ export async function runFlow(
   runtime.dependencies = new FlowDependencies(flow.events)
   runtime.signal = options.signal
   runtime.onStepBoundary = options.onStepBoundary
+  runtime.onBeforeStep = options.onBeforeStep
   const capture = (events: FlowEvent[]): void => {
     for (const event of events) {
       const target = event.type === 'api' && event.target_id

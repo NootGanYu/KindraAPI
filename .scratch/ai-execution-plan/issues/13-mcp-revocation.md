@@ -4,7 +4,7 @@
 
 **Blocked by:** 12: 有界取消与远端结果未知
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] 创建和更新保持现有 write 约束；启动要求 execute，查询要求只读权限及项目允许。
 - [ ] 每次 MCP 控制及继续前重新校验 enabled、项目允许列表和相应权限。
