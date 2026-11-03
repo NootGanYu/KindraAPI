@@ -376,25 +376,9 @@ function readTargetVersions(projectId: string, targetId: string): TargetVersionF
   }
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  const record = value as Record<string, unknown>
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(',')}}`
-}
-
-/** 只对可编辑内容做签名，忽略时间、排序与版本元数据。 */
+/** Versions and revisions share the editable-definition boundary; runtime is never versioned. */
 function targetSignature(target: Target): string {
-  const { updated_at, created_at, version, sort, parent_id, ...content } = target as Target
-  void updated_at
-  void created_at
-  void version
-  void sort
-  void parent_id
-  return crypto.createHash('sha1').update(stableStringify(content)).digest('hex')
+  return crypto.createHash('sha1').update(stableJson(targetDefinition(target))).digest('hex')
 }
 
 function toVersionSummary(version: TargetVersion): TargetVersionSummary {
@@ -416,7 +400,8 @@ function recordTargetVersion(projectId: string, target: Target): void {
   const file = readTargetVersions(projectId, target.target_id)
   const signature = targetSignature(target)
   const newest = file.versions[0]
-  if (newest && newest.signature === signature) {
+  // Recompute old snapshots too, so legacy signatures do not manufacture a migration version.
+  if (newest && targetSignature(newest.snapshot) === signature) {
     target.version = newest.version
     return
   }
@@ -471,22 +456,16 @@ export function restoreTargetVersion(
   if (!live) throw new Error('接口不存在')
   const found = getTargetVersion(projectId, targetId, versionId)
   if (!found) throw new Error('版本不存在')
-  const snapshot = found.snapshot
-  const restored: Target = {
-    ...live,
-    name: snapshot.name,
-    description: snapshot.description,
-    method: snapshot.method,
-    url: snapshot.url,
-    protocol: snapshot.protocol,
-    server_id: snapshot.server_id,
-    status: snapshot.status,
-    tags: snapshot.tags ? [...snapshot.tags] : [],
-    is_exampled: snapshot.is_exampled,
-    request: snapshot.request ? cloneJson(snapshot.request) : live.request,
-    response: snapshot.response ? cloneJson(snapshot.response) : live.response,
+  // Restore the whole editable definition, including removed optional fields, while
+  // keeping this entity's identity and the latest local runtime results.
+  const restored = preserveCaseRuns({
+    ...cloneJson(targetDefinition(found.snapshot)),
+    target_id: live.target_id,
+    project_id: live.project_id,
+    target_type: live.target_type,
+    created_at: live.created_at,
     updated_at: new Date().toISOString()
-  }
+  } as Target, live)
   return saveTarget(projectId, restored)
 }
 
