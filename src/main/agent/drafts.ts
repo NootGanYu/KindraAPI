@@ -35,10 +35,14 @@ function persistDraft(draft: AgentDraft): void {
   mirrors.set(`${draft.project_id}:${draft.target_id}`, structuredClone(draft))
   if (draft.agent_owned) writeLocal(file(draft.project_id, 'drafts', draft.target_id), draft)
 }
-export function syncEditorDraft(pid: string, target: Target): AgentDraft {
+export function syncEditorDraft(pid: string, target: Target, baseRevision?: string | null): AgentDraft {
   if (target.project_id !== pid || target.target_type !== 'api') throw new Error('草稿项目或类型不符')
   const draft = getDraft(pid, target.target_id)
   draft.target = structuredClone(target)
+  if (!draft.agent_owned && baseRevision !== undefined) {
+    if (baseRevision !== null && typeof baseRevision !== 'string') throw new Error('草稿基线无效')
+    draft.base_revision = baseRevision
+  }
   const saved = store.readTargetSnapshot(pid, target.target_id)
   if (draft.agent_owned && !listCandidates(pid, target.target_id).some(candidate => candidate.status === 'conflict') && saved.target && draftSignature(saved.target) === draftSignature(target)) {
     draft.agent_owned = false; draft.base_revision = saved.revision
@@ -46,6 +50,14 @@ export function syncEditorDraft(pid: string, target: Target): AgentDraft {
   }
   persistDraft(draft)
   return draft
+}
+/** Release a closed manual editing session; Agent-owned drafts remain recoverable. */
+export function releaseEditorDraft(pid: string, id: string): boolean {
+  const stored = readLocal<AgentDraft | null>(file(pid, 'drafts', id), null)
+  const mirror = mirrors.get(`${pid}:${id}`)
+  if (stored?.agent_owned || mirror?.agent_owned) return false
+  mirrors.delete(`${pid}:${id}`)
+  return true
 }
 export function listAgentDrafts(pid: string): AgentDraft[] {
   const dir = path.join(projectDir(pid), 'drafts')
@@ -150,4 +162,4 @@ export function saveManualDraftOnQuit(pid: string, target: Target, revision: str
   })
 }
 
-export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, listAgentDrafts, listCandidates, applyCandidate, resolveCandidate, stashAgentDrafts }
+export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, applyCandidate, resolveCandidate, stashAgentDrafts }

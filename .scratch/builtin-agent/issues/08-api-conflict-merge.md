@@ -24,3 +24,9 @@
 版本入口展示每个冲突的基线、当前内容、Agent 内容和选择后的结果。`storage/agentConflicts.ts` 在 saveTarget 同步存储边界阻止未解决冲突写入，覆盖现有手工 Save、版本恢复及 MCP 写入；运行记录更新不经过该定义保存边界。重启后仍从本机记录检查，不依赖内存锁。
 
 验证通过：`test:agent-merge`（不同字段、同字段、明确选择、稳定 ID 重命名、raw/script 原子冲突、旧审阅失效、顺序冲突、解决后保存）、`test:agent-merge-ui`（真实 Electron 四方展示、既有 Save 拒绝、重启后继续拒绝、明确选择并保存）、`test:agent-drafts`、`test:agent-draft-ui`、`test:client-sync`、`test:documentation`、`typecheck`、`build`。
+
+### 编辑会话基线补充修复
+
+已复现并修复“放弃关闭后的纯手工镜像仍存活、后续计划又给旧镜像绑定新磁盘 revision”的组合问题。Renderer 在关闭标签或离开项目时按同一同步队列调用 `releaseEditorDraft`，只释放非 Agent 镜像；Agent-owned 草稿继续保留。同步消息携带真实编辑基线，计划按所选草稿来源固定 revision，并正确标记 draft 来源，不再借用新磁盘 revision。
+
+新增 `test:agent-editor-lifecycle`：真实 Zustand 编辑入口与主进程命令、真实 MCP 更新，验证放弃关闭不复活内容、MCP 新字段保留、Agent-owned 关闭保留、活动旧草稿与排队同步保持原 revision。`test:agent-merge-ui` 增加真实“放弃并关闭”后生成候选的旅程。上述测试以及双协议计划、07 草稿 UI 和退出恢复均通过。

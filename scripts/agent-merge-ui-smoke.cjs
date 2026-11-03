@@ -23,7 +23,23 @@ const server = http.createServer(async (req, res) => {
   ;({ pid, targetId } = info)
   await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('link', { name: /APIs$/ }).click()
   await page.getByText('合并验收接口', { exact: true }).first().click()
-  await page.evaluate(async ({ pid, targetId }) => { const plan = (await window.api.agent.proposeEditPlan(pid, { goal: '修改地址和说明', targetId })).data; await window.api.agent.approvePlan(pid, plan.plan_id) }, { pid, targetId })
+  await page.getByLabel('请求 URL', { exact: true }).fill('https://example.invalid/discarded')
+  await page.getByLabel('请求 URL', { exact: true }).press('Tab')
+  await page.locator(`[data-tab-id="${targetId}"] .red-dot`).waitFor()
+  await page.locator(`[data-tab-id="${targetId}"] .tab-x`).click()
+  await page.getByRole('button', { name: '放弃并关闭', exact: true }).click()
+  const discarded = await page.evaluate(async ({ pid, targetId }) => (await window.api.agent.getDraft(pid, targetId)).data, { pid, targetId })
+  assert.equal(discarded.target.url, 'https://example.invalid/base', 'real UI discard-close releases its manual mirror')
+  const candidateBase = await page.evaluate(async ({ pid, targetId }) => {
+    const target = (await window.api.targets.get(pid, targetId)).data
+    target.description = '关闭后的外部更新'; await window.api.targets.save(pid, target)
+    const plan = (await window.api.agent.proposeEditPlan(pid, { goal: '修改地址和说明', targetId })).data
+    await window.api.agent.approvePlan(pid, plan.plan_id)
+    return (await window.api.agent.listCandidates(pid, targetId)).data[0].base
+  }, { pid, targetId })
+  assert.equal(candidateBase.url, 'https://example.invalid/base'); assert.equal(candidateBase.description, '关闭后的外部更新')
+  await page.getByText('合并验收接口', { exact: true }).first().click()
+
   await page.getByLabel('请求 URL', { exact: true }).fill('https://example.invalid/human')
   await page.getByRole('button', { name: '审阅 Agent 版本', exact: true }).click()
   await page.getByRole('button', { name: '应用到草稿', exact: true }).click()

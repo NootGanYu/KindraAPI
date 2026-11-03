@@ -3,6 +3,7 @@ import { Alert, Button, Card, Drawer, Input, Select, Space, Tag, Typography } fr
 import type { AgentPlan, AgentPlanStep } from '@shared/agentPlan'
 import type { AgentConnection } from '@shared/agent'
 import type { Environment, Result, TargetSummary } from '@shared/types'
+import { flushAgentDrafts } from '../agentDraftSync'
 import { useApp } from '../store'
 
 const labels: Record<AgentPlan['status'], string> = { generating: '生成中', pending: '等待批准', running: '执行中', completed: '已完成', rejected: '已拒绝', paused: '需要重新确认', interrupted: '已中断' }
@@ -42,9 +43,11 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
     if (!targetIds.length) return
     setBusy(true); setError('')
     try {
+      await flushAgentDrafts()
       const state = useApp.getState()
       const drafts = state.project?.project_id === projectId ? Object.fromEntries(targetIds.filter(id => state.drafts[id]).map(id => [id, state.drafts[id]])) : {}
-      unwrap(await window.api.agent[edit ? 'proposeEditPlan' : 'proposeReadPlan'](projectId, { goal, targetId: targetIds[0], targetIds, environmentId, drafts, connectionId: connection?.connection_id }))
+      const draftRevisions = Object.fromEntries(Object.keys(drafts).map(id => [id, state.baselines[id]?.revision ?? null]))
+      unwrap(await window.api.agent[edit ? 'proposeEditPlan' : 'proposeReadPlan'](projectId, { goal, targetId: targetIds[0], targetIds, environmentId, drafts, draftRevisions, connectionId: connection?.connection_id }))
     } catch (e) { setError((e as Error).message) }
     finally { setBusy(false) }
   }
