@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     const savedRun = store.getFlowRun(project.project_id, run.run_id)!
     assert.equal(savedRun.status, 'passed')
     assert.equal(savedRun.events[0].response?.code, 200)
-    assert.equal(savedRun.events[0].response?.body, '{"token":"flow-token","orderId":17}')
+    assert.equal(savedRun.events[0].response?.body, '{"token":"[REDACTED]","orderId":17}')
     console.log('PASS saved flow public entry sends a request and exposes its persisted result')
 
     registerIpc()

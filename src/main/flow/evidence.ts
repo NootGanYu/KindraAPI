@@ -19,7 +19,9 @@ export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
     if (sensitive.test(key)) remember(value)
     if (typeof value === 'string') {
       try { collect(JSON.parse(value)); } catch { /* plain text */ }
-      for (const match of value.matchAll(/(?:[?&]|\b)(?:token|password|secret|api_key|access_token)=([^&\s]+)/gi)) remember(decodeURIComponent(match[1]))
+      for (const match of value.matchAll(/(?:[?&]|\b)(?:token|password|secret|api_key|access_token)=([^&\s]+)/gi)) {
+        try { remember(decodeURIComponent(match[1])) } catch { remember(match[1]) }
+      }
     } else if (Array.isArray(value)) {
       value.forEach(item => {
         if (item && typeof item === 'object' && sensitive.test(String(item.key ?? item.name ?? ''))) remember(item.value)
@@ -29,11 +31,19 @@ export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
   }
   collect(value); seeds.forEach(seed => collect(seed))
   const ordered = [...secrets].sort((a,b) => b.length-a.length)
+  const hide = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(hide)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v]) => [k, hide(v)]))
+    return typeof value === 'string' ? HIDDEN : value
+  }
   const project = (value: unknown, key = ''): unknown => {
-    if (sensitive.test(key) && value !== undefined && value !== null) return HIDDEN
+    if (key === 'body_base64') return undefined
+    if (sensitive.test(key) && value !== undefined && value !== null) return hide(value)
     // Script source can contain inline credentials. Keep definition revisions, not executable source, in evidence.
     if (/^(script|pre_script|post_script)$/.test(key) && typeof value === 'string' && value) return HIDDEN
     if (typeof value === 'string') {
+      // These opaque identifiers are needed to query and deduplicate the same Run.
+      if (/^(?:run_id|project_id|flow_id|event_id|step_id|logical_step_id|target_id|env_id|environment_id|request_id|request_environment_id|revision|flow_revision|sha256)$/.test(key)) return value
       try {
         const decoded: unknown = JSON.parse(value)
         if (decoded && typeof decoded === 'object') return JSON.stringify(project(decoded))

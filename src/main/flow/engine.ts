@@ -612,6 +612,8 @@ async function runRequestEvent(
     })
   } catch (error) {
     if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
+    else if (runtime.requestInFlight) runtime.remoteUnknown = true
+    runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -722,6 +724,8 @@ async function runEvent(
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
     if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
+    else if (runtime.requestInFlight) runtime.remoteUnknown = true
+    runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
