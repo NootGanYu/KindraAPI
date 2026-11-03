@@ -122,6 +122,13 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   if (unknown) {
     record.error = { type: 'transport', message: '响应传输未完整结束，远端结果未知' }; record.status = 'failed'
   }
+  if (!record.error) {
+    try {
+      if (context.env && !store.listEnvironments(context.projectId).some(e => e.env_id === context.env!.env_id)) throw new Error('获批环境已删除')
+      if (snapshot.scopeSignature !== scopeSignature(context.projectId, getDraft(context.projectId, context.target.target_id).target)) throw new Error('脚本、目标或文件配置已改变，请重新确认')
+      for (const approvedFile of snapshot.files) file(approvedFile.path)
+    } catch (error) { record.error = { type: 'authorization', message: error instanceof Error ? error.message : '执行范围已变化' } }
+  }
   if (!record.error && snapshot.permissions.writeVariables) {
     try { persistExecutionVariables(context.projectId, snapshot.variables) }
     catch (error) { record.error = { type: 'variables', message: error instanceof Error ? error.message : '变量写回暂停' } }

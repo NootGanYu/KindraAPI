@@ -80,6 +80,10 @@ async function main(): Promise<void> {
     const deleted = await commands.approvePlan(pid, deleting.plan_id)
     assert.equal(deleted.status, 'paused'); assert.match(deleted.error!, /环境已删除/)
     deleteEnvironmentDuring = false; store.saveEnvironment(pid, batchEnv)
+    const deletedWithoutWrite = await commands.proposeExecutePlan(pid, { goal: '最后请求期间环境删除也暂停', targetId: target.target_id, environmentId: env.env_id, execution: { requests: [{ method: 'GET', url: `${base}/login` }] } })
+    deleteEnvironmentDuring = true
+    assert.equal((await commands.approvePlan(pid, deletedWithoutWrite.plan_id)).status, 'paused')
+    deleteEnvironmentDuring = false; store.saveEnvironment(pid, batchEnv)
     console.log('PASS variables evolve across approved steps; environment deletion pauses writeback and model arguments cannot grant save authorization')
     const propose = (draft: typeof target, execution: any = {}) => commands.proposeExecutePlan(pid, { goal: '执行副作用边界', targetId: target.target_id, draft, environmentId: env.env_id, execution })
     const forbidden = structuredClone(target)
