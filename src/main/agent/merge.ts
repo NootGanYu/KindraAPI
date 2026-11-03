@@ -31,7 +31,7 @@ export function mergeDefinitions<T>(base: T, current: T, agent: T, choices: Reco
     }
     if (Array.isArray(b) && Array.isArray(c) && Array.isArray(a)) {
       const arrays = [b, c, a]
-      const identity = ['param_id', 'case_id', 'event_id'].find(key => arrays.every(items => items.every(item => isObject(item) && typeof item[key] === 'string' && item[key]) && new Set(items.map(item => item[key])).size === items.length))
+      const identity = ['param_id', 'case_id', 'assertion_id', 'event_id'].find(key => arrays.every(items => items.every(item => isObject(item) && typeof item[key] === 'string' && item[key]) && new Set(items.map(item => item[key])).size === items.length))
       if (identity && arrays.some(items => items.length)) {
         const [bi, ci, ai] = arrays.map(items => items.map(item => item[identity] as string))
         const maps = arrays.map(items => new Map(items.map(item => [item[identity] as string, item])))

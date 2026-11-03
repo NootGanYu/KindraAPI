@@ -58,7 +58,7 @@ export default function TargetVersionDrawer({
   const restore = (version: TargetVersionSummary): void => {
     modal.confirm({
       title: `恢复到 v${version.version}？`,
-      content: '当前未保存的内容会被该版本覆盖，并生成一条新的恢复记录。',
+      content: '将恢复该版本的全部可编辑定义，包括接口用例、参数覆盖、断言和自定义属性。当前未保存内容会被覆盖，实体身份及当前运行记录保留，并正式保存恢复结果。',
       okText: '恢复',
       cancelText: '取消',
       onOk: async () => {

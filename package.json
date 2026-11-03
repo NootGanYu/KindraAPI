@@ -63,6 +63,8 @@
     "test:agent-effects-ui": "node scripts/agent-effects-ui-smoke.cjs",
     "test:agent-flow-drafts": "esbuild scripts/agent-flow-draft-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-flow-17.cjs && electron node_modules/.tmp/agent-flow-17.cjs && electron node_modules/.tmp/agent-flow-17.cjs --responses",
     "test:agent-flow-ui": "node scripts/agent-flow-ui-smoke.cjs",
+    "test:agent-case-edit": "esbuild scripts/agent-case-edit-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-case-edit-15.cjs && electron node_modules/.tmp/agent-case-edit-15.cjs && electron node_modules/.tmp/agent-case-edit-15.cjs --responses",
+    "test:agent-case-edit-ui": "node scripts/agent-case-edit-ui-smoke.cjs",
     "test:agent-create": "esbuild scripts/agent-create-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-create-12.cjs && electron node_modules/.tmp/agent-create-12.cjs && electron node_modules/.tmp/agent-create-12.cjs --responses",
     "test:agent-create-ui": "node scripts/agent-create-ui-smoke.cjs"
   },
