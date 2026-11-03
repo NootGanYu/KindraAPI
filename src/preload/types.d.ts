@@ -1,4 +1,4 @@
-import type { AgentDraft, AgentCandidate, AgentDraftEvent } from '@shared/agentDraft'
+import type { AgentDraft, AgentCandidate, AgentDraftEvent, AgentConflictChoice } from '@shared/agentDraft'
 import type { AgentPlan, AgentPlanEvent, ReadPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
@@ -91,6 +91,7 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    resolveCandidate(projectId: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentCandidate>>
     saveManualDraftOnQuit(projectId: string, target: Target, revision: string): Promise<Result<boolean>>
     getDraft(projectId: string, targetId: string): Promise<Result<AgentDraft>>
     syncEditorDraft(projectId: string, target: Target): Promise<Result<AgentDraft>>

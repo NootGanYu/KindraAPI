@@ -1,3 +1,4 @@
+import { assertAgentConflictsResolved } from './agentConflicts'
 import { app } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -662,6 +663,7 @@ export function getCookieJarForUrl(projectId: string, rawUrl: string): Record<st
 }
 
 export function saveTarget(projectId: string, target: Target): Target {
+  assertAgentConflictsResolved(getPaths().localRoot, projectId, target.target_id)
   if (target.project_id !== projectId) throw new Error('项目不匹配')
   target.updated_at = new Date().toISOString()
   recordTargetVersion(projectId, target)

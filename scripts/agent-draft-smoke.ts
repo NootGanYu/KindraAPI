@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     const count = commands.listCandidates(pid, target.target_id).length
     commands.stashAgentDrafts(); commands.stashAgentDrafts()
     assert.equal(commands.listCandidates(pid, target.target_id).length, count, 'exit deduplicates existing snapshot')
+    patch = { description: 'Agent 第二次修改' }
     const second = await commands.proposeEditPlan(pid, { goal: '修改', targetId: target.target_id })
     await commands.approvePlan(pid, second.plan_id)
     const pending = commands.listCandidates(pid, target.target_id).find(c => c.status === 'pending')!
@@ -55,6 +56,8 @@ async function main(): Promise<void> {
     assert.equal(commands.applyCandidate(pid, pending.candidate_id).status, 'conflict')
     assert.equal(commands.getDraft(pid, target.target_id).target.description, '后续人工内容')
     assert.deepEqual(commands.listCandidates(pid, target.target_id).find(c => c.candidate_id === candidate.candidate_id)!.proposal, candidate.proposal)
+    const conflictReview = commands.listCandidates(pid, target.target_id).find(c => c.candidate_id === pending.candidate_id)!
+    commands.resolveCandidate(pid, pending.candidate_id, conflictReview.merge!.review_id, Object.fromEntries(conflictReview.merge!.conflicts.map(c => [c.id, 'current' as const])))
     const third = await commands.proposeEditPlan(pid, { goal: '修改', targetId: target.target_id })
     await commands.approvePlan(pid, third.plan_id)
     const revisionCandidate = commands.listCandidates(pid, target.target_id).find(c => c.status === 'pending')!

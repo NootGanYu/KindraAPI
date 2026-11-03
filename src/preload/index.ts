@@ -18,6 +18,7 @@ const subscribe = (
 
 const api = {
   agent: {
+    resolveCandidate: (projectId: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveCandidate', projectId, id, reviewId, choices),
     saveManualDraftOnQuit: (projectId: string, target: unknown, revision: string) => invoke('agent:saveManualDraftOnQuit', projectId, target, revision),
     getDraft: (projectId: string, targetId: string) => invoke('agent:getDraft', projectId, targetId),
     syncEditorDraft: (projectId: string, target: unknown) => invoke('agent:syncEditorDraft', projectId, target),
