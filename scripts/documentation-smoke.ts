@@ -94,10 +94,10 @@ async function main(): Promise<void> {
   }
   try {
     const initialized = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'documentation-smoke', version: '1' } })
-    assert(initialized.result.instructions.includes('必须填写接口说明'))
-    assert(initialized.result.instructions.includes('目录说明'))
-    assert(initialized.result.instructions.includes('完整的 http:// 或 https:// 地址'))
-    assert(initialized.result.instructions.includes('拒绝写入'))
+    assert(initialized.result.instructions.includes('交付硬性要求'))
+    assert(initialized.result.instructions.includes('接口说明'))
+    assert(initialized.result.instructions.includes('完整 http(s)://host/path'))
+    assert(initialized.result.instructions.includes('记录与安全'))
     const tools = await rpc('tools/list', {})
     assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.inputSchema.properties.success_response.properties.field_docs.items.properties.enum_descriptions))
     assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.description.includes('每个已知')))
