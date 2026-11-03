@@ -542,7 +542,7 @@ export interface FlowExecutionSnapshot {
   environment_id: string
   requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
 }
-export type FlowRunStatus = 'running' | 'passed' | 'failed'
+export type FlowRunStatus = 'running' | 'pausing' | 'paused' | 'passed' | 'failed'
 
 export interface FlowRun {
   snapshot?: FlowExecutionSnapshot

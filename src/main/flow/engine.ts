@@ -140,6 +140,7 @@ class FlowRuntime {
   readonly definitions = new Map<string, RequestExecutionDefinition>()
   readonly settings = store.getSettings()
   fileReviewRequired = false
+  onStepBoundary?: () => Promise<void>
 
   constructor(projectId: string, env: Environment | null, globals: GlobalVars) {
     this.projectId = projectId
@@ -722,9 +723,12 @@ async function runEvents(
   flow: Flow
 ): Promise<FlowEventResult[]> {
   const results: FlowEventResult[] = []
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (runtime.fileReviewRequired) results.push(...skipped([event], '外部文件变更，需审查后重新运行'))
     else results.push(await runEvent(projectId, event, runtime, flow))
+    const next = events[index + 1]
+    const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
+    if (!next || logicalId(event) !== logicalId(next)) await runtime.onStepBoundary?.()
   }
   return results
 }
@@ -733,7 +737,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { runId?: string; startedAt?: number; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void } = {}
+  options: { runId?: string; startedAt?: number; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void> } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -742,6 +746,7 @@ export async function runFlow(
   const globals = store.getGlobalVars(projectId)
   flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
+  runtime.onStepBoundary = options.onStepBoundary
   const capture = (events: FlowEvent[]): void => {
     for (const event of events) {
       const target = event.type === 'api' && event.target_id
