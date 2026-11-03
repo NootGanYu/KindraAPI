@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
+import { execFileSync } from 'node:child_process'
+import { createFlow } from '../src/shared/factories'
 import * as store from '../src/main/storage/store'
 import { agentCommands as commands } from '../src/main/agent/service'
 import { decodeModelRequest, respondModel } from './agent-model-fixture'
@@ -11,7 +13,12 @@ const protocol = process.argv.includes('--responses') ? 'responses' : 'chat-comp
 async function main(): Promise<void> {
   app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-create-'))); await app.whenReady()
   const pid = store.ensureDefaultProject().project_id
-  let save = false, existingId = '', saveOnly = false
+  const projectRoot = path.join(store.getPaths().projectRoot, pid)
+  execFileSync('git', ['init', '-q', projectRoot])
+  const projectFiles = (): string => fs.readdirSync(projectRoot, { recursive: true }).filter(name => !String(name).startsWith('.git')).sort().map(name => { const file = path.join(projectRoot, String(name)); return fs.statSync(file).isFile() ? `${name}:${fs.readFileSync(file, 'utf8')}` : String(name) }).join('\n')
+  const initialFiles = projectFiles()
+  const gitBefore = execFileSync('git', ['-C', projectRoot, 'status', '--porcelain'], { encoding: 'utf8' })
+  let save = false, existingId = '', saveOnly = false, flowId = ''
   let patch: unknown = { name: '新建候选接口', description: '用户明确要求查询健康状态', method: 'GET', url: 'https://example.invalid/health' }
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk
@@ -19,7 +26,7 @@ async function main(): Promise<void> {
     const probe = body.tools?.[0]?.function.name === 'kindra_capability_probe'
     const request = JSON.parse(body.messages?.find((m: any) => m.role === 'user' && m.content.startsWith('{'))?.content ?? '{}')
     const id = existingId || request.target_id
-    const calls = probe ? [{ name: 'kindra_capability_probe', args: { token: 'kindra-probe' } }] : [
+    const calls = probe ? [{ name: 'kindra_capability_probe', args: { token: 'kindra-probe' } }] : flowId ? [{ name: 'propose_flow_change', args: { project_id: pid, flow_id: flowId, patch: { description: 'Flow 草稿说明' }, depends_on: [] } }] : [
       ...(!saveOnly ? [{ name: existingId ? 'propose_api_change' : 'create_api', args: { project_id: pid, target_id: id, step_id: 'create', patch, depends_on: [] } }] : []),
       ...(save ? [{ name: 'save_api', args: { project_id: pid, target_id: id, step_id: 'save', depends_on: saveOnly ? [] : ['create'] } }] : [])
     ]
@@ -44,6 +51,8 @@ async function main(): Promise<void> {
     commands.restoreCandidate(pid, candidate.candidate_id)
     assert.equal(commands.listCandidates(pid)[0].status, 'applied')
     assert.equal(store.getTarget(pid, plan.target_id), null)
+    assert.equal(projectFiles(), initialFiles, 'new drafts and review actions leave all project files unchanged')
+    assert.equal(execFileSync('git', ['-C', projectRoot, 'status', '--porcelain'], { encoding: 'utf8' }), gitBefore)
     console.log('PASS creation approval only creates a recoverable local draft and reviewable candidate')
     assert.throws(() => store.saveTarget(pid, commands.getDraft(pid, plan.target_id).target), /独立.*保存|获批/)
     save = true; saveOnly = true; existingId = plan.target_id
@@ -79,6 +88,41 @@ async function main(): Promise<void> {
     assert.equal(final.status, 'completed', final.error)
     assert.equal(store.getTarget(pid, existingId)!.request!.query.parameter[0].required, true)
     console.log('PASS only an independent approved save creates the formal object; full new-object documentation gates remain on later save-only plans')
+    const flow = createFlow(pid, '项目汇总中的流程'); store.saveFlow(pid, flow); flowId = flow.flow_id
+    const flowPlan = await commands.proposeEditPlan(pid, { goal: '只改Flow说明', targetId: '', targetIds: [], flowIds: [flowId] })
+    assert.equal((await commands.approvePlan(pid, flowPlan.plan_id)).status, 'completed')
+    const mixed = commands.listProjectCandidates(pid)
+    assert(mixed.some(item => item.kind === 'flow' && item.entity_id === flowId))
+    assert(mixed.some(item => item.kind === 'api'))
+    const allNumbers = [...commands.listCandidates(pid), ...commands.listFlowCandidates(pid)].map(c => c.number)
+    assert.equal(new Set(allNumbers).size, allNumbers.length)
+    console.log('PASS project summary includes API and Flow candidates with shared unique P numbers')
+    flowId = ''; existingId = ''; save = true
+    const forbiddenSave = await commands.proposeCreateApiPlan(pid, { goal: '仅允许新建草稿' })
+    assert.equal(forbiddenSave.status, 'paused', 'model cannot add save when the user only requested a create plan')
+    assert.equal(store.getTarget(pid, forbiddenSave.target_id), null)
+    save = false; patch = { name: '长期本机候选', description: '未保存的新对象', url: 'https://example.invalid/local' }
+    const rejectedPlan = await commands.proposeCreateApiPlan(pid, { goal: '拒绝新建计划' })
+    commands.rejectPlan(pid, rejectedPlan.plan_id)
+    assert.equal(commands.listCandidates(pid).some(c => c.target_id === rejectedPlan.target_id), false)
+    assert.throws(() => commands.getDraft(pid, rejectedPlan.target_id), /不存在/)
+    const local = await commands.proposeCreateApiPlan(pid, { goal: '保留本机候选' }); await commands.approvePlan(pid, local.plan_id)
+    const localCandidate = commands.listCandidates(pid).find(c => c.target_id === local.target_id)!
+    commands.rejectCandidate(pid, localCandidate.candidate_id)
+    const formal = store.getTarget(pid, combined.target_id)!
+    for (let i = 0; i < 105; i++) store.saveTarget(pid, { ...formal, description: `正式版本${i}` })
+    assert.equal(store.listTargetVersions(pid, combined.target_id).length, 100)
+    assert.equal(commands.listCandidates(pid).find(c => c.candidate_id === localCandidate.candidate_id)!.status, 'rejected')
+    assert.equal(commands.listProjectCandidates(pid).find(item => item.entity_id === local.target_id)!.lifecycle, 'uncreated')
+    assert(!projectFiles().includes(local.target_id)); assert(!projectFiles().includes(localCandidate.candidate_id))
+    const folder = store.createTargetInProject(pid, '0', 'folder')
+    const deletedParent = await commands.proposeCreateApiPlan(pid, { goal: '创建在指定目录', parentId: folder.target_id })
+    store.deleteTarget(pid, folder.target_id)
+    assert.equal((await commands.approvePlan(pid, deletedParent.plan_id)).status, 'paused')
+    assert.equal(commands.listCandidates(pid).some(c => c.target_id === deletedParent.target_id), false)
+    console.log('PASS unauthorized save, rejected plan, deleted parent, project Git isolation and candidate independence from formal version pruning')
+
+
 
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
 }

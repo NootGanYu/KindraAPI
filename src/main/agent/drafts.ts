@@ -1,3 +1,4 @@
+import { listFlowCandidates, getFlowDraft } from './flowDrafts'
 import { nextCandidateNumber } from './candidateSequence'
 import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
 import { validateAgentApiDocumentation } from './apiDocumentation'
@@ -72,12 +73,17 @@ export function listCandidates(pid: string, targetId?: string): AgentCandidate[]
 }
 export function listProjectCandidates(pid: string): ProjectCandidateSummary[] {
   const candidates = listCandidates(pid)
-  return [...new Set(candidates.map(c => c.target_id))].map(id => {
+  const apis: ProjectCandidateSummary[] = [...new Set(candidates.map(c => c.target_id))].map(id => {
     const saved = store.getTarget(pid, id)
     const draft = readLocal<AgentDraft | null>(file(pid, 'drafts', id), null)
     return { kind: 'api', entity_id: id, name: draft?.target.name ?? saved?.name ?? candidates.find(c => c.target_id === id)!.proposal.name,
       lifecycle: saved ? 'saved' : draft?.new_object ? 'uncreated' : 'unavailable', candidate_count: candidates.filter(c => c.target_id === id).length }
   })
+  const flows = listFlowCandidates(pid)
+  return [...apis, ...[...new Set(flows.map(c => c.flow_id))].map(id => ({
+    kind: 'flow' as const, entity_id: id, name: store.getFlow(pid, id) ? getFlowDraft(pid, id).flow.name : flows.find(c => c.flow_id === id)!.proposal.name,
+    lifecycle: store.getFlow(pid, id) ? 'saved' as const : 'unavailable' as const, candidate_count: flows.filter(c => c.flow_id === id).length
+  }))]
 }
 /** Called only by the approved create step; the factory identity was fixed before approval. */
 export function createApiDraft(pid: string, planId: string, stepId: string, base: Target, patch: Partial<Target>): AgentCandidate {
