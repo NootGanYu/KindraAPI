@@ -56,7 +56,9 @@
     "test:agent-merge-ui": "node scripts/agent-merge-ui-smoke.cjs",
     "test:agent-editor-lifecycle": "esbuild scripts/agent-editor-lifecycle-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-editor-lifecycle-smoke.cjs && electron node_modules/.tmp/agent-editor-lifecycle-smoke.cjs",
     "test:agent-save": "esbuild scripts/agent-save-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-save-smoke.cjs && electron node_modules/.tmp/agent-save-smoke.cjs && electron node_modules/.tmp/agent-save-smoke.cjs --responses",
-    "test:agent-save-ui": "node scripts/agent-save-ui-smoke.cjs"
+    "test:agent-save-ui": "node scripts/agent-save-ui-smoke.cjs",
+    "test:agent-candidate-undo": "esbuild scripts/agent-candidate-undo-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-candidate-undo-13.cjs && electron node_modules/.tmp/agent-candidate-undo-13.cjs",
+    "test:agent-candidate-undo-ui": "node scripts/agent-candidate-undo-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

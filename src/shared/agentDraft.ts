@@ -22,9 +22,10 @@ export interface AgentCandidate {
   saved_version?: { version_id: string; version: number; revision: string; plan_id: string }
   proposal: Target
   created_at: string
-  status: 'pending' | 'applied' | 'conflict' | 'rejected'
+  status: 'pending' | 'applied' | 'conflict' | 'rejected' | 'undone'
   error?: string
   merge?: AgentCandidateMerge
+  application?: { before: Target; after: Target; undone?: boolean }
 }
 export interface AgentDraftEvent {
   project_id: string
@@ -46,6 +47,9 @@ export interface AgentFieldConflict {
   reason: 'value' | 'order'
 }
 export interface AgentCandidateMerge {
+  operation?: 'apply' | 'restore' | 'undo'
+  base?: Target
+  proposal?: Target
   review_id: string
   current: Target
   result: Target
