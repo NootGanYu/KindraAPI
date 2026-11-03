@@ -70,13 +70,14 @@ export function listCandidates(pid: string, targetId?: string): AgentCandidate[]
 function readCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readLocal<AgentCandidate | null>(file(pid, 'candidates', id), null)
   if (!candidate) throw new Error('候选不存在')
-  const review = readLocal<{ status: AgentCandidate['status']; error?: string; merge?: AgentCandidateMerge }>(file(pid, 'candidate-reviews', id), { status: 'pending' })
+  const review = readLocal<Pick<AgentCandidate, 'status' | 'error' | 'merge' | 'application'>>(file(pid, 'candidate-reviews', id), { status: 'pending' })
   return { ...candidate, ...review }
 }
-function review(candidate: AgentCandidate, status: AgentCandidate['status'], error?: string, merge?: AgentCandidateMerge): AgentCandidate {
-  writeLocal(file(candidate.project_id, 'candidate-reviews', candidate.candidate_id), { target_id: candidate.target_id, status, error, merge })
+function review(candidate: AgentCandidate, status: AgentCandidate['status'], error?: string, merge?: AgentCandidateMerge, application = candidate.application): AgentCandidate {
+  const previous = readLocal<Record<string, unknown>>(file(candidate.project_id, 'candidate-reviews', candidate.candidate_id), {})
+  writeLocal(file(candidate.project_id, 'candidate-reviews', candidate.candidate_id), { ...previous, target_id: candidate.target_id, status, error, merge, application })
   emit({ project_id: candidate.project_id, target_id: candidate.target_id })
-  return { ...candidate, status, error, merge }
+  return { ...candidate, status, error, merge, application }
 }
 export function validatePatch(patch: unknown): asserts patch is Partial<Target> {
   const allowed = ['name', 'description', 'method', 'url', 'request', 'response', 'custom_attributes', 'mark_id']
@@ -112,32 +113,95 @@ export function createCandidate(pid: string, planId: string, stepId: string, bas
 }
 function applyMergedCandidate(candidate: AgentCandidate, current: Target, merge: AgentCandidateMerge): AgentCandidate {
   const draft = getDraft(candidate.project_id, candidate.target_id)
-  draft.target = merge.result; draft.agent_owned = true; draft.base_revision = candidate.base_revision
+  draft.target = merge.result; draft.agent_owned = true; draft.base_revision = merge.saved_revision
   persistDraft(draft)
-  const result = review(candidate, merge.conflicts.length ? 'conflict' : 'applied', merge.conflicts.length ? '仅冲突字段需要确认，其他字段已合并到草稿。解决前不能正式保存。' : undefined, merge)
+  let before = current
+  if (candidate.application && !candidate.application.undone) {
+    // Remove only this candidate's previous delta from the current draft to recover
+    // the true before-image, carrying forward later unrelated human edits.
+    const inverse = { ...candidate, base: candidate.application.after, proposal: candidate.application.before }
+    const preview = buildMerge(inverse, current, merge.saved_revision)
+    before = buildMerge(inverse, current, merge.saved_revision, Object.fromEntries(preview.conflicts.map(conflict => [conflict.id, 'current' as const]))).result
+  }
+  const application = { before, after: merge.result }
+  const result = review(candidate, merge.conflicts.length ? 'conflict' : 'applied', merge.conflicts.length ? '仅冲突字段需要确认，其他字段已合并到草稿。解决前不能正式保存。' : undefined, merge, application)
   emit({ project_id: candidate.project_id, target_id: candidate.target_id, draft, previous: current })
   return result
 }
 function buildMerge(candidate: AgentCandidate, current: Target, revision: string | null, choices: Record<string, AgentConflictChoice> = {}): AgentCandidateMerge {
   const merged = mergeDefinitions(targetDefinition(candidate.base), targetDefinition(current), targetDefinition(candidate.proposal), choices)
   const result = preserveCaseRuns({ ...current, ...merged.result } as Target, current)
-  return { review_id: randomUUID(), current, result, draft_signature: draftSignature(result), saved_revision: revision, conflicts: merged.conflicts, choices }
+  return { base: candidate.base, proposal: candidate.proposal, review_id: randomUUID(), current, result, draft_signature: draftSignature(result), saved_revision: revision, conflicts: merged.conflicts, choices }
 }
 export function applyCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readCandidate(pid, id)
+  if (candidate.merge?.operation === 'undo') throw new Error('请使用撤销冲突审阅')
   if (!['pending', 'conflict'].includes(candidate.status)) throw new Error('候选不是待确认状态')
   const draft = getDraft(pid, candidate.target_id)
   const saved = store.readTargetSnapshot(pid, candidate.target_id)
   if (saved.revision !== candidate.base_revision) return review(candidate, 'conflict', '正式定义已变化，已暂停此对象；请先核对已保存版本。')
   return applyMergedCandidate(candidate, draft.target, buildMerge(candidate, draft.target, saved.revision))
 }
+/** Review decisions never rewrite immutable candidate snapshots or formal definitions. */
+export function rejectCandidate(pid: string, id: string): AgentCandidate {
+  return review(readCandidate(pid, id), 'rejected')
+}
+export function restoreCandidate(pid: string, id: string): AgentCandidate {
+  const candidate = readCandidate(pid, id)
+  const draft = getDraft(pid, candidate.target_id)
+  const saved = store.readTargetSnapshot(pid, candidate.target_id)
+  if (!saved.target) throw new Error('接口已删除，无法恢复到草稿')
+  if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后恢复候选')
+  // A restored snapshot is still a proposal against today's draft, never a formal save.
+  const source = candidate.application ? { ...candidate, base: candidate.application.before, proposal: candidate.application.after } : candidate
+  const merge = buildMerge(source, draft.target, saved.revision)
+  merge.operation = 'restore'
+  return applyMergedCandidate(candidate, draft.target, merge)
+}
+export function undoCandidate(pid: string, id: string): AgentCandidate {
+  const candidate = readCandidate(pid, id), application = candidate.application
+  if (!application || application.undone) throw new Error('候选没有已应用修改或已撤销')
+  const draft = getDraft(pid, candidate.target_id), saved = store.readTargetSnapshot(pid, candidate.target_id)
+  if (!saved.target) throw new Error('接口已删除，无法撤销草稿')
+  if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后撤销')
+  const merge = buildMerge({ ...candidate, base: application.after, proposal: application.before }, draft.target, saved.revision)
+  merge.operation = 'undo'
+  // Undo is preview-only while conflicted, so unrelated fields cannot be reverted prematurely.
+  if (merge.conflicts.length) {
+    merge.draft_signature = draftSignature(draft.target)
+    return review(candidate, 'conflict', '撤销与后续编辑冲突。草稿未改变，请明确选择后再撤销。', merge)
+  }
+  return finishUndo(candidate, draft, merge)
+}
+function finishUndo(candidate: AgentCandidate, draft: AgentDraft, merge: AgentCandidateMerge): AgentCandidate {
+  const previous = draft.target
+  draft.target = merge.result; draft.agent_owned = true; draft.base_revision = merge.saved_revision
+  persistDraft(draft)
+  const result = review(candidate, 'undone', undefined, merge, { ...candidate.application!, undone: true })
+  emit({ project_id: candidate.project_id, target_id: candidate.target_id, draft, previous })
+  return result
+}
+export function resolveCandidateUndo(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): AgentCandidate {
+  const candidate = readCandidate(pid, id), merge = candidate.merge, application = candidate.application
+  if (candidate.status !== 'conflict' || merge?.operation !== 'undo' || merge.review_id !== reviewId || !application || application.undone) throw new Error('撤销审阅已变化，请重新打开候选')
+  const draft = getDraft(pid, candidate.target_id), saved = store.readTargetSnapshot(pid, candidate.target_id)
+  if (draftSignature(draft.target) !== merge.draft_signature || saved.revision !== merge.saved_revision) return undoCandidate(pid, id)
+  if (!choices || Object.keys(choices).some(key => !merge.conflicts.some(conflict => conflict.id === key)) || merge.conflicts.some(conflict => !['base', 'current', 'agent'].includes(choices[conflict.id]))) throw new Error('请为每个冲突字段明确选择结果')
+  const resolved = buildMerge({ ...candidate, base: application.after, proposal: application.before }, draft.target, saved.revision, choices)
+  resolved.operation = 'undo'
+  if (resolved.conflicts.length) throw new Error('仍有未解决的冲突')
+  return finishUndo(candidate, draft, resolved)
+}
 export function resolveCandidate(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): AgentCandidate {
   const candidate = readCandidate(pid, id), merge = candidate.merge
+  if (merge?.operation === 'undo') throw new Error('请使用撤销冲突审阅')
   if (candidate.status !== 'conflict' || !merge || merge.review_id !== reviewId) throw new Error('冲突审阅已变化，请重新打开候选')
   const draft = getDraft(pid, candidate.target_id), saved = store.readTargetSnapshot(pid, candidate.target_id)
-  if (draftSignature(draft.target) !== merge.draft_signature || saved.revision !== merge.saved_revision) return applyCandidate(pid, id)
+  if (draftSignature(draft.target) !== merge.draft_signature || saved.revision !== merge.saved_revision) return merge.operation === 'restore' ? restoreCandidate(pid, id) : applyCandidate(pid, id)
   if (!choices || Object.keys(choices).some(key => !merge.conflicts.some(conflict => conflict.id === key)) || merge.conflicts.some(conflict => !['base', 'current', 'agent'].includes(choices[conflict.id]))) throw new Error('请为每个冲突字段明确选择结果')
-  const resolved = buildMerge(candidate, merge.current, saved.revision, choices)
+  const source = { ...candidate, base: merge.base ?? candidate.base, proposal: merge.proposal ?? candidate.proposal }
+  const resolved = buildMerge(source, merge.current, saved.revision, choices)
+  resolved.operation = merge.operation
   if (resolved.conflicts.length) throw new Error('仍有未解决的冲突')
   return applyMergedCandidate(candidate, draft.target, resolved)
 }
@@ -162,4 +226,4 @@ export function saveManualDraftOnQuit(pid: string, target: Target, revision: str
   })
 }
 
-export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, applyCandidate, resolveCandidate, stashAgentDrafts }
+export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, applyCandidate, restoreCandidate, rejectCandidate, undoCandidate, resolveCandidateUndo, resolveCandidate, stashAgentDrafts }

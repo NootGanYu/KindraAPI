@@ -98,6 +98,10 @@ export interface ApiBridge {
     syncEditorDraft(projectId: string, target: Target, baseRevision?: string | null): Promise<Result<AgentDraft>>
     listAgentDrafts(projectId: string): Promise<Result<AgentDraft[]>>
     listCandidates(projectId: string, targetId?: string): Promise<Result<AgentCandidate[]>>
+    restoreCandidate(projectId: string, id: string): Promise<Result<AgentCandidate>>
+    rejectCandidate(projectId: string, id: string): Promise<Result<AgentCandidate>>
+    undoCandidate(projectId: string, id: string): Promise<Result<AgentCandidate>>
+    resolveCandidateUndo(projectId: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentCandidate>>
     applyCandidate(projectId: string, candidateId: string): Promise<Result<AgentCandidate>>
     onDraftChanged(callback: (event: AgentDraftEvent) => void): () => void
     getActivity(): Promise<Result<{ running: number }>>
