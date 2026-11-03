@@ -1,10 +1,12 @@
+import { projectRedactor } from './redaction'
+import { planCommands, shutdownPlans } from './plans'
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AgentConversation, AgentEvent, AgentConnectionTest } from '@shared/agent'
 import { getProject } from '../storage/store'
 import { agentRoot, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, connectionSnapshot, recordCapability, readLocal, writeLocal } from './store'
-import { completeModel, redactKey, redactStreamingKey } from './model'
+import { completeModel } from './model'
 
 const active = new Map<string, AbortController>()
 const listeners = new Set<(event: AgentEvent) => void>()
@@ -80,7 +82,8 @@ async function sendMessage(projectId: string, id: string, content: string, conne
     const { api_key: _secret, ...publicSnapshot } = snapshot
     conversation.connection = publicSnapshot
     const now = new Date().toISOString()
-    const userText = redactKey(content.trim(), snapshot.api_key)
+    const redact = projectRedactor(projectId, [snapshot.api_key])
+    const userText = redact(content.trim())
     if (!conversation.messages.length) conversation.title = userText.slice(0, 40)
     conversation.messages.push({ message_id: randomUUID(), role: 'user', content: userText, status: 'complete', created_at: now })
     const modelMessages = conversation.messages.filter(message => message.status === 'complete').map(({ role, content }) => ({ role, content }))
@@ -93,16 +96,16 @@ async function sendMessage(projectId: string, id: string, content: string, conne
         await completeModel(snapshot, [{ role: 'system', content: '你是 Kindra 项目内的助手。当前只提供文本对话，不具备读取项目、修改或执行接口的工具。不要声称已经执行操作。' }, ...modelMessages], {
           signal: controller.signal,
           onText: text => {
-            conversation.messages[conversation.messages.length - 1].content = redactStreamingKey(text, snapshot.api_key)
+            conversation.messages[conversation.messages.length - 1].content = redact.stream(text)
             emit(conversation)
           }
-        }).then(result => { conversation.messages[conversation.messages.length - 1].content = redactKey(result.text, snapshot.api_key) })
+        }).then(result => { conversation.messages[conversation.messages.length - 1].content = redact(result.text) })
         conversation.status = 'idle'
         conversation.messages[conversation.messages.length - 1].status = 'complete'
       } catch (error) {
         conversation.status = controller.signal.aborted ? 'interrupted' : 'error'
         conversation.messages[conversation.messages.length - 1].status = controller.signal.aborted ? 'interrupted' : 'error'
-        conversation.error = redactKey(error instanceof Error ? error.message : '模型请求失败', snapshot.api_key)
+        conversation.error = redact(error instanceof Error ? error.message : '模型请求失败')
       } finally { active.delete(id); persist(conversation) }
     })()
     return conversation
@@ -113,6 +116,6 @@ function cancelMessage(projectId: string, id: string): boolean {
   active.get(id)?.abort()
   return true
 }
-export function shutdownAgent(): void { for (const controller of active.values()) controller.abort() }
+export function shutdownAgent(): void { shutdownPlans(); for (const controller of active.values()) controller.abort() }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

@@ -1,3 +1,4 @@
+import type { AgentPlan, AgentPlanEvent, ReadPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
   AppPaths,
@@ -89,6 +90,13 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    proposeReadPlan: (projectId: string, input: ReadPlanInput) => Promise<Result<AgentPlan>>
+    getPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
+    listPlans: (projectId: string) => Promise<Result<AgentPlan[]>>
+    approvePlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
+    rejectPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
+    deletePlan: (projectId: string, id: string) => Promise<Result<boolean>>
+    onPlanChanged: (callback: (event: AgentPlanEvent) => void) => () => void
     getConnection(connectionId?: string): Promise<Result<AgentConnection | null>>
     listConnections(): Promise<Result<AgentConnection[]>>
     createConnection(input: AgentConnectionInput): Promise<Result<AgentConnection>>
