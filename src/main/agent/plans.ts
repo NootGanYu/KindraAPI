@@ -16,6 +16,7 @@ interface PlannedCall { id: string; name: string; arguments: string }
 interface PlanContext {
   flows: Map<string, Flow>
   flowRevisions: Map<string, string | null>
+  projectId: string
   mode: 'read' | 'edit' | 'save' | 'execute'
   executions: Map<string, ExecutionSnapshot>
   revisions: Map<string, string | null>
@@ -28,6 +29,7 @@ interface PlanContext {
   redact: ReturnType<typeof projectRedactor>
 }
 const contexts = new Map<string, PlanContext>()
+let stopping = false
 const listeners = new Set<(event: AgentPlanEvent) => void>()
 export function onPlanEvent(listener: (event: AgentPlanEvent) => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
 function planDir(projectId: string): string {
@@ -47,7 +49,12 @@ function getPlan(projectId: string, id: string): AgentPlan {
   const plan = readLocal<AgentPlan | null>(planFile(projectId, id), null)
   if (!plan || plan.project_id !== projectId) throw new Error('计划不存在')
   if (['pending', 'generating', 'running'].includes(plan.status) && !contexts.has(id)) {
-    plan.status = 'interrupted'; plan.error = '上次任务已中断，请重新生成计划；不会自动执行。'; savePlan(plan)
+    plan.status = 'interrupted'; plan.error = '上次任务已中断，请重新生成计划；不会自动执行。'
+    for (const step of plan.steps) {
+      if (step.status === 'running') { step.status = step.operation === 'execute_api' ? 'unknown' : 'paused'; step.error = '上次任务中断，执行结果可能未知，请勿自动重试。' }
+      else if (step.status === 'pending') { step.status = 'paused'; step.error = plan.error }
+    }
+    savePlan(plan)
   }
   return plan
 }
@@ -134,8 +141,9 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
     { role: 'system', content: (mode === 'execute' ? '本轮仅提出 execute_api 计划，针对选定对象一次性列出执行步骤。依赖明确时声明depends_on，其他指令无权扩大范围。' : mode === 'save' ? '本轮一次性提出明确的 propose_api_change 与独立 save_api 步骤。save_api 必须依赖全部同对象修改步骤；批准后自动采纳这些候选并保存。仅修改明确字段；缺少业务依据时要求澄清，不能猜测规则。' : mode === 'edit' ? '本轮提出完整的 propose_api_change / propose_flow_change 字段修改计划；Flow 使用 flow_id 与稳定 event_id。仅根据用户明确意图提出patch；未知业务规则要求澄清，不输出占位符、不保存定义。' : '你是项目接口助手。只针对用户选择的项目和接口在本次响应中一次性提出完整的 read_api 计划供用户批准，不要等待工具结果后再增加步骤。每步使用唯一 step_id，depends_on 是前置步骤编号；明确独立时填写空数组，依赖不明时省略。禁止扩大范围。用户批准前无法读取接口内容。') },
     { role: 'user', content: JSON.stringify({ goal: plan.goal, project_id: projectId, target_id: targetIds[0], target_ids: targetIds, flow_ids: flowIds }) }
   ]
-  const context: PlanContext = { mode, flows, flowRevisions, executions, revisions, candidates: new Map(), model, targets, calls: new Map(), messages, controller: new AbortController(), redact }
+  const context: PlanContext = { projectId, mode, flows, flowRevisions, executions, revisions, candidates: new Map(), model, targets, calls: new Map(), messages, controller: new AbortController(), redact }
   contexts.set(plan.plan_id, context); savePlan(plan)
+  if (stopping) context.controller.abort()
   try {
     const response = await completeModel(model, messages, { tools: mode === 'save' ? [editTool, saveTool, readTool] : mode === 'edit' ? [...(targetIds.length ? [editTool] : []), ...(flowIds.length ? [flowEditTool] : [])] : [mode === 'execute' ? executeTool : readTool], toolChoice: 'required', stream: true, signal: context.controller.signal })
     if (!response.toolCalls.length || response.toolCalls.length > 32) throw new Error('模型必须提出 1 至 32 个明确的步骤，需重新生成计划')
@@ -268,9 +276,26 @@ function deletePlan(projectId: string, id: string): boolean {
   for (const listener of listeners) listener({ project_id: projectId, plan_id: id, plan: null })
   return true
 }
-export function shutdownPlans(): void { for (const context of contexts.values()) context.controller.abort() }
+const operations = new Set<Promise<unknown>>()
+function track<T>(operation: Promise<T>): Promise<T> {
+  operations.add(operation)
+  void operation.then(() => operations.delete(operation), () => operations.delete(operation))
+  return operation
+}
+export async function shutdownPlans(): Promise<void> {
+  stopping = true
+  for (const context of contexts.values()) context.controller.abort()
+  const results = await Promise.allSettled([...operations])
+  for (const [id, context] of contexts) {
+    contexts.delete(id)
+    getPlan(context.projectId, id)
+  }
+  stopping = false
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure?.status === 'rejected') throw failure.reason
+}
 export function activePlanCount(): number { return contexts.size }
 const proposeEditPlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'edit')
 const proposeSavePlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'save')
 const proposeExecutePlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'execute')
-export const planCommands = { proposeExecutePlan, cancelPlan, proposeSavePlan, proposeEditPlan, proposeReadPlan, getPlan, listPlans, rejectPlan, approvePlan, deletePlan }
+export const planCommands = { proposeExecutePlan: (...args: Parameters<typeof proposeExecutePlan>) => track(proposeExecutePlan(...args)), cancelPlan, proposeSavePlan: (...args: Parameters<typeof proposeSavePlan>) => track(proposeSavePlan(...args)), proposeEditPlan: (...args: Parameters<typeof proposeEditPlan>) => track(proposeEditPlan(...args)), proposeReadPlan: (...args: Parameters<typeof proposeReadPlan>) => track(proposeReadPlan(...args)), getPlan, listPlans, rejectPlan, approvePlan: (...args: Parameters<typeof approvePlan>) => track(approvePlan(...args)), deletePlan }

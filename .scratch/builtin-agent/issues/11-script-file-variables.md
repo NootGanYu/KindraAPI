@@ -4,7 +4,7 @@
 
 **Blocked by:** [09 获批保存接口定义](09-save-api.md), [10 首次执行接口草稿与未知结果](10-execute-api.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 

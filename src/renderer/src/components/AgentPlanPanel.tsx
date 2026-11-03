@@ -56,7 +56,10 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
   }
   async function act(action: 'approvePlan' | 'rejectPlan' | 'deletePlan' | 'cancelPlan', id: string): Promise<void> {
     setError('')
-    try { unwrap(await window.api.agent[action](projectId, id) as Result<unknown>) }
+    try {
+      if (action === 'approvePlan') await flushAgentDrafts()
+      unwrap(await window.api.agent[action](projectId, id) as Result<unknown>)
+    }
     catch (e) { setError((e as Error).message) }
   }
   return <>
