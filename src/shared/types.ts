@@ -764,6 +764,8 @@ export interface DocSettings {
   env_id: string
   /** 分享页展示的自定义属性 ID；空数组不展示 */
   attribute_list: string[]
+  /** 允许访问者在分享页直接发起请求（服务端代理，仅限分享内接口） */
+  allow_debug: boolean
 }
 
 export interface DocTargetSnapshot {

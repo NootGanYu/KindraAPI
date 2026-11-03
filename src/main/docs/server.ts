@@ -14,9 +14,11 @@ import type {
   Param,
   Project,
   ResponseExample,
+  SendRecord,
   Target
 } from '@shared/types'
 import * as store from '../storage/store'
+import { sendRequest } from '../request/executor'
 import { descriptionToHtml, htmlToText } from '@shared/richText'
 import { buildFieldRows, buildFieldSchema, typeLabel, type JsonFieldRow } from '@shared/jsonFields'
 import { createZip } from './zip'
@@ -44,6 +46,21 @@ const sessions = new Map<
   { shareId: string; expires: number; updatedAt: string }
 >()
 const authAttempts = new Map<string, { count: number; reset: number }>()
+const executeAttempts = new Map<string, { count: number; reset: number }>()
+const EXECUTE_WINDOW_MS = 60_000
+const EXECUTE_LIMIT = 30
+
+function executeAllowed(ip: string): boolean {
+  const now = Date.now()
+  const entry = executeAttempts.get(ip)
+  if (!entry || entry.reset <= now) {
+    executeAttempts.set(ip, { count: 1, reset: now + EXECUTE_WINDOW_MS })
+    return true
+  }
+  if (entry.count >= EXECUTE_LIMIT) return false
+  entry.count += 1
+  return true
+}
 
 // ---------------------------------------------------------------------------
 // Basics
@@ -96,6 +113,7 @@ export function getDocShareUrl(shareId: string): string {
 export async function stopDocServer(): Promise<void> {
   sessions.clear()
   authAttempts.clear()
+  executeAttempts.clear()
   if (server) {
     const current = server
     server = null
@@ -394,6 +412,23 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
 .api-attrs{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0 0;font-size:12.5px;color:var(--text)}
 .api-attr b{color:var(--muted);font-weight:500;margin-right:6px}
+.try-block{border:1px solid var(--line);border-radius:8px;background:var(--soft);padding:14px 16px}
+.try-form{display:flex;flex-direction:column;gap:12px;margin-top:10px}
+.try-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.try-fields label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.try-fields label.wide{grid-column:1/-1}
+.try-fields input,.try-fields textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:4px;padding:6px 8px;font:12px/1.5 var(--mono,ui-monospace,Menlo,monospace);background:#fff;color:var(--text)}
+.try-form button{align-self:flex-start;border:0;border-radius:5px;background:#2f8f62;color:#fff;padding:8px 20px;font-size:13px;cursor:pointer}
+.try-note{color:var(--muted);font-size:12px;margin:10px 0 0}
+.try-result{max-width:960px;margin:0 auto;padding:24px 0}
+.try-result-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.try-result-head a{margin-left:auto;color:#2f6bb0}
+.try-result-status{font-family:var(--mono,ui-monospace,Menlo,monospace);font-size:15px;font-weight:600;padding:3px 10px;border-radius:4px;background:#f1e8d7;color:#8a6b3b}
+.try-result-status.ok{background:#e3f3ea;color:#2f8f62}
+.try-result-status.error{background:#fbe8e5;color:#c9463a}
+.try-headers{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0 14px}
+.try-headers td{border-bottom:1px solid var(--line);padding:4px 6px;word-break:break-all}
+.try-result-body{background:#faf9f6;border:1px solid var(--line);border-radius:4px;padding:12px;max-height:620px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace)}
 .api-desc{color:var(--text);margin:10px 0 0;line-height:1.75;word-break:break-word}
 .api-desc p{margin:6px 0}
 .api-desc p:first-child{margin-top:0}
@@ -755,12 +790,56 @@ function customAttributeRows(
   return rows
 }
 
+/** 在线分享的调试表单；只提交文档中已声明的参数，目标地址不可修改。 */
+function renderDebugForm(target: Target, shareId: string): string {
+  const request = target.request
+  if (!request) return ''
+  const fields: string[] = []
+  const add = (label: string, prefix: string, params?: Param[]): void => {
+    for (const param of activeParams(params ?? [])) {
+      if (!param.key) continue
+      fields.push(
+        `<label><span>${escapeHtml(label)} · ${escapeHtml(param.key)}</span>` +
+          `<input name="${prefix}:${escapeHtml(param.key)}" value="${escapeHtml(param.value ?? '')}" autocomplete="off"></label>`
+      )
+    }
+  }
+  add('Query', 'q', request.query?.parameter)
+  add('Path', 'p', request.restful?.parameter)
+  add('Header', 'h', request.header?.parameter)
+  add('Cookie', 'c', request.cookie?.parameter)
+  const body = request.body
+  if (body && (body.mode === 'json' || body.mode === 'raw')) {
+    fields.push(
+      `<label class="wide"><span>Body</span><textarea name="body" rows="6" spellcheck="false">${escapeHtml(body.raw ?? '')}</textarea></label>`
+    )
+  } else if (body && (body.mode === 'urlencoded' || body.mode === 'formdata')) {
+    for (const param of body[body.mode] ?? []) {
+      if (!param.key) continue
+      fields.push(
+        `<label><span>Body · ${escapeHtml(param.key)}</span><input name="b:${escapeHtml(param.key)}" value="${escapeHtml(param.value ?? '')}" autocomplete="off"></label>`
+      )
+    }
+  }
+  if (!fields.length) return ''
+  return `<div class="api-block try-block">
+<h3>在线调试</h3>
+<form method="post" action="/share/${escapeHtml(shareId)}/execute" class="try-form">
+<input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">
+<div class="try-fields">${fields.join('')}</div>
+<button type="submit">发送请求</button>
+</form>
+<p class="try-note">请求由分享者本机代理发出，仅限本分享内的接口。</p>
+</div>`
+}
+
 function renderApi(
   target: Target,
   settings: DocSettings,
   apiHref?: string,
   warnings?: ShareWarnings,
-  variables?: Record<string, string>
+  variables?: Record<string, string>,
+  shareId?: string
 ): string {
   const modelWarnings = modelDocumentationWarnings(target)
   target = resolveDocumentedTarget(target)
@@ -777,6 +856,8 @@ function renderApi(
         )
         .join('')}</div>`
     : ''
+  const debugBlock =
+    shareId && settings.allow_debug ? renderDebugForm(target, shareId) : ''
   const method = methodClass(target.method)
   const label = methodText(target.method)
   const request = target.request
@@ -843,7 +924,7 @@ ${target.description ? `<div class="api-desc">${descriptionToHtml(target.descrip
     target.url || '（未设置 URL）'
   )}</div>
 ${modelWarnings.length ? `<div class="api-block"><h3>模型定义待修复</h3><p>以下引用暂时无法解析，相关字段可能不完整：</p>${modelWarnings.map(warning => `<p>${escapeHtml(warning.message)}</p>`).join('')}</div>` : ''}
-${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}
+${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}${debugBlock}
 </section>`
 }
 
@@ -1188,7 +1269,7 @@ function renderListing(ctx: RenderCtx, parentId: string): string {
   return `${folders.map((folder) => renderFolderCard(ctx, folder)).join('')}${
     apis.length
       ? `<div class="section-title">接口（${apis.length}）</div>${apis
-          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api), ctx.view.warnings, ctx.view.environment?.vars))
+          .map((api) => renderApi(api, ctx.share.settings, hrefFor(ctx, api), ctx.view.warnings, ctx.view.environment?.vars, ctx.offline ? undefined : ctx.share.share_id))
           .join('')}`
       : ''
   }`
@@ -1262,7 +1343,7 @@ function renderApiPage(ctx: RenderCtx, apiId: string): string | null {
   const api = ctx.view.byId.get(apiId)
   if (!api || api.target_type !== 'api') return null
   const main = `${renderHero(ctx, { current: api, downloadApiId: api.target_id })}
-${renderApi(api, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars)}`
+${renderApi(api, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars, ctx.offline ? undefined : ctx.share.share_id)}`
   return renderShareShell(
     ctx,
     `${api.name} · ${ctx.share.name}`,
@@ -1277,7 +1358,7 @@ function renderCompleteListing(ctx: RenderCtx, parentId: string): string {
   return items
     .map((target) => {
       if (target.target_type === 'api') {
-        return renderApi(target, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars)
+        return renderApi(target, ctx.share.settings, undefined, ctx.view.warnings, ctx.view.environment?.vars, ctx.offline ? undefined : ctx.share.share_id)
       }
       return `<section class="folder-card" id="folder-${escapeHtml(target.target_id)}">
 <h2>${escapeHtml(target.name)}</h2>
@@ -2369,6 +2450,166 @@ function handleDownload(
   sendContentResult(res, produceShareContent(share, intent))
 }
 
+const FORBIDDEN_HEADERS = /^(host|content-length|connection|transfer-encoding)$/i
+
+/** 只覆盖接口已声明的参数；目标地址与未声明字段不可修改。 */
+function applyShareForm(target: Target, form: URLSearchParams): Target {
+  const next = structuredClone(target)
+  const request = next.request
+  if (!request) return next
+  const apply = (prefix: string, params?: Param[]): void => {
+    for (const param of params ?? []) {
+      if (!param.key) continue
+      if (prefix === 'h' && FORBIDDEN_HEADERS.test(param.key)) continue
+      const value = form.get(`${prefix}:${param.key}`)
+      if (value === null) continue
+      if (prefix === 'h' && /[\r\n]/.test(value)) throw new Error('Header 值不能包含换行')
+      param.value = value.slice(0, 10_000)
+    }
+  }
+  apply('q', request.query?.parameter)
+  apply('p', request.restful?.parameter)
+  apply('h', request.header?.parameter)
+  apply('c', request.cookie?.parameter)
+  const body = request.body
+  if (body) {
+    if (body.mode === 'json' || body.mode === 'raw') {
+      const raw = form.get('body')
+      if (raw !== null) {
+        if (body.mode === 'json' && raw.trim()) {
+          try {
+            JSON.parse(raw)
+          } catch {
+            throw new Error('请求体不是有效 JSON')
+          }
+        }
+        body.raw = raw.slice(0, 1024 * 1024)
+      }
+    } else if (body.mode === 'urlencoded' || body.mode === 'formdata') {
+      for (const param of body[body.mode] ?? []) {
+        if (!param.key) continue
+        const value = form.get(`b:${param.key}`)
+        if (value !== null) param.value = value.slice(0, 10_000)
+      }
+    }
+  }
+  return next
+}
+
+function renderExecuteResultPage(share: DocShare, target: Target, record: SendRecord): string {
+  const response = record.response
+  const statusText = response ? `${response.code} ${response.status}` : '请求失败'
+  const meta = response
+    ? `${response.response_time} ms · ${response.mime.mime} · ${response.size} B`
+    : record.error?.message ?? ''
+  const body = record.error ? record.error.message : response?.body ?? ''
+  const clipped = body.length > 200_000 ? `${body.slice(0, 200_000)}\n…（响应过大，已截断）` : body
+  const headerRows = response
+    ? Object.entries(response.headers)
+        .map(
+          ([key, value]) =>
+            `<tr><td class="mono">${escapeHtml(key)}</td><td class="mono">${escapeHtml(value)}</td></tr>`
+        )
+        .join('')
+    : ''
+  const apiHref = `/share/${encodeURIComponent(share.share_id)}/a/${encodeURIComponent(target.target_id)}`
+  return pageShell(
+    `调试结果 · ${target.name}`,
+    `<div class="try-result">
+  <div class="try-result-head">
+    <span class="try-result-status${response && response.code < 400 ? ' ok' : ' error'}">${escapeHtml(statusText)}</span>
+    <span class="muted">${escapeHtml(meta)}</span>
+    <a href="${apiHref}">返回接口</a>
+  </div>
+  ${headerRows ? `<details><summary>响应头</summary><table class="try-headers"><tbody>${headerRows}</tbody></table></details>` : ''}
+  <h4>响应体</h4>
+  <pre class="try-result-body">${escapeHtml(clipped || '（空响应体）')}</pre>
+</div>`
+  )
+}
+
+async function handleExecute(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  share: DocShare
+): Promise<void> {
+  if (!share.settings.allow_debug) {
+    sendHtml(res, 404, renderMessagePage('调试未开启', '分享者未开放在线调试。', 404))
+    return
+  }
+  if (shareExpired(share)) {
+    sendHtml(res, 410, renderMessagePage('文档已过期', '该分享已超过有效期。', 410))
+    return
+  }
+  if (!isValidSession(req, share)) {
+    sendHtml(res, 401, renderPasswordPage(share))
+    return
+  }
+  const ip = clientIp(req)
+  if (!executeAllowed(ip)) {
+    sendHtml(res, 429, renderMessagePage('请求过于频繁', '请稍后再试。', 429))
+    return
+  }
+  let form: URLSearchParams
+  try {
+    form = new URLSearchParams(await readBody(req))
+  } catch {
+    sendHtml(res, 413, renderMessagePage('请求过大', '请减少参数或请求体后重试。', 413))
+    return
+  }
+  const targetId = form.get('target_id') ?? ''
+  const resolved = store.resolveDocShareTargets(share.project_id, share)
+  const scoped = resolved.project
+    ? resolved.targets.find(
+        (item) => item.target_id === targetId && item.target_type === 'api'
+      )
+    : undefined
+  if (!scoped) {
+    sendHtml(res, 404, renderMessagePage('接口不存在', '该接口不在分享范围内。', 404))
+    return
+  }
+  const stored = store.getTarget(share.project_id, targetId)
+  if (!stored || stored.target_type !== 'api') {
+    sendHtml(res, 404, renderMessagePage('接口不存在', '该接口可能已被删除。', 404))
+    return
+  }
+  let prepared: Target
+  try {
+    prepared = applyShareForm(resolveDocumentedTarget(stored), form)
+  } catch (error) {
+    sendHtml(res, 400, renderMessagePage('参数无效', (error as Error).message, 400))
+    return
+  }
+  // 分享代理不执行接口脚本，避免访问者触发分享者机器上的脚本副作用。
+  if (prepared.request) {
+    prepared = {
+      ...prepared,
+      request: {
+        ...prepared.request,
+        pre_script: '',
+        test: '',
+        pre_script_enabled: false,
+        test_enabled: false
+      }
+    }
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20_000)
+  try {
+    const record = await sendRequest(
+      share.project_id,
+      prepared,
+      share.settings.env_id || undefined,
+      { signal: controller.signal }
+    )
+    sendHtml(res, 200, renderExecuteResultPage(share, prepared, record))
+  } catch (error) {
+    sendHtml(res, 500, renderMessagePage('请求失败', (error as Error).message, 500))
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function handleShare(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -2376,6 +2617,15 @@ async function handleShare(
   rest: string,
   url: URL
 ): Promise<void> {
+  if (rest === '/execute') {
+    if (req.method !== 'POST') {
+      sendText(res, 405, 'Method Not Allowed')
+      return
+    }
+    await handleExecute(req, res, share)
+    return
+  }
+
   if (rest === '/auth') {
     if (req.method !== 'POST') {
       sendText(res, 405, 'Method Not Allowed')

@@ -1796,7 +1796,8 @@ function normalizeDocSettings(input?: Partial<DocSettings>): DocSettings {
     env_id: typeof input?.env_id === 'string' ? input.env_id.slice(0, 80) : '',
     attribute_list: Array.isArray(input?.attribute_list)
       ? [...new Set(input.attribute_list.filter((id): id is string => typeof id === 'string' && id.length > 0))].slice(0, 50)
-      : []
+      : [],
+    allow_debug: input?.allow_debug === true
   }
 }
 

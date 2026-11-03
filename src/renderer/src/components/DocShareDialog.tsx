@@ -83,6 +83,7 @@ interface Draft {
   logo: string
   envId: string
   attributeList: string[]
+  allowDebug: boolean
 }
 
 function buildTree(targets: TargetSummary[]): DocTreeNode[] {
@@ -168,7 +169,8 @@ export default function DocShareDialog({
     openapiVersion: '3.0',
     logo: '',
     envId: '',
-    attributeList: []
+    attributeList: [],
+    allowDebug: false
   }))
   const [saving, setSaving] = useState(false)
   const [environments, setEnvironments] = useState<Environment[]>([])
@@ -219,7 +221,8 @@ export default function DocShareDialog({
       openapiVersion: settings.openapi_version ?? '3.0',
       logo: settings.logo ?? '',
       envId: settings.env_id ?? '',
-      attributeList: settings.attribute_list ?? []
+      attributeList: settings.attribute_list ?? [],
+      allowDebug: settings.allow_debug === true
     })
   }, [open, initialKey, lockScope, lockTarget, lockTargetName, projectName])
 
@@ -298,7 +301,8 @@ export default function DocShareDialog({
         openapi_version: draft.openapiVersion,
         logo: draft.logo,
         env_id: draft.envId,
-        attribute_list: draft.attributeList
+        attribute_list: draft.attributeList,
+        allow_debug: draft.allowDebug
       }
     }
 
@@ -599,6 +603,19 @@ export default function DocShareDialog({
               onChange={(checked) => patchDraft({ openapi: checked })}
             />
           </div>
+        </div>
+
+        <div className="docs-field docs-switch-row">
+          <div>
+            <label style={{ margin: 0 }}>允许在线调试</label>
+            <div className="docs-hint">
+              访问者可在分享页直接发送请求；只允许调用本次分享范围内的接口。
+            </div>
+          </div>
+          <Switch
+            checked={draft.allowDebug}
+            onChange={(checked) => patchDraft({ allowDebug: checked })}
+          />
         </div>
       </div>
     </Modal>

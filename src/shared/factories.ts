@@ -361,6 +361,7 @@ export function createDocSettings(partial: Partial<DocSettings> = {}): DocSettin
     logo: '',
     env_id: '',
     attribute_list: [],
+    allow_debug: false,
     ...partial
   }
 }
