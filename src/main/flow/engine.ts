@@ -9,6 +9,7 @@ import type {
   FlowAssertion,
   FlowEvent,
   FlowEventResult,
+  FlowExecutionCursor,
   FlowExecutionSnapshot,
   FlowRequestInput,
   FlowResponseSnapshot,
@@ -142,6 +143,8 @@ class FlowRuntime {
   lastResponse: FlowResponseSnapshot | null = null
   progressRoot: FlowEventResult[] = []
   resultStack: FlowEventResult[] = []
+  frames: FlowExecutionCursor['stack'] = []
+  cursor: FlowExecutionCursor = { stack: [] }
   onProgress?: () => void
   requestInFlight = false
   remoteUnknown = false
@@ -728,11 +731,16 @@ async function runEvent(
     if (event.type === 'loop') {
       const count = Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
       const children: FlowEventResult[] = runtime.resultStack.at(-1)!.children = []
-      for (let index = 0; index < count; index += 1) {
-        runtime.setLocal('loop_index', String(index))
-        await runEvents(projectId, event.children ?? [], runtime, flow, children, index)
+      const previousIndex = runtime.localValues.loop_index
+      try {
+        for (let index = 0; index < count; index += 1) {
+          runtime.setLocal('loop_index', String(index))
+          await runEvents(projectId, event.children ?? [], runtime, flow, children, index)
+        }
+      } finally {
+        if (previousIndex === undefined) runtime.unsetLocal('loop_index')
+        else runtime.setLocal('loop_index', previousIndex)
       }
-      runtime.unsetLocal('loop_index')
       return result(event, completedStatus(children), startedAt, {
         detail: `循环 ${count} 轮`,
         children
@@ -756,31 +764,57 @@ async function runEvents(
   results: FlowEventResult[] = runtime.progressRoot,
   iteration?: number
 ): Promise<FlowEventResult[]> {
-  for (const [index, event] of events.entries()) {
-    if (runtime.fileReviewRequired) {
-      results.push(...skipped([event], '外部文件变更，需审查后重新运行'))
-      runtime.onProgress?.()
-    } else {
-      const reason = runtime.dependencies.blockedReason(event, results)
-      if (reason) {
-        const blocked = result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) })
-        results.push(blocked)
-        runtime.dependencies.record(blocked)
-        runtime.onProgress?.()
-      } else {
-        const current = result(event, 'running', Date.now(), { iteration })
+  const frame: FlowExecutionCursor['stack'][number] = {
+    parent_event_id: runtime.resultStack.at(-1)?.event_id, next_event_index: 0, iteration
+  }
+  runtime.frames.push(frame)
+  const iterationPath = runtime.frames
+    .filter(item => item.iteration !== undefined && item.parent_event_id)
+    .map(item => ({ event_id: item.parent_event_id!, iteration: item.iteration! }))
+  const identify = (item: FlowEventResult): FlowEventResult => {
+    item.iteration_path ??= clone(iterationPath)
+    item.instance_id ??= JSON.stringify([item.event_id, item.iteration_path])
+    for (const child of item.children ?? []) identify(child)
+    return item
+  }
+  const updateCursor = (afterInstanceId = runtime.cursor.after_instance_id): void => {
+    runtime.cursor = { stack: clone(runtime.frames), after_instance_id: afterInstanceId }
+  }
+  try {
+    for (const [index, event] of events.entries()) {
+      frame.next_event_index = index
+      updateCursor()
+      let current: FlowEventResult
+      if (runtime.fileReviewRequired) {
+        current = identify(skipped([event], '外部文件变更，需审查后重新运行')[0])
         results.push(current)
-        runtime.resultStack.push(current)
-        runtime.onProgress?.()
-        Object.assign(current, await runEvent(projectId, event, runtime, flow))
-        runtime.dependencies.record(current)
-        runtime.resultStack.pop()
-        runtime.onProgress?.()
+      } else {
+        const reason = runtime.dependencies.blockedReason(event, results)
+        if (reason) {
+          current = identify(result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) }))
+          results.push(current)
+          runtime.dependencies.record(current)
+        } else {
+          current = identify(result(event, 'running', Date.now(), { iteration }))
+          results.push(current)
+          runtime.resultStack.push(current)
+          runtime.onProgress?.()
+          Object.assign(current, await runEvent(projectId, event, runtime, flow))
+          identify(current)
+          runtime.dependencies.record(current)
+          runtime.resultStack.pop()
+        }
       }
+      frame.next_event_index = index + 1
+      updateCursor(current.instance_id)
+      runtime.onProgress?.()
+      const next = events[index + 1]
+      const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
+      if (!next || logicalId(event) !== logicalId(next)) await runtime.onStepBoundary?.()
     }
-    const next = events[index + 1]
-    const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
-    if (!next || logicalId(event) !== logicalId(next)) await runtime.onStepBoundary?.()
+  } finally {
+    runtime.frames.pop()
+    updateCursor()
   }
   return results
 }
@@ -813,19 +847,25 @@ export async function runFlow(
     }
   }
   capture(flow.events)
-  const planned = new Map<string, { event: FlowEvent; count: number }>()
-  const plan = (events: FlowEvent[], count = 1): void => { for(const event of events) {
-    if (!event.enabled) continue
-    if(event.type === 'api') planned.set(event.event_id, { event, count })
-    plan(event.children ?? [], count * (event.type === 'loop' ? Math.min(Math.max(event.loop_count ?? 1, 1), MAX_LOOP) : 1))
-  } }; plan(flow.events)
-  const remaining = (): Array<{event: FlowEvent; count: number}> => {
-    const completed = new Map<string,number>()
-    const count = (items: FlowEventResult[]): void => { for(const item of items) {
-      if(item.status !== 'running') completed.set(item.event_id,(completed.get(item.event_id) ?? 0)+1)
-      count(item.children ?? [])
-    } }; count(runtime.progressRoot)
-    return [...planned.values()].map(item=>({...item,count:item.count-(completed.get(item.event.event_id) ?? 0)})).filter(item=>item.count>0)
+  const byId = new Map<string, FlowEvent>()
+  const indexEvents = (events: FlowEvent[]): void => { for (const event of events) { byId.set(event.event_id, event); indexEvents(event.children ?? []) } }
+  indexEvents(flow.events)
+  const remaining = (): Array<{ event: FlowEvent; count: number }> => {
+    const pending = new Map<string, { event: FlowEvent; count: number }>()
+    const add = (events: FlowEvent[], count = 1): void => { for (const event of events) {
+      if (!event.enabled || count < 1) continue
+      if (event.type === 'api') pending.set(event.event_id, { event, count: count + (pending.get(event.event_id)?.count ?? 0) })
+      add(event.children ?? [], count * (event.type === 'loop' ? Math.min(Math.max(event.loop_count ?? 1, 1), MAX_LOOP) : 1))
+    } }
+    if (!runtime.frames.length) add(flow.events)
+    runtime.frames.forEach((frame, index) => {
+      const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
+      const events = parent?.children ?? flow.events
+      // Ancestors point at the active child; the deepest frame has already advanced past the completed step.
+      add(events.slice(frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)))
+      if (parent?.type === 'loop') add(events, Math.min(Math.max(parent.loop_count ?? 1, 1), MAX_LOOP) - (frame.iteration ?? 0) - 1)
+    })
+    return [...pending.values()]
   }
   options.onControl?.(new FlowRefreshController(projectId,env,runtime.definitions,remaining,applyRequestInput,
     ()=>({...runtime.globalValues,...runtime.envValues,...runtime.localValues}),flow.events))
@@ -848,12 +888,13 @@ export async function runFlow(
     run_id: runId, project_id: projectId, flow_id: flow.flow_id, flow_name: flow.name,
     env_id: env?.env_id ?? '', started_at: startedAt, finished_at: 0, status: 'running',
     elapsed_ms: Date.now() - startedAt, variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
-    events: runtime.progressRoot, console: runtime.consoleEntries, request_in_flight: runtime.requestInFlight,
+    cursor: runtime.cursor, events: runtime.progressRoot, console: runtime.consoleEntries, request_in_flight: runtime.requestInFlight,
     remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined
   })
   const events = await runEvents(projectId, flow.events, runtime, flow)
   const finishedAt = Date.now()
   const run: FlowRun = {
+    cursor: runtime.cursor,
     snapshot,
     run_id: runId,
     project_id: projectId,
