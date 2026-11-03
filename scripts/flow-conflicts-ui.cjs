@@ -3,7 +3,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const { _electron } = require('playwright-core')
 async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-conflict-ui-'))
-  let release, arrive, electron
+  let release, arrive, electron, page, fixture
   const arrival = new Promise(resolve => arrive = resolve), hits = []
   const server = http.createServer((req, res) => {
     let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{
@@ -14,8 +14,8 @@ async function main() {
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
   try {
     electron=await _electron.launch({args:[path.resolve('out/main/index.js')],env:{...process.env,KINDRAAPI_USER_DATA:dir}})
-    const page=await electron.firstWindow();await page.waitForFunction(()=>Boolean(window.api));page.setDefaultTimeout(10000)
-    const fixture=await page.evaluate(async port=>{
+    page=await electron.firstWindow();await page.waitForFunction(()=>Boolean(window.api));page.setDefaultTimeout(10000)
+    fixture=await page.evaluate(async port=>{
       const pid=(await window.api.projects.list()).data[0].project_id
       const target=(await window.api.targets.create(pid,'0','api')).data
       target.url=`http://127.0.0.1:${port}/api`;target.method='POST'
@@ -37,7 +37,7 @@ async function main() {
     await page.getByRole('button',{name:'预览已保存变更',exact:true}).click()
     const header=page.getByLabel('步骤覆盖冲突 choice headers.X-Choice'), body=page.getByLabel('步骤覆盖冲突 choice body')
     await header.waitFor();assert((await header.innerText()).includes('new-header'));assert((await body.innerText()).includes('new-body'))
-    const adopt=page.getByRole('button',{name:'采用剩余引用更新',exact:true});assert(await adopt.isDisabled())
+    const adopt=page.getByRole('button',{name:/采用剩余引用更新$/});assert(await adopt.isDisabled())
     await header.getByRole('button',{name:'采用新 API 值',exact:true}).click()
     await header.getByText('已选择：新 API 值',{exact:true}).waitFor();assert(await adopt.isDisabled())
     await body.getByRole('button',{name:'保留步骤覆盖',exact:true}).click();await body.getByText('已选择：步骤覆盖',{exact:true}).waitFor()
@@ -50,6 +50,9 @@ async function main() {
     const saved=await page.evaluate(async f=>window.api.flows.get(f.pid,f.flow.flow_id),fixture)
     assert.deepEqual(saved.data.events[1].input,{headers:{'X-Choice':'step-header'},body:'step-body'})
     console.log('PASS actual Electron conflict values, choices, effective preview, separate apply/resume and saved Flow unchanged')
+  } catch(error) {
+    if (page && fixture) console.error('UI failure state', await page.evaluate(async f=>({run:await window.api.flows.getRun(f.pid,f.run.run_id),text:document.body.innerText}),fixture))
+    throw error
   } finally {
     release?.();if(electron){await electron.evaluate(({app})=>app.exit(0)).catch(()=>{});await electron.close().catch(()=>{})}
     server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true})
