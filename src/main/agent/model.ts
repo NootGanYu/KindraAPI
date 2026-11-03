@@ -1,3 +1,4 @@
+import { responsesCompletion } from './responses'
 import type { AgentConnection } from '@shared/agent'
 
 export type ModelConnection = AgentConnection & { api_key: string }
@@ -71,4 +72,9 @@ export async function chatCompletion(
     if (!completed) throw new Error('模型响应流中断，可手动发起新消息')
     return { text, toolCalls: [] }
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+}
+
+/** Explicit protocol selection; never fall back to another endpoint. */
+export function completeModel(config: ModelConnection, messages: ModelMessage[], options: Parameters<typeof chatCompletion>[2] = {}): Promise<ModelReply> {
+  return config.protocol === 'responses' ? responsesCompletion(config, messages, options) : chatCompletion(config, messages, options)
 }
