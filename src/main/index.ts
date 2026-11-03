@@ -65,8 +65,7 @@ function sendRequestClose(): void {
 // 退出前先把窗口显示出来，渲染层的未保存确认弹窗才可见。
 function requestQuit(): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    allowClose = true
-    app.quit()
+    void agentCommands.prepareQuit().then(() => { allowClose = true; app.quit() })
     return
   }
   showMainWindow()
@@ -157,8 +156,8 @@ function createWindow(): void {
   })
 
   ipcMain.removeHandler('app:confirm-close')
-  ipcMain.handle('app:confirm-close', () => {
-    agentCommands.prepareQuit()
+  ipcMain.handle('app:confirm-close', async () => {
+    await agentCommands.prepareQuit()
     allowClose = true
     app.quit()
     return { ok: true, data: true }

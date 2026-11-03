@@ -25,6 +25,7 @@ async function main(): Promise<void> {
     const body = JSON.parse(raw); received.push(body)
     assert.equal(req.headers.authorization, `Bearer ${key}`)
     assert.equal(req.url, '/v1/chat/completions')
+    if (body.messages?.some((message: any) => message.content === '等待退出')) { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': waiting\n\n'); return }
     if (body.model === 'broken') { res.writeHead(401); res.end(key); return }
     if (body.tools) { res.writeHead(400); res.end('tools unsupported'); return }
     if (!body.stream) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { content: '你好' } }] })); return }
@@ -56,8 +57,12 @@ async function main(): Promise<void> {
     assert(events.every(event => !event.includes(key.slice(0, 12))), 'stream events must not expose a partial credential')
     off()
     assert(received.find(body => body.stream).messages.some((message: any) => message.content === '你好'))
+    const pending = agentCommands.createConversation(project.project_id)
+    await agentCommands.sendMessage(project.project_id, pending.conversation_id, '等待退出')
+    await agentCommands.prepareQuit()
+    assert.equal(agentCommands.getConversation(project.project_id, pending.conversation_id).status, 'interrupted')
     agentCommands.deleteConversation(project.project_id, conversation.conversation_id)
-    assert.equal(agentCommands.listConversations(project.project_id).length, 0)
+    assert.equal(agentCommands.listConversations(project.project_id).length, 1)
     await agentCommands.saveConnection({ name: '模型', base_url, model: 'broken', protocol: 'chat-completions' })
     await assert.rejects(() => agentCommands.testConnection(), (error: Error) => /401/.test(error.message) && !error.message.includes(key))
     console.log('PASS text-only detection, streaming chat, project isolation, deletion and sanitized errors')
