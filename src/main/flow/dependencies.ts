@@ -10,9 +10,10 @@ export class FlowDependencies {
   constructor(events: FlowEvent[]) {
     const visit = (list: FlowEvent[]): void => {
       for (const event of list) {
-        if (event.logical_step_id) {
-          this.membership.set(event.event_id, event.logical_step_id)
-          this.groups.set(event.logical_step_id, [...(this.groups.get(event.logical_step_id) ?? []), event.event_id])
+        const group = event.logical_step_id || event.step_id
+        if (group) {
+          this.membership.set(event.event_id, group)
+          this.groups.set(group, [...(this.groups.get(group) ?? []), event.event_id])
         }
         visit(event.children ?? [])
       }
@@ -25,13 +26,15 @@ export class FlowDependencies {
     const group = this.membership.get(event.event_id)
     if (group && this.failedGroups.has(group)) return '同一逻辑步骤已有失败或依赖阻塞，不能继续执行'
     if (event.depends_on === undefined) {
+      // Later members inherit the successful entry into their logical step.
+      if (group && previous.some(item => this.membership.get(item.event_id) === group)) return
       if (previous.some(item => item.status === 'failed' || item.status === 'blocked')) return '前序步骤失败或被阻塞；未声明独立依赖，按保守顺序阻塞'
       return
     }
     for (const dependency of event.depends_on) {
       const dependencyGroup = this.membership.get(dependency)
       const members = dependencyGroup && dependencyGroup !== group ? this.groups.get(dependencyGroup)! : [dependency]
-      if (members.some(id => this.outcomes.get(id) !== 'passed')) return `依赖步骤尚未成功完成：${dependency}`
+      if (this.outcomes.get(dependency) !== 'passed' || members.some(id => !['passed', 'skipped'].includes(this.outcomes.get(id) ?? ''))) return `依赖步骤尚未成功完成：${dependency}`
     }
   }
 

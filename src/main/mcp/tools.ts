@@ -1007,7 +1007,7 @@ const TOOLS: ToolDefinition[] = [
         name: { type: 'string' },
         description: { type: 'string' },
         environment_id: S.environment,
-        events: { type: 'array', items: { type: 'object', description: '完整 FlowEvent，支持 api/request/script/assert/if/wait/begin/loop 和 children' } },
+        events: { type: 'array', items: { type: 'object', description: '完整 FlowEvent，支持 api/request/script/assert/if/wait/begin/loop 和 children；depends_on 为 event_id 数组，省略按保守顺序，空数组明确独立' } },
         steps: {
           type: 'array',
           items: {

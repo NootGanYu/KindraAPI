@@ -577,6 +577,7 @@ export interface FlowRunSummary {
   passed: number
   failed: number
   skipped: number
+  blocked?: number
 }
 
 // ---------------------------------------------------------------------------

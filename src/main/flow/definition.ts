@@ -49,12 +49,14 @@ function validateFlowDependencies(events: FlowEvent[]): void {
       if (event.depends_on !== undefined && (!Array.isArray(event.depends_on) || event.depends_on.some(id => typeof id !== 'string' || !id))) {
         throw new Error('depends_on 必须是非空 event_id 的数组；空数组表示明确独立')
       }
-      const deps = new Set(event.depends_on ?? previous)
-      if (event.logical_step_id) {
-        const members = groups.get(event.logical_step_id) ?? []
+      const group = event.logical_step_id || event.step_id
+      const earlierMembers = group ? groups.get(group) ?? [] : []
+      const deps = new Set(event.depends_on ?? (earlierMembers.length ? earlierMembers : previous))
+      if (group) {
+        const members = [...earlierMembers]
         members.forEach(id => deps.add(id))
         members.push(event.event_id)
-        groups.set(event.logical_step_id, members)
+        groups.set(group, members)
       }
       for (const child of event.children ?? []) deps.add(child.event_id)
       edges.set(event.event_id, deps)
@@ -67,8 +69,10 @@ function validateFlowDependencies(events: FlowEvent[]): void {
     for (const dependency of [...dependencies]) {
       const target = nodes.get(dependency)
       if (!target) throw new Error(`依赖事件不存在：${dependency}`)
-      if (target.logical_step_id && target.logical_step_id !== nodes.get(id)?.logical_step_id) {
-        for (const member of groups.get(target.logical_step_id) ?? []) dependencies.add(member)
+      const targetGroup = target.logical_step_id || target.step_id
+      const own = nodes.get(id)!
+      if (targetGroup && targetGroup !== (own.logical_step_id || own.step_id)) {
+        for (const member of groups.get(targetGroup) ?? []) dependencies.add(member)
       }
     }
   }

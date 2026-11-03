@@ -83,12 +83,13 @@ function makeEvent(type: FlowEventType, targets: TargetSummary[]): FlowEvent {
   return event
 }
 
-function countRun(events: FlowEventResult[]): { passed: number; failed: number; skipped: number } {
-  const acc = { passed: 0, failed: 0, skipped: 0 }
+function countRun(events: FlowEventResult[]): { passed: number; failed: number; skipped: number; blocked: number } {
+  const acc = { passed: 0, failed: 0, skipped: 0, blocked: 0 }
   const walk = (list: FlowEventResult[]): void => {
     for (const item of list) {
       if (item.status === 'passed') acc.passed += 1
       else if (item.status === 'failed') acc.failed += 1
+      else if (item.status === 'blocked') acc.blocked += 1
       else acc.skipped += 1
       if (item.children?.length) walk(item.children)
     }
@@ -411,6 +412,7 @@ export default function AutomationPage(): JSX.Element {
                     event={event}
                     depth={0}
                     targets={apiTargets}
+                    allEvents={flow.events}
                     onChange={(patch) =>
                       patchFlow({ events: updateEventInTree(flow.events, event.event_id, patch) })
                     }
@@ -438,7 +440,7 @@ export default function AutomationPage(): JSX.Element {
           </Tooltip> : null}
           {run ? (
             <Tag color={run.status === 'running' ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
-              {run.status === 'running' ? '运行中' : run.status === 'passed' ? '通过' : '失败'}
+              {run.status === 'running' ? '运行中' : run.status === 'passed' ? '通过' : run.status === 'blocked' ? '依赖阻塞' : '失败'}
             </Tag>
           ) : null}
         </div>
@@ -465,6 +467,10 @@ export default function AutomationPage(): JSX.Element {
                 <div>
                   <b>{counts?.skipped ?? 0}</b>
                   <span>跳过</span>
+                </div>
+                <div>
+                  <b>{counts?.blocked ?? 0}</b>
+                  <span>依赖阻塞</span>
                 </div>
               </div>
 
@@ -521,7 +527,7 @@ export default function AutomationPage(): JSX.Element {
                   onClick={() => void openRun(item.run_id)}
                 >
                   <span className={item.status === 'running' ? 'run-status' : item.status === 'passed' ? 'run-status passed' : 'run-status failed'}>
-                    {item.status === 'running' ? '运行中' : item.status === 'passed' ? '通过' : '失败'}
+                    {item.status === 'running' ? '运行中' : item.status === 'passed' ? '通过' : item.status === 'blocked' ? '依赖阻塞' : '失败'}
                   </span>
                   <span className="run-history-time">
                     {new Date(item.started_at).toLocaleString()}
@@ -543,6 +549,7 @@ function EventEditor({
   event,
   depth,
   targets,
+  allEvents,
   onChange,
   onDelete,
   onAddChild
@@ -550,10 +557,15 @@ function EventEditor({
   event: FlowEvent
   depth: number
   targets: TargetSummary[]
+  allEvents: FlowEvent[]
   onChange: (patch: Partial<FlowEvent>) => void
   onDelete: () => void
   onAddChild: (parentId: string, type: FlowEventType) => void
 }): JSX.Element {
+  const dependencyOptions = (list: FlowEvent[]): Array<{ value: string; label: string }> => list.flatMap(item => [
+    ...(item.event_id === event.event_id ? [] : [{ value: item.event_id, label: `${item.name} (${item.event_id})` }]),
+    ...dependencyOptions(item.children ?? [])
+  ])
   const canNest = event.type === 'if' || event.type === 'begin' || event.type === 'loop'
   return (
     <div className="event-card" style={{ marginLeft: depth * 14 }}>
@@ -584,6 +596,20 @@ function EventEditor({
       </div>
 
       <div className="event-body">
+        <Select
+          size="small"
+          aria-label="依赖策略"
+          value={event.depends_on === undefined ? 'sequence' : 'explicit'}
+          onChange={(value) => onChange({ depends_on: value === 'sequence' ? undefined : [] })}
+          options={[{ value: 'sequence', label: '保守顺序：前序失败则阻塞' }, { value: 'explicit', label: '显式依赖：只依赖所选步骤' }]}
+          style={{ width: '100%' }}
+        />
+        {event.depends_on !== undefined ? <>
+          <Select mode="multiple" size="small" aria-label="依赖步骤" value={event.depends_on}
+            onChange={(depends_on: string[]) => onChange({ depends_on })}
+            options={dependencyOptions(allEvents)} placeholder="不选表示明确独立" style={{ width: '100%' }} />
+          <span className="muted">不选表示明确独立；同一逻辑步骤的失败仍会阻止后续操作。</span>
+        </> : null}
         {event.type === 'api' ? (
           <Select
             size="small"
@@ -691,6 +717,7 @@ function EventEditor({
               event={child}
               depth={0}
               targets={targets}
+              allEvents={allEvents}
               onChange={(patch) => {
                 const children = updateEventInTree(event.children ?? [], child.event_id, patch)
                 onChange({ children })
@@ -816,7 +843,7 @@ function ResultRows({
             ) : null}
             <span className="muted">{event.elapsed_ms}ms</span>
             <span className={`run-status ${event.status}`}>
-              {event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : '跳过'}
+              {event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : event.status === 'blocked' ? '依赖阻塞' : '跳过'}
             </span>
           </div>
           {event.detail ? <div className="run-detail">{event.detail}</div> : null}
