@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { AgentConversation, AgentEvent, AgentConnectionTest } from '@shared/agent'
 import { getProject } from '../storage/store'
 import { agentRoot, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, connectionSnapshot, recordCapability, readLocal, writeLocal } from './store'
-import { chatCompletion, redactKey, redactStreamingKey } from './model'
+import { completeModel, redactKey, redactStreamingKey } from './model'
 
 const active = new Map<string, AbortController>()
 const listeners = new Set<(event: AgentEvent) => void>()
@@ -60,10 +60,10 @@ function deleteConversation(projectId: string, id: string): boolean {
 }
 async function testConnection(connectionId?: string): Promise<AgentConnectionTest> {
   const snapshot = await connectionSnapshot(connectionId)
-  await chatCompletion(snapshot, [{ role: 'user', content: 'Reply briefly with OK.' }])
+  await completeModel(snapshot, [{ role: 'user', content: 'Reply briefly with OK.' }])
   let capability: AgentConnectionTest['capability'] = 'text-only'
   try {
-    const probe = await chatCompletion(snapshot, [{ role: 'user', content: 'Call kindra_capability_probe with token kindra-probe.' }], { probeTools: true })
+    const probe = await completeModel(snapshot, [{ role: 'user', content: 'Call kindra_capability_probe with token kindra-probe.' }], { probeTools: true })
     if (probe.toolCalls.some(call => call.name === 'kindra_capability_probe' && JSON.parse(call.arguments)?.token === 'kindra-probe')) capability = 'tools'
   } catch { /* A text-capable endpoint may reject tools; it remains usable for chat. */ }
   recordCapability(snapshot, capability)
@@ -90,7 +90,7 @@ async function sendMessage(projectId: string, id: string, content: string, conne
     persist(conversation)
     void (async () => {
       try {
-        await chatCompletion(snapshot, [{ role: 'system', content: '你是 Kindra 项目内的助手。当前只提供文本对话，不具备读取项目、修改或执行接口的工具。不要声称已经执行操作。' }, ...modelMessages], {
+        await completeModel(snapshot, [{ role: 'system', content: '你是 Kindra 项目内的助手。当前只提供文本对话，不具备读取项目、修改或执行接口的工具。不要声称已经执行操作。' }, ...modelMessages], {
           signal: controller.signal,
           onText: text => {
             conversation.messages[conversation.messages.length - 1].content = redactStreamingKey(text, snapshot.api_key)

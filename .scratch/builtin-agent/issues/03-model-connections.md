@@ -24,3 +24,5 @@
 验证：`npm run typecheck`、`npm run build`、`npm run test:agent-chat`、`npm run test:agent-connections`、`npm run test:agent-ui`、`npm run test:agent-connections-ui` 通过。新增测试从应用命令与实际 Renderer/preload IPC 入口验证真实存储、回环网络、运行中改删配置、过期能力探针、显式单轮选择、重启无重放及 Git 目录边界。
 
 实现指针：`src/main/agent/store.ts`、`src/main/agent/service.ts`、`src/renderer/src/pages/AgentPage.tsx`；测试指针：`scripts/agent-connections-smoke.ts`、`scripts/agent-connections-ui-smoke.cjs`。
+
+同步票据02后，`test:agent-responses`、`test:agent-ui -- --responses` 与多连接命令/UI回归再次通过，保留双协议选择与统一分发。
