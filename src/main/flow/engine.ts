@@ -30,8 +30,13 @@ const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
 const SCRIPT_TIMEOUT_MS = 3_000
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const finish = (): void => { clearTimeout(timer); signal?.removeEventListener('abort', finish); resolve() }
+    const timer = setTimeout(finish, ms)
+    if (signal?.aborted) finish()
+    else signal?.addEventListener('abort', finish, { once: true })
+  })
 }
 
 function clone<T>(value: T): T {
@@ -152,6 +157,7 @@ class FlowRuntime {
   readonly definitions = new Map<string, RequestExecutionDefinition>()
   readonly settings = store.getSettings()
   fileReviewRequired = false
+  signal?: AbortSignal
   onStepBoundary?: () => Promise<void>
 
 
@@ -588,16 +594,17 @@ async function runRequestEvent(
   }
 
   const prepared = applyRequestInput(target, event.input)
+  let dispatched = false
   try {
-    runtime.requestInFlight = true
-    runtime.onProgress?.()
     const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
+      signal: runtime.signal,
+      onRequestStart: () => { dispatched = true; runtime.requestInFlight = true; runtime.onProgress?.() },
       definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
       scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
     })
     if (record.error?.type === 'file-changed') runtime.fileReviewRequired = true
     runtime.requestInFlight = false
-    if (record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
+    if (dispatched && record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
     store.addSendRecord(projectId, redactEvidence(record, [runtime.envValues, runtime.globalValues, runtime.localValues]))
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
@@ -606,7 +613,7 @@ async function runRequestEvent(
       evalAssertion(assertion, runtime.lastResponse)
     )]
     const failed = assertions.some((assertion) => !assertion.passed && !assertion.skipped)
-    const status: FlowEventResult['status'] = record.error || !record.response || failed ? 'failed' : 'passed'
+    const status: FlowEventResult['status'] = record.error?.type === 'cancelled' ? 'cancelled' : record.error || !record.response || failed ? 'failed' : 'passed'
     const detail = record.error
       ? record.error.message
       : record.response
@@ -691,8 +698,8 @@ async function runEvent(
 
     if (event.type === 'wait') {
       const ms = Math.min(Math.max(Number(event.wait_ms ?? 500), 0), MAX_WAIT_MS)
-      await sleep(ms)
-      return result(event, 'passed', startedAt, { detail: `等待 ${ms} ms` })
+      await sleep(ms, runtime.signal)
+      return result(event, runtime.signal?.aborted ? 'cancelled' : 'passed', startedAt, { detail: runtime.signal?.aborted ? '等待已取消' : `等待 ${ms} ms` })
     }
 
     if (event.type === 'if') {
@@ -734,6 +741,7 @@ async function runEvent(
       const previousIndex = runtime.localValues.loop_index
       try {
         for (let index = 0; index < count; index += 1) {
+          if (runtime.signal?.aborted) break
           runtime.setLocal('loop_index', String(index))
           await runEvents(projectId, event.children ?? [], runtime, flow, children, index)
         }
@@ -782,6 +790,7 @@ async function runEvents(
   }
   try {
     for (const [index, event] of events.entries()) {
+      if (runtime.signal?.aborted) break
       frame.next_event_index = index
       updateCursor()
       let current: FlowEventResult
@@ -800,6 +809,7 @@ async function runEvents(
           runtime.resultStack.push(current)
           runtime.onProgress?.()
           Object.assign(current, await runEvent(projectId, event, runtime, flow))
+          if (runtime.signal?.aborted) current.status = 'cancelled'
           identify(current)
           runtime.dependencies.record(current)
           runtime.resultStack.pop()
@@ -810,7 +820,7 @@ async function runEvents(
       runtime.onProgress?.()
       const next = events[index + 1]
       const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
-      if (!next || logicalId(event) !== logicalId(next)) await runtime.onStepBoundary?.()
+      if (!runtime.signal?.aborted && (!next || logicalId(event) !== logicalId(next))) await runtime.onStepBoundary?.()
     }
   } finally {
     runtime.frames.pop()
@@ -823,7 +833,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
+  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -833,6 +843,7 @@ export async function runFlow(
   flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
   runtime.dependencies = new FlowDependencies(flow.events)
+  runtime.signal = options.signal
   runtime.onStepBoundary = options.onStepBoundary
   const capture = (events: FlowEvent[]): void => {
     for (const event of events) {
@@ -903,11 +914,12 @@ export async function runFlow(
     env_id: env?.env_id ?? '',
     started_at: startedAt,
     finished_at: finishedAt,
-    status: runtime.remoteUnknown ? 'unknown' : completedStatus(events),
+    status: runtime.signal?.aborted ? 'cancelled' : runtime.remoteUnknown ? 'unknown' : completedStatus(events),
     elapsed_ms: finishedAt - startedAt,
     variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
     request_in_flight: false,
     remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined,
+    error: runtime.signal?.aborted ? (runtime.remoteUnknown ? '运行已取消；已发送请求的远端结果未知，不保证回滚，不会自动重试' : '运行已取消，不会自动重试') : undefined,
     events,
     console: runtime.consoleEntries
   }

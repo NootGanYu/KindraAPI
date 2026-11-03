@@ -190,6 +190,7 @@ const api = {
       invoke('flow:run', projectId, flowId, environmentId),
     startRun: (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
       invoke('flow:run:start', projectId, flowId, environmentId, requestId),
+    cancelRun: (projectId: string, runId: string) => invoke('flow:run:cancel', projectId, runId),
     pauseRun: (projectId: string, runId: string) => invoke('flow:run:pause', projectId, runId),
     previewRunRefresh: (projectId: string, runId: string) => invoke('flow:run:refresh:preview', projectId, runId),
     applyRunRefresh: (projectId: string, runId: string, previewId: string) => invoke('flow:run:refresh:apply', projectId, runId, previewId),

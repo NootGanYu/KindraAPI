@@ -37,7 +37,7 @@ import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { normalizeFlowEvents, hasStructuredEvents } from '../flow/definition'
 import { applyRequestInput } from '../flow/engine'
-import { startFlowRun, getFlowRun, waitForFlowRun, pauseFlowRun } from '../flow/service'
+import { startFlowRun, getFlowRun, waitForFlowRun, pauseFlowRun, cancelFlowRun } from '../flow/service'
 import { generateSchemaExample } from '../schema/example'
 import {
   fieldDocsFromSchema,
@@ -1134,6 +1134,14 @@ const TOOLS: ToolDefinition[] = [
     requires_execute: true,
     input_schema: schema({ project_id: S.project, flow_id: S.flow, environment_id: S.environment, request_id: { type: 'string', description: '项目内唯一的启动请求标识' } }, ['project_id', 'flow_id', 'request_id']),
     handler: args => startFlowRun(projectIdOf(args), requiredStr(args, 'flow_id'), str(args, 'environment_id') || undefined, requiredStr(args, 'request_id'), 'mcp')
+  },
+  {
+    name: 'cancel_flow_run',
+    description: '有界取消流程运行；已发送请求的远端结果可能未知，不保证回滚。',
+    requires_write: false,
+    requires_execute: true,
+    input_schema: schema({ project_id: S.project, run_id: { type: 'string' } }, ['project_id', 'run_id']),
+    handler: args => cancelFlowRun(projectIdOf(args), requiredStr(args, 'run_id'))
   },
   {
     name: 'pause_flow_run',

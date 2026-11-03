@@ -273,6 +273,7 @@ export interface ApiBridge {
     save(projectId: string, flow: Flow, expectedRevision: string): Promise<Result<Flow>>
     delete(projectId: string, flowId: string): Promise<Result<boolean>>
     run(projectId: string, flowId: string, environmentId?: string): Promise<Result<FlowRun>>
+    cancelRun(projectId: string, runId: string): Promise<Result<FlowRun>>
     pauseRun(projectId: string, runId: string): Promise<Result<FlowRun>>
     previewRunRefresh(projectId: string, runId: string): Promise<Result<FlowRefreshPreview>>
     applyRunRefresh(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>

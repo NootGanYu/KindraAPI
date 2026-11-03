@@ -529,7 +529,7 @@ export interface FlowEventResult {
   iteration_path?: FlowIteration[]
   name: string
   type: FlowEventType
-  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked'
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked' | 'cancelled'
   started_at: number
   elapsed_ms: number
   detail?: string
@@ -589,7 +589,7 @@ export interface FlowVersionSwitch {
   applied_at: number
   references: FlowRefreshReference[]
 }
-export type FlowRunStatus = 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
+export type FlowRunStatus = 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
   cursor?: FlowExecutionCursor
