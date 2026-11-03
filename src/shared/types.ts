@@ -514,7 +514,7 @@ export interface FlowEventResult {
   event_id: string
   name: string
   type: FlowEventType
-  status: 'passed' | 'failed' | 'skipped'
+  status: 'running' | 'passed' | 'failed' | 'skipped'
   started_at: number
   elapsed_ms: number
   detail?: string
@@ -531,7 +531,7 @@ export interface FlowEventResult {
   iteration?: number
 }
 
-export type FlowRunStatus = 'running' | 'passed' | 'failed'
+export type FlowRunStatus = 'running' | 'passed' | 'failed' | 'interrupted' | 'unknown'
 
 export interface FlowRun {
   run_id: string
@@ -546,6 +546,8 @@ export interface FlowRun {
   variables: Record<string, string>
   events: FlowEventResult[]
   console: ConsoleEntry[]
+  request_in_flight?: boolean
+  remote_outcome?: 'unknown'
   request_id?: string
   request_environment_id?: string
   source?: 'ui' | 'mcp'

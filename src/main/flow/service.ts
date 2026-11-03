@@ -2,6 +2,7 @@ import type { FlowRun } from '@shared/types'
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { runFlow } from './engine'
+import { redactEvidence } from './evidence'
 
 interface ActiveRun {
   run: FlowRun
@@ -9,7 +10,7 @@ interface ActiveRun {
 }
 const activeRuns = new Map<string, ActiveRun>()
 const keyOf = (projectId: string, flowId: string): string => JSON.stringify([projectId, flowId])
-const copy = (run: FlowRun): FlowRun => JSON.parse(JSON.stringify(run)) as FlowRun
+const copy = (run: FlowRun): FlowRun => JSON.parse(JSON.stringify(redactEvidence(run))) as FlowRun
 
 /** Allocates identity and the flow lock before any request can be dispatched. */
 export function startFlowRun(
@@ -19,6 +20,7 @@ export function startFlowRun(
   requestId: string,
   source: 'ui' | 'mcp' = 'ui'
 ): FlowRun {
+  recoverFlowRuns(projectId)
   if (!requestId.trim()) throw new Error('request_id 不能为空')
   const previous = store.readFlowRuns(projectId).find(run => run.request_id === requestId)
   if (previous) {
@@ -43,14 +45,17 @@ export function startFlowRun(
   store.saveFlowRun(projectId, run)
   const active: ActiveRun = { run }
   activeRuns.set(key, active)
-  active.completion = runFlow(projectId, flow, environmentId, { runId: run.run_id, startedAt: run.started_at })
+  active.completion = runFlow(projectId, flow, environmentId, { runId: run.run_id, startedAt: run.started_at, onProgress: partial => {
+    active.run = { ...run, ...copy(partial) }
+    store.saveFlowRun(projectId, active.run)
+  } })
     .then(result => {
       active.run = { ...run, ...result }
       store.saveFlowRun(projectId, active.run)
       return active.run
     }, error => {
       const finishedAt = Date.now()
-      active.run = { ...run, status: 'failed', error: (error as Error).message, finished_at: finishedAt, elapsed_ms: finishedAt - run.started_at }
+      active.run = { ...active.run, status: active.run.request_in_flight ? 'unknown' : 'failed', error: (error as Error).message, finished_at: finishedAt, elapsed_ms: finishedAt - run.started_at }
       store.saveFlowRun(projectId, active.run)
       return active.run
     })
@@ -63,6 +68,7 @@ export function getFlowRun(projectId: string, runId: string): FlowRun | null {
   for (const active of activeRuns.values()) {
     if (active.run.project_id === projectId && active.run.run_id === runId) return copy(active.run)
   }
+  recoverFlowRuns(projectId)
   return store.getFlowRun(projectId, runId)
 }
 
@@ -88,4 +94,32 @@ export async function runSavedFlow(projectId: string, flowId: string, environmen
   const run = startFlowRun(projectId, flowId, environmentId, createId('request'))
   const active = activeRuns.get(keyOf(projectId, flowId))
   return copy(await (active?.completion ?? Promise.resolve(run)))
+}
+
+/** Recovery only records loss of the execution stack. It never recreates an executor. */
+export function recoverFlowRuns(projectId: string): void {
+  for (const run of store.readFlowRuns(projectId)) {
+    if (run.status !== 'running') continue
+    if (activeRuns.get(keyOf(projectId, run.flow_id))?.run.run_id === run.run_id) continue
+    const now = Date.now()
+    store.saveFlowRun(projectId, { ...run,
+      status: run.request_in_flight || run.remote_outcome === 'unknown' ? 'unknown' : 'interrupted',
+      remote_outcome: run.request_in_flight ? 'unknown' : run.remote_outcome,
+      finished_at: now, elapsed_ms: now - run.started_at,
+      error: run.request_in_flight ? '运行已中断；在途请求的远端结果未知，不会自动重试' : '运行已中断，不会自动续跑'
+    })
+  }
+}
+
+export function recoverAllFlowRuns(): void {
+  for (const project of store.listProjects()) recoverFlowRuns(project.project_id)
+}
+
+export function listFlowRuns(projectId: string, limit?: number) {
+  recoverFlowRuns(projectId)
+  return store.listFlowRuns(projectId, limit)
+}
+
+export function getActiveFlowRuns(): FlowRun[] {
+  return [...activeRuns.values()].map(active => copy(active.run))
 }

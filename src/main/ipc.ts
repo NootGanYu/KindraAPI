@@ -37,7 +37,7 @@ import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
-import { runSavedFlow, startFlowRun, getFlowRun } from './flow/service'
+import { getActiveFlowRuns, listFlowRuns, runSavedFlow, startFlowRun, getFlowRun } from './flow/service'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
@@ -307,6 +307,8 @@ export function registerIpc(): void {
     return true
   })
 
+  handle('flow:runs:active', () => getActiveFlowRuns())
+
   // M2 · flows
   handle('flow:list', (projectId: string) => store.listFlows(projectId))
   handle('flow:get', (projectId: string, flowId: string) => store.getFlow(projectId, flowId))
@@ -328,7 +330,7 @@ export function registerIpc(): void {
   handle('flow:run:start', (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
     startFlowRun(projectId, flowId, environmentId, requestId, 'ui')
   )
-  handle('flow:runs', (projectId: string, limit?: number) => store.listFlowRuns(projectId, limit))
+  handle('flow:runs', (projectId: string, limit?: number) => listFlowRuns(projectId, limit))
   handle('flow:run:get', (projectId: string, runId: string) =>
     getFlowRun(projectId, runId)
   )

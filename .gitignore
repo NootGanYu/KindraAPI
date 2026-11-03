@@ -23,3 +23,6 @@ ui-inventory/tools/.cache/
 ui-inventory/tools/.runs/
 ui-inventory/.user-data/
 ui-inventory/.env.local
+
+# Local flow regression bundle
+scripts/.flow-progress-smoke.cjs
