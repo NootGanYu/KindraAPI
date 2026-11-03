@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { methodColor } from '@shared/httpMethods'
-import { App as AntApp, Button, Drawer, Empty, Input, Modal, Spin, Tag } from 'antd'
+import { App as AntApp, Button, Drawer, Empty, Input, Spin, Tag } from 'antd'
 import { HistoryOutlined, TagOutlined } from '@ant-design/icons'
 import type { Target, TargetVersionSummary } from '@shared/types'
 
@@ -31,8 +31,9 @@ export default function TargetVersionDrawer({
   const [tab, setTab] = useState<'history' | 'tags'>('history')
   const [versions, setVersions] = useState<TargetVersionSummary[]>([])
   const [loading, setLoading] = useState(false)
-  const [tagging, setTagging] = useState<TargetVersionSummary | null>(null)
-  const [tagLabel, setTagLabel] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [tagDraft, setTagDraft] = useState('')
+  const cancelEdit = useRef(false)
 
   const load = useCallback(async (): Promise<void> => {
     if (!projectId || !targetId) return
@@ -76,25 +77,40 @@ export default function TargetVersionDrawer({
     })
   }
 
-  const openTag = (version: TargetVersionSummary): void => {
-    setTagging(version)
-    setTagLabel(version.label ?? '')
+  const beginTag = (version: TargetVersionSummary): void => {
+    cancelEdit.current = false
+    setEditingId(version.version_id)
+    setTagDraft(version.label ?? '')
   }
 
-  const submitTag = async (): Promise<void> => {
-    if (!tagging) return
+  const closeTag = (): void => {
+    setEditingId(null)
+    setTagDraft('')
+  }
+
+  const saveTag = async (version: TargetVersionSummary): Promise<void> => {
+    if (cancelEdit.current) {
+      cancelEdit.current = false
+      return
+    }
+    if (editingId !== version.version_id) return
+    const label = tagDraft.trim()
+    if (label === (version.label ?? '')) {
+      closeTag()
+      return
+    }
     const result = await window.api.targets.versions.tag(
       projectId,
       targetId,
-      tagging.version_id,
-      tagLabel.trim()
+      version.version_id,
+      label
     )
     if (!result.ok) {
       message.error(result.error)
       return
     }
-    setTagging(null)
-    message.success(tagLabel.trim() ? 'Tag 已保存' : 'Tag 已移除')
+    closeTag()
+    message.success(label ? 'Tag 已保存' : 'Tag 已移除')
     await load()
   }
 
@@ -148,7 +164,35 @@ export default function TargetVersionDrawer({
               <div className="version-main">
                 <div className="version-head">
                   <span className="version-no">v{item.version}</span>
-                  {item.label ? <Tag color="gold">{item.label}</Tag> : null}
+                  {editingId === item.version_id ? (
+                    <Input
+                      size="small"
+                      autoFocus
+                      className="version-tag-input"
+                      value={tagDraft}
+                      maxLength={60}
+                      placeholder="输入 Tag，留空移除"
+                      onChange={(event) => setTagDraft(event.target.value)}
+                      onPressEnter={() => void saveTag(item)}
+                      onBlur={() => void saveTag(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          event.preventDefault()
+                          cancelEdit.current = true
+                          closeTag()
+                        }
+                      }}
+                    />
+                  ) : item.label ? (
+                    <Tag
+                      color="gold"
+                      className="version-tag-editable"
+                      title="点击修改 Tag"
+                      onClick={() => beginTag(item)}
+                    >
+                      {item.label}
+                    </Tag>
+                  ) : null}
                   <span className="version-time">{formatTime(item.created_at)}</span>
                 </div>
                 <div className="version-sub">
@@ -158,9 +202,11 @@ export default function TargetVersionDrawer({
                 </div>
               </div>
               <div className="version-actions">
-                <Button size="small" onClick={() => openTag(item)}>
-                  {item.label ? '改 Tag' : '标记 Tag'}
-                </Button>
+                {!item.label && editingId !== item.version_id ? (
+                  <Button size="small" onClick={() => beginTag(item)}>
+                    标记 Tag
+                  </Button>
+                ) : null}
                 <Button size="small" type="primary" ghost onClick={() => restore(item)}>
                   恢复
                 </Button>
@@ -170,24 +216,6 @@ export default function TargetVersionDrawer({
         )}
       </div>
 
-      <Modal
-        open={Boolean(tagging)}
-        title={tagging?.label ? '修改 Tag' : '标记 Tag 版本'}
-        okText="保存"
-        cancelText="取消"
-        onOk={() => void submitTag()}
-        onCancel={() => setTagging(null)}
-        destroyOnClose
-      >
-        <Input
-          autoFocus
-          value={tagLabel}
-          maxLength={60}
-          placeholder="例如：v1.0 发布候选（留空则移除 Tag）"
-          onChange={(event) => setTagLabel(event.target.value)}
-          onPressEnter={() => void submitTag()}
-        />
-      </Modal>
     </Drawer>
   )
 }

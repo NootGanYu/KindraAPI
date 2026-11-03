@@ -3255,6 +3255,8 @@ button {
   font-weight: 600;
   color: var(--primary-2);
 }
+.version-tag-editable { cursor: pointer; }
+.version-tag-input { width: 180px; }
 .version-time {
   margin-left: auto;
   font-size: 11px;
