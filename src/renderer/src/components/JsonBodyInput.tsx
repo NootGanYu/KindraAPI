@@ -1,37 +1,14 @@
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import { Input } from 'antd'
 import type { TextAreaProps, TextAreaRef } from 'antd/es/input/TextArea'
+import { highlightJson } from './JsonCode'
 
 type Props = Omit<TextAreaProps, 'value' | 'autoSize'> & { value: string; highlight: boolean }
-
-function colorJson(text: string): ReactNode[] {
-  // Tokenize the draft itself, including unfinished strings; parsing would hide colors while typing.
-  const tokens = /"(?:\\[\s\S]|[^"\\])*"?|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|\b(?:true|false|null)\b/g
-  const result: ReactNode[] = []
-  let cursor = 0
-  for (const match of text.matchAll(tokens)) {
-    const start = match.index!
-    const token = match[0]
-    result.push(text.slice(cursor, start))
-    cursor = start + token.length
-    let kind: string
-    if (token.startsWith('"')) {
-      let next = cursor
-      while (next < text.length && /\s/.test(text[next])) next++
-      kind = text[next] === ':' ? 'key' : 'string'
-    } else {
-      kind = /^-?\d/.test(token) ? 'number' : 'literal'
-    }
-    result.push(<span key={start} className={`json-code-${kind}`}>{token}</span>)
-  }
-  result.push(text.slice(cursor))
-  return result
-}
 
 export default function JsonBodyInput({ value, highlight, className = '', onScroll, ...props }: Props): JSX.Element {
   const input = useRef<TextAreaRef>(null)
   const backdrop = useRef<HTMLPreElement>(null)
-  const content = useMemo(() => highlight ? colorJson(value) : null, [value, highlight])
+  const content = useMemo(() => highlight ? highlightJson(value) : null, [value, highlight])
 
   const sync = (): void => {
     const textarea = input.current?.resizableTextArea?.textArea

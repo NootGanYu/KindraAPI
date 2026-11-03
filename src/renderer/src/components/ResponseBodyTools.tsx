@@ -6,6 +6,7 @@ import type { ModelSchema, ResponseExample } from '@shared/types'
 import { useTargetEditLock } from './TargetEditScope'
 import { validateSchema } from './schemas/modelUtils'
 import JsonFieldTable from './JsonFieldTable'
+import JsonCode from './JsonCode'
 
 type Tool = 'raw' | 'preview' | 'import' | 'code' | 'search' | 'fields' | null
 const pretty = (value: unknown): string => JSON.stringify(value, null, 2)
@@ -178,7 +179,7 @@ export default function ResponseBodyTools({ example, projectId, structure, onCha
       </>}
       {tool === 'preview' && <>
         <Segmented options={['数据结构', '示例预览']} value={previewView} onChange={setPreviewView} />
-        <pre className="response-tool-preview">{previewView === '数据结构' ? schemaText : preview}</pre>
+        <JsonCode className="response-tool-preview" text={previewView === '数据结构' ? schemaText : preview} />
         <Button onClick={() => void copy(previewView === '数据结构' ? schemaText : preview)}>复制</Button>
       </>}
       {tool === 'import' && <>
@@ -189,7 +190,7 @@ export default function ResponseBodyTools({ example, projectId, structure, onCha
           <Button size="small" loading={busy} onClick={() => { void run(async () => { const result = await imported(); if (mounted.current) setPreview(pretty(result.schema)) }) }}>预览</Button>
         </div>
         <div className="response-import-editors"><Input.TextArea aria-label="导入响应结构" className="mono" rows={14} value={text} onChange={event => setText(event.target.value)} spellCheck={false} />
-          <pre className="response-tool-preview">{preview || '导入结构预览'}</pre></div>
+          {preview ? <JsonCode className="response-tool-preview" text={preview} /> : <pre className="response-tool-preview">导入结构预览</pre>}</div>
         <p className="muted">智能合并保留已有字段规则；完全覆盖替换结构和示例。</p>
       </>}
       {tool === 'code' && <>

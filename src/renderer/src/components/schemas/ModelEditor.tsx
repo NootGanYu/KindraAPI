@@ -10,6 +10,7 @@ import {
   TableOutlined
 } from '@ant-design/icons'
 import type { DataModel, GeneratedExampleResult, ModelSummary } from '@shared/types'
+import JsonCode from '../JsonCode'
 import SchemaFieldEditor from './SchemaFieldEditor'
 import { cloneSchema, prettyJson, validateSchema } from './modelUtils'
 
@@ -374,7 +375,7 @@ export default function ModelEditor({
                 ))}
               />
             ) : null}
-            <pre className="resp-code">{prettyJson(preview?.value ?? {})}</pre>
+            <JsonCode className="resp-code" text={prettyJson(preview?.value ?? {})} />
           </div>
         )}
       </div>

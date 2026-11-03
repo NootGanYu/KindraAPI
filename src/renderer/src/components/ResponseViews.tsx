@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import JsonCode, { isJsonText } from './JsonCode'
 
 function pretty(text: string): string {
   try { return JSON.stringify(JSON.parse(text), null, 2) } catch { return text }
@@ -29,7 +30,9 @@ export function PreviewView({ mime, body, base64 }: { mime: string; body: string
       </div>
     )
   }
-  return <pre className="resp-code">{pretty(body)}</pre>
+  return isJsonText(body)
+    ? <JsonCode className="resp-code" text={pretty(body)} />
+    : <pre className="resp-code">{pretty(body)}</pre>
 }
 
 function escapeHtml(text: string): string {

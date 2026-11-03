@@ -1694,6 +1694,21 @@ body {
 .json-code-string { color: #0451a5; }
 .json-code-number { color: #00875a; }
 .json-code-literal { color: #7951a5; }
+.json-code-block { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
+.json-type { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
+.json-type-string { color: #0451a5; }
+.json-type-number { color: #00875a; }
+.json-type-integer { color: #0a7d8c; }
+.json-type-boolean { color: #7951a5; }
+.json-type-object { color: #b5651d; }
+.json-type-array { color: #9a4f8f; }
+.json-type-null { color: #8a8a8a; }
+.json-type-any,
+.json-type-unknown { color: #6d5aa8; }
+.json-type-file { color: #6b6b6b; }
+.json-type-allof,
+.json-type-anyof,
+.json-type-oneof { color: #a06a00; }
 .fake-scroll { position: absolute; top: 4px; right: 2px; bottom: 4px; width: 7px; border-radius: 4px; background: rgba(234,224,203,.35); pointer-events: none; }
 .fake-scroll span { display: block; width: 7px; height: 112px; border-radius: 4px; background: #eae0cb; }
 .req-body .simple-table, .req-body .param-grid { width: 100%; }

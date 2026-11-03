@@ -4,6 +4,7 @@ import { Button, Input, Modal, Select } from 'antd'
 import type { FieldRules } from '@shared/types'
 import { FIELD_TYPES, validateRules } from '@shared/fieldRules'
 import { useTargetEditLock } from './TargetEditScope'
+import { jsonTypeClass } from './jsonTypeStyles'
 
 interface Props {
   value: FieldRules & { type?: string }
@@ -52,7 +53,7 @@ export default function FieldRulesEditor({ value, onChange, disabled, compact, f
     <Button size="small" type="text" aria-label="字段规则" title="字段规则" icon={compact ? <SettingOutlined /> : undefined} disabled={disabled} onClick={begin}>{compact ? null : '规则'}</Button>
     <Modal title="字段说明与规则" open={open} onCancel={() => setOpen(false)} onOk={save} okText="保存" cancelText="取消">
       <div className="field-form">
-        <label>类型</label><Select disabled={fixedType} value={draft.type ?? 'unknown'} options={FIELD_TYPES.map(type => ({ value: type, label: type }))} onChange={type => setDraft({ ...draft, type })} />
+        <label>类型</label><Select disabled={fixedType} value={draft.type ?? 'unknown'} options={FIELD_TYPES.map(type => ({ value: type, label: <span className={jsonTypeClass(type)}>{type}</span> }))} onChange={type => setDraft({ ...draft, type })} />
         <label>必填 / 必有（父对象存在时）</label>{booleanEditor('required')}
         <label>可为 null</label>{booleanEditor('nullable')}
         <label>字段含义</label><Input.TextArea value={draft.description ?? ''} onChange={e => setDraft({ ...draft, description: e.target.value })} />

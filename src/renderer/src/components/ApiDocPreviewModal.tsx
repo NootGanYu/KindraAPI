@@ -4,6 +4,7 @@ import { descriptionToHtml } from '@shared/richText'
 import { apiStatuses } from '@shared/apiStatuses'
 import { methodColor } from '@shared/httpMethods'
 import { tryPrettyJson } from '@shared/pretty'
+import JsonCode, { isJsonText } from './JsonCode'
 import { useApp } from '../store'
 
 const AUTH_LABELS: Record<string, string> = {
@@ -86,7 +87,11 @@ export default function ApiDocPreviewModal({ open, target, onClose }: Props): JS
       return (
         <section className="api-doc-preview-section">
           <h4>Body（{body.raw_language || 'json'}）</h4>
-          <pre className="api-doc-preview-code">{codeText(body.raw) || '（空）'}</pre>
+          {isJsonText(codeText(body.raw)) ? (
+            <JsonCode text={codeText(body.raw)} className="api-doc-preview-code" />
+          ) : (
+            <pre className="api-doc-preview-code">{codeText(body.raw) || '（空）'}</pre>
+          )}
         </section>
       )
     }
@@ -163,7 +168,11 @@ export default function ApiDocPreviewModal({ open, target, onClose }: Props): JS
                 {example.expect?.code ? <Tag color="blue">{example.expect.code}</Tag> : null}
                 {example.expect?.content_type ? <Tag>{example.expect.content_type}</Tag> : null}
               </div>
-              <pre className="api-doc-preview-code">{codeText(example.raw) || '（空）'}</pre>
+              {isJsonText(codeText(example.raw)) ? (
+                <JsonCode text={codeText(example.raw)} className="api-doc-preview-code" />
+              ) : (
+                <pre className="api-doc-preview-code">{codeText(example.raw) || '（空）'}</pre>
+              )}
             </div>
           ))
         )}

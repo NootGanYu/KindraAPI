@@ -8,6 +8,7 @@ import { createParam } from '@shared/factories'
 import FieldRulesEditor from './FieldRulesEditor'
 import DictionarySuggest from './schemas/DictionarySuggest'
 import ParamDescriptionInput from './ParamDescriptionInput'
+import { jsonTypeClass } from './jsonTypeStyles'
 import { useApp } from '../store'
 import { invalidateDictionaryCache } from './schemas/dictionarySuggestions'
 
@@ -132,7 +133,7 @@ export default function DesignParamTable({ params, onChange, keyPlaceholder = '�
             value={param.key} onChange={key => update(param, { key })}
             onSelectEntry={entry => update(param, { key: entry.key, description: entry.description, field_type: entry.field_type, value: entry.default_value ?? '' })} />}
           <Select aria-label={`参数类型 ${param.key || '新参数'}`} className="design-param-type" size="small" variant="borderless" suffixIcon={null}
-            value={param.field_type || 'string'} options={[...types, ...(allowFile ? ['file'] : [])].map(value => ({ value, label: value === 'unknown' ? 'any' : value }))}
+            value={param.field_type || 'string'} options={[...types, ...(allowFile ? ['file'] : [])].map(value => ({ value, label: <span className={jsonTypeClass(value)}>{value === 'unknown' ? 'any' : value}</span> }))}
             onChange={field_type => update(param, { field_type })} />
           <Tooltip title={`${requiredLabel}：${param.required === undefined ? '待补充' : param.required ? '是' : '否'}`}>
             <button className={`field-flag${param.required ? ' active' : ''}`} aria-label={`${requiredLabel} ${param.key || '新参数'}`}

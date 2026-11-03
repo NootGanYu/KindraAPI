@@ -1,6 +1,7 @@
 import FieldRulesEditor from './FieldRulesEditor'
 import { RULE_KEYS } from '@shared/fieldRules'
 import { useTargetEditLock } from './TargetEditScope'
+import { jsonTypeClass } from './jsonTypeStyles'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -613,7 +614,7 @@ export default function JsonFieldTable({
                   options={TYPE_OPTIONS.map((option) =>
                     option.value === '__auto__'
                       ? { ...option, label: `自动（${row.inferred}${row.mixed ? '/mixed' : ''}）` }
-                      : option
+                      : { ...option, label: <span className={jsonTypeClass(option.value)}>{option.label}</span> }
                   )}
                   onChange={(value) =>
                     updateDoc(row.pointer, {
