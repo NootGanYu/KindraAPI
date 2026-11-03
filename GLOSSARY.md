@@ -89,8 +89,8 @@ API 的样例数据，可在测试用例里作为 `sample` 事件引用。
 
 ## 自动化
 
-**Testing（测试用例）**
-一棵可执行的事件树，字段标识：`testing_id`、`event_list`。
+**Testing（原应用的测试用例）**
+Original App 中一棵可执行的事件树，字段标识：`testing_id`、`event_list`。
 UI 上也叫“接口用例/测试用例”。
 
 **Event（事件）**
@@ -102,10 +102,18 @@ Testing 树中的节点，字段标识：`event_id`、`type`、`data`、`childre
 一次 MCP 接口/流程执行的记录。字段标识：`run_id`。
 Testing 的汇总报告用的是 `report_id`，不要与 `run_id` 混用。
 
-**MCP Execution Flow（MCP 执行流程）**
-由 MCP 工具创建、保存于 `executions/flows/` 的步骤序列。
+**MCP Execution Flow（原应用的 MCP 执行流程）**
+Original App 中由 MCP 工具创建、保存于 `executions/flows/` 的步骤序列。
 字段标识：`flow_id`、`steps[].step_id`。
 **不要**把它与 Testing 事件树都简称为“流程”；必要时写全称。
+
+**API Case（接口用例，Kindra）**
+针对单个接口定义的参数覆盖与断言，用于验证该接口的不同情形。
+_Avoid_: 执行流程、原应用 Testing
+
+**Execution Flow（执行流程，Kindra）**
+由跨接口请求、条件、循环等步骤组成的可执行流程。
+_Avoid_: 接口用例、原应用 MCP Execution Flow
 
 ## 字典
 
@@ -198,6 +206,28 @@ _Avoid_: 遗言、最后消息
 **Shared Subscription（共享订阅）**
 多个客户端分摊同一订阅的 MQTT 特性，主题以 `$share/<group>/` 开头；本期只做识别与展示。
 _Avoid_: 集群订阅
+
+## Agent
+
+**Agent Conversation（Agent 会话）**
+围绕一个项目持续记录用户意图、助手回复与操作结果的对话上下文；区别于接口发送记录和执行流程。
+_Avoid_: 发送记录、执行流程
+
+**Change Proposal（变更提案）**
+模型建议对接口或执行流程草稿作出的改动；采纳前不属于草稿或已保存定义。
+_Avoid_: 草稿、已保存定义
+
+**Candidate Version（待确认版本）**
+记录 Agent 修改、冲突或退出暂存的候选内容；它尚未成为正式保存的定义。
+_Avoid_: 已保存版本
+
+**Saved Version（已保存版本）**
+已经正式保存的接口定义版本，区别于待确认版本。
+_Avoid_: 待确认版本
+
+**Agent Plan（Agent 操作计划）**
+一轮任务中可获批准的目标、修改、执行环境和操作范围；不等同于可复用的 Execution Flow。
+_Avoid_: 执行流程
 
 ## 两个系统
 
