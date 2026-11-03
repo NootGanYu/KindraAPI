@@ -1,3 +1,4 @@
+import { projectPermissionError } from './permissions'
 import { rulesFromSchema } from '@shared/fieldRules'
 import { DICT_FIELD_TYPES } from '@shared/types'
 import { defaultApiStatus } from '@shared/apiStatuses'
@@ -387,9 +388,10 @@ const TOOLS: ToolDefinition[] = [
         project.intro = description.slice(0, 1024)
         store.saveProject(project)
       }
+      const current = store.getMcpConfig()
       store.saveMcpConfig({
-        ...config,
-        allowed_project_ids: [...config.allowed_project_ids, project.project_id]
+        ...current,
+        allowed_project_ids: [...current.allowed_project_ids, project.project_id]
       })
       return {
         project_id: project.project_id,
@@ -2731,11 +2733,7 @@ export function checkPermission(
     return config.allow_write ? null : '未开启写入权限 allow_write'
   }
   const projectId = typeof args.project_id === 'string' ? args.project_id : ''
-  if (!projectId) return '缺少 project_id'
-  if (!config.allowed_project_ids.includes(projectId)) return '项目不在授权列表'
-  if (tool.requires_write && !config.allow_write) return '未开启写入权限 allow_write'
-  if (tool.requires_execute && !config.allow_execute) return '未开启接口执行权限 allow_execute'
-  return null
+  return projectPermissionError(config, projectId, { write: tool.requires_write, execute: tool.requires_execute })
 }
 
 export async function callTool(
@@ -2745,10 +2743,16 @@ export async function callTool(
 ): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
   const tool = TOOL_MAP.get(name)
   if (!tool) return { ok: false, error: `未知工具：${name}` }
-  const denied = checkPermission(tool, config, args)
+  const current = store.getMcpConfig()
+  const denied = checkPermission(tool, config, args) ?? checkPermission(tool, current, args)
   if (denied) return { ok: false, error: denied }
   try {
-    const result = await withTargetChanges('mcp', undefined, () => tool.handler(args, config))
+    const effective = { ...current,
+      allow_write: current.allow_write && config.allow_write,
+      allow_execute: current.allow_execute && config.allow_execute,
+      allowed_project_ids: current.allowed_project_ids.filter(id => config.allowed_project_ids.includes(id))
+    }
+    const result = await withTargetChanges('mcp', undefined, () => tool.handler(args, effective))
     return { ok: true, result }
   } catch (error) {
     return { ok: false, error: (error as Error).message }

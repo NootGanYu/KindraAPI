@@ -1057,7 +1057,7 @@ export function saveFlow(projectId: string, flow: Flow): Flow {
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
-  if (readFlowRuns(projectId).some(run => run.flow_id === flowId && ['running', 'pausing', 'paused', 'reviewing', 'cancelling'].includes(run.status))) {
+  if (readFlowRuns(projectId).some(run => run.flow_id === flowId && ['running', 'pausing', 'paused', 'reviewing', 'cancelling', 'permission_revoked'].includes(run.status))) {
     throw new Error('活动运行绑定的流程不可删除')
   }
   fs.rmSync(flowPath(projectId, flowId), { force: true })

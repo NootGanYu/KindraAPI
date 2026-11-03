@@ -18,6 +18,7 @@ async function main(): Promise<void> {
   await app.whenReady()
   const project = storage.ensureDefaultProject(), projectId = project.project_id
   const config = { ...storage.getMcpConfig(), enabled: true, allow_write: true, allow_execute: true, allowed_project_ids: [projectId] }
+  storage.saveMcpConfig(config)
   const events: TargetChangeEvent[] = [], pending = new Set<Promise<void>>()
   const failures: unknown[] = []
   const read = async (pid: string, id: string) => ({ ok: true as const, data: storage.readTargetSnapshot(pid, id) })

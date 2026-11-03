@@ -82,6 +82,7 @@ async function main(): Promise<void> {
     assert.equal(store.getGlobalVars(pid).vars.flag.current_value, 'new')
     assert.equal(store.listEnvironments(pid).find(e => e.env_id === envs[1].env_id)!.env_var_list.token, undefined)
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [pid] }
+    store.saveMcpConfig(config)
     requests.length = 0
     const mcp = await callTool('execute_flow', { project_id: pid, flow_id: flow.flow_id, environment_id: envs[1].env_id }, config)
     assert(mcp.ok)

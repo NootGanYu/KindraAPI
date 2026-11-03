@@ -90,6 +90,7 @@ async function main(): Promise<void> {
     console.log('PASS real UI save/run/query IPC preserves scripts, assertions, conditions, groups, loops and disabled events')
 
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [project.project_id] }
+    store.saveMcpConfig(config)
     requests.length = 0
     const mcp = await callTool('execute_flow', { project_id: project.project_id, flow_id: saved.flow_id, environment_id: env.env_id }, config)
     assert(mcp.ok, mcp.ok ? '' : mcp.error)

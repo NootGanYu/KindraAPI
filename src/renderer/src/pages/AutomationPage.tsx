@@ -98,9 +98,9 @@ function countRun(events: FlowEventResult[]): { passed: number; failed: number; 
   return acc
 }
 
-const isActiveRunStatus = (status: FlowRun['status']): boolean => ['running', 'pausing', 'paused', 'cancelling'].includes(status)
+const isActiveRunStatus = (status: FlowRun['status']): boolean => ['running', 'pausing', 'paused', 'cancelling', 'permission_revoked'].includes(status)
 function runStatusLabel(status: string): string {
-  return ({ cancelling: '正在取消', cancelled: '已取消', running: '运行中', pausing: '正在暂停', paused: '已暂停', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知', blocked: '依赖阻塞' } as Record<string, string>)[status] ?? status
+  return ({ permission_revoked: 'MCP 权限已撤销', cancelling: '正在取消', cancelled: '已取消', running: '运行中', pausing: '正在暂停', paused: '已暂停', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知', blocked: '依赖阻塞' } as Record<string, string>)[status] ?? status
 }
 
 export default function AutomationPage(): JSX.Element {
@@ -506,7 +506,7 @@ export default function AutomationPage(): JSX.Element {
             <Button size="small" disabled={run.status === 'pausing'} loading={controlling} onClick={() => void controlRun('pause')}>
               {run.status === 'pausing' ? '正在暂停' : '暂停'}
             </Button>
-          ) : run?.status === 'paused' ? (
+          ) : run?.status === 'paused' || run?.status === 'permission_revoked' ? (
             <Button size="small" type="primary" loading={controlling} onClick={() => void controlRun('resume')}>{run.version_switches?.length ? '继续已审阅快照' : '继续原快照'}</Button>
           ) : null}
           {run && isActiveRunStatus(run.status) ? (

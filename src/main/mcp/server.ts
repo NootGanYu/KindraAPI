@@ -24,12 +24,14 @@ async function dispatch(
   const args = (payload.args ?? {}) as Record<string, unknown>
   if (tool === '__ping') return { ok: true, result: { pong: true, pid: process.pid } }
   if (!currentConfig) return { ok: false, error: 'MCP 服务未初始化' }
-  if (!safeEqual(String(payload.token ?? ''), currentConfig.token)) {
+  const config = store.getMcpConfig()
+  if (!config.enabled) return { ok: false, error: 'MCP 未开启' }
+  if (!safeEqual(String(payload.token ?? ''), config.token)) {
     return { ok: false, error: 'token 无效' }
   }
   if (tool === '__tools') return { ok: true, result: { tools: listToolInfos() } }
   if (!tool) return { ok: false, error: '缺少 tool' }
-  return callTool(tool, args, currentConfig)
+  return callTool(tool, args, config)
 }
 
 function handleConnection(socket: net.Socket): void {

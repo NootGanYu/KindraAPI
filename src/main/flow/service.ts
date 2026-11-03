@@ -1,3 +1,4 @@
+import { projectPermissionError } from '../mcp/permissions'
 import type { FlowRun } from '@shared/types'
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
@@ -26,6 +27,10 @@ export function startFlowRun(
   requestId: string,
   source: 'ui' | 'mcp' = 'ui'
 ): FlowRun {
+  if (source === 'mcp') {
+    const denied = projectPermissionError(store.getMcpConfig(), projectId, { execute: true })
+    if (denied) throw new Error(denied)
+  }
   recoverFlowRuns(projectId)
   if (!requestId.trim()) throw new Error('request_id 不能为空')
   const previous = store.readFlowRuns(projectId).find(run => run.request_id === requestId)
@@ -53,6 +58,15 @@ export function startFlowRun(
   activeRuns.set(key, active)
   active.completion = runFlow(projectId, flow, environmentId, {
     runId: run.run_id, startedAt: run.started_at, signal: active.abortController.signal,
+    onBeforeStep: async () => {
+      const denied = runPermissionError(active)
+      if (!denied || active.abortController.signal.aborted) return
+      await new Promise<void>(resolve => {
+        active.resume = resolve
+        active.run.error = `MCP 运行权限已撤销：${denied}；后续步骤已停止，请恢复权限后手动继续或取消`
+        updateState(active, 'permission_revoked')
+      })
+    },
     onControl: controller => { active.refresh = controller },
     onStepBoundary: async () => {
       if (active.run.status !== 'pausing') return
@@ -91,6 +105,12 @@ export function getFlowRun(projectId: string, runId: string): FlowRun | null {
   }
   recoverFlowRuns(projectId)
   return store.getFlowRun(projectId, runId)
+}
+
+function runPermissionError(active: ActiveRun): string | null {
+  return active.run.source === 'mcp'
+    ? projectPermissionError(store.getMcpConfig(), active.run.project_id, { execute: true })
+    : null
 }
 
 function updateState(active: ActiveRun, status: FlowRun['status']): void {
@@ -146,7 +166,12 @@ export function resumeFlowRun(projectId: string, runId: string): FlowRun {
     return run
   }
   if (active.run.status === 'pausing') throw new Error('当前完整步骤尚未结束，请等待暂停后继续')
-  if (active.run.status === 'paused') {
+  const denied = runPermissionError(active)
+  if (denied) throw new Error(`MCP 运行权限不足：${denied}`)
+  if (active.run.status === 'paused' || active.run.status === 'permission_revoked') {
+    active.run.error = undefined
+    // Restored access re-enters the paused review flow if definitions need attention.
+    if (active.run.status === 'permission_revoked') updateState(active, 'paused')
     active.refresh?.validateResume()
     const resume = active.resume
     active.resume = undefined
@@ -219,7 +244,7 @@ export async function runSavedFlow(projectId: string, flowId: string, environmen
 /** Recovery only records loss of the execution stack. It never recreates an executor. */
 export function recoverFlowRuns(projectId: string): void {
   for (const run of store.readFlowRuns(projectId)) {
-    if (!['running', 'pausing', 'paused', 'reviewing', 'cancelling'].includes(run.status)) continue
+    if (!['running', 'pausing', 'paused', 'reviewing', 'cancelling', 'permission_revoked'].includes(run.status)) continue
     if (activeRuns.get(keyOf(projectId, run.flow_id))?.run.run_id === run.run_id) continue
     const now = Date.now()
     store.saveFlowRun(projectId, { ...run,

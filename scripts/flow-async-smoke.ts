@@ -52,6 +52,7 @@ async function main(): Promise<void> {
     flow.events = [createFlowEvent('request', { url: `http://127.0.0.1:${port}/hold`, method: 'GET' })]
     store.saveFlow(projectId, flow)
     const config = { ...store.getMcpConfig(), enabled: true, allow_execute: true, allowed_project_ids: [projectId] }
+    store.saveMcpConfig(config)
     const args = { project_id: projectId, flow_id: flow.flow_id, environment_id: '', request_id: 'first-request' }
     const started = await callTool('start_flow_run', args, config)
     assert(started.ok, started.ok ? '' : started.error)
