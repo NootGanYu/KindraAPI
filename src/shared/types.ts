@@ -516,7 +516,7 @@ export interface FlowEventResult {
   event_id: string
   name: string
   type: FlowEventType
-  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked'
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked' | 'cancelled'
   started_at: number
   elapsed_ms: number
   detail?: string
@@ -544,7 +544,7 @@ export interface FlowExecutionSnapshot {
   environment_id: string
   requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
 }
-export type FlowRunStatus = 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
+export type FlowRunStatus = 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
   snapshot?: FlowExecutionSnapshot
