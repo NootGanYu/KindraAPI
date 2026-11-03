@@ -38,6 +38,7 @@
     "test:review-regressions": "node scripts/review-regressions.cjs",
     "test:model-actions": "node scripts/model-editor-actions-smoke.cjs",
     "test:dictionary-data": "esbuild scripts/dictionary-import-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/dictionary-import-smoke.cjs && electron node_modules/.tmp/dictionary-import-smoke.cjs",
+    "test:agent-responses": "esbuild scripts/agent-responses-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-responses-smoke.cjs && electron node_modules/.tmp/agent-responses-smoke.cjs",
     "test:agent-chat": "esbuild scripts/agent-chat-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-chat-smoke.cjs && electron node_modules/.tmp/agent-chat-smoke.cjs",
     "test:agent-ui": "node scripts/agent-ui-smoke.cjs"
   },

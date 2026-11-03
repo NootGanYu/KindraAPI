@@ -34,7 +34,7 @@ export async function saveConnection(input: AgentConnectionInput): Promise<Agent
   try { url = new URL(input.base_url) } catch { throw new Error('模型地址必须是 http 或 https 地址') }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('模型地址不允许凭据、查询参数或非 HTTP 协议')
   if (!input.model?.trim()) throw new Error('请填写模型名称')
-  if (input.protocol !== 'chat-completions') throw new Error('不支持的模型协议')
+  if (input.protocol !== 'chat-completions' && input.protocol !== 'responses') throw new Error('不支持的模型协议')
   const previous = readConnection()
   let encrypted_key = previous?.encrypted_key ?? ''
   if (input.api_key !== undefined) {

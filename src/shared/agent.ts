@@ -1,5 +1,5 @@
 /** Public Agent application-command contracts. Secrets are never part of read models. */
-export type AgentProtocol = 'chat-completions'
+export type AgentProtocol = 'chat-completions' | 'responses'
 export type AgentCapability = 'unchecked' | 'text-only' | 'tools'
 export interface AgentConnection {
   connection_id: string
