@@ -106,6 +106,7 @@ export interface ApiBridge {
     onDraftChanged(callback: (event: AgentDraftEvent) => void): () => void
     getActivity(): Promise<Result<{ running: number }>>
     prepareQuit(): Promise<Result<boolean>>
+    proposeSavePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     proposeExecutePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     cancelPlan(projectId: string, id: string): Promise<Result<AgentPlan>>
     proposeEditPlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>

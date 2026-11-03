@@ -5,6 +5,7 @@ export interface AgentDraft {
   target: Target
   base_revision: string | null
   agent_owned: boolean
+  candidate_ids?: string[]
   updated_at: string
 }
 export interface AgentCandidate {
@@ -16,6 +17,9 @@ export interface AgentCandidate {
   step_id: string
   base_revision: string | null
   base: Target
+  /** Original submitted fields, independent of merged snapshots. */
+  patch?: Partial<Target>
+  saved_version?: { version_id: string; version: number; revision: string; plan_id: string }
   proposal: Target
   created_at: string
   status: 'pending' | 'applied' | 'conflict' | 'rejected' | 'undone'
@@ -28,6 +32,7 @@ export interface AgentDraftEvent {
   target_id: string
   draft?: AgentDraft
   previous?: Target
+  saved_revision?: string
 }
 export type AgentConflictChoice = 'base' | 'current' | 'agent'
 export interface AgentFieldConflict {

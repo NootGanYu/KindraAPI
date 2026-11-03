@@ -12,7 +12,9 @@ function enqueue(operation: () => Promise<Result<unknown>>): void {
 }
 /** Main-process drafts survive tabs/project navigation; synchronous editor mutations are queued in order. */
 export function connectAgentDraftSync(): () => void {
+  let projectingMain = false
   const off = useApp.subscribe((state, previous) => {
+    if (projectingMain) return
     const projectChanged = state.project?.project_id !== previous.project?.project_id
     if (!projectChanged && state.drafts === previous.drafts) return
     if (previous.project) for (const [id, draft] of Object.entries(previous.drafts)) {
@@ -37,7 +39,17 @@ export function connectAgentDraftSync(): () => void {
       useApp.setState({ syncNotice: 'Agent 应用期间出现新的人工编辑，已保留人工内容，请重新审阅候选。' })
       return
     }
-    useApp.setState({ drafts: { ...state.drafts, [event.target_id]: event.draft.target }, tabs: state.tabs.map(tab => tab.id === event.target_id ? { ...tab, name: event.draft!.target.name, dirty: true, resetKey: (tab.resetKey ?? 0) + 1 } : tab), syncNotice: 'Agent 候选已应用到草稿；正式定义尚未保存。' })
+    projectingMain = true
+    try {
+      const pendingUpdates = { ...state.pendingUpdates }
+      if (event.saved_revision) delete pendingUpdates[event.target_id]
+      useApp.setState({
+        drafts: { ...state.drafts, [event.target_id]: event.draft.target },
+        ...(event.saved_revision ? { baselines: { ...state.baselines, [event.target_id]: { target: event.draft.target, revision: event.saved_revision } }, pendingUpdates } : {}),
+        tabs: state.tabs.map(tab => tab.id === event.target_id ? { ...tab, name: event.draft!.target.name, dirty: !event.saved_revision, resetKey: (tab.resetKey ?? 0) + 1 } : tab),
+        syncNotice: event.saved_revision ? 'Agent 获批保存已完成，候选已关联正式版本。' : 'Agent 候选已应用到草稿；正式定义尚未保存。'
+      })
+    } finally { projectingMain = false }
   })
   return () => { off(); offEvent() }
 }
