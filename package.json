@@ -44,7 +44,9 @@
     "test:agent-chat": "esbuild scripts/agent-chat-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-chat-smoke.cjs && electron node_modules/.tmp/agent-chat-smoke.cjs",
     "test:agent-ui": "node scripts/agent-ui-smoke.cjs",
     "test:agent-plan": "esbuild scripts/agent-plan-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-plan-smoke.cjs && electron node_modules/.tmp/agent-plan-smoke.cjs",
-    "test:agent-plan-ui": "node scripts/agent-plan-ui-smoke.cjs"
+    "test:agent-plan-ui": "node scripts/agent-plan-ui-smoke.cjs",
+    "test:agent-plan-steps": "esbuild scripts/agent-plan-steps-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-plan-steps-smoke.cjs && electron node_modules/.tmp/agent-plan-steps-smoke.cjs",
+    "test:agent-plan-steps-ui": "node scripts/agent-plan-steps-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

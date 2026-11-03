@@ -4,6 +4,8 @@ export interface ReadPlanInput {
   goal: string
   connectionId?: string
   targetId: string
+  targetIds?: string[]
+  drafts?: Record<string, Target>
   environmentId?: string
   /** An unsaved editor snapshot, never a request to persist the definition. */
   draft?: Target
@@ -11,9 +13,13 @@ export interface ReadPlanInput {
 export interface AgentPlanStep {
   step_id: string
   operation: 'read_api'
+  target_name?: string
+  source?: 'draft' | 'saved'
+  dependencies_explicit?: boolean
+  error?: string
   target_id: string
   depends_on: string[]
-  status: 'pending' | 'running' | 'succeeded' | 'paused'
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'paused'
   result?: unknown
 }
 export interface AgentPlan {
@@ -22,6 +28,8 @@ export interface AgentPlan {
   project_name: string
   target_id: string
   target_name: string
+  target_ids?: string[]
+  targets?: Array<{ target_id: string; name: string; source: 'draft' | 'saved' }>
   environment_id: string | null
   environment_name: string
   goal: string
