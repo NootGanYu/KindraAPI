@@ -1,5 +1,6 @@
-import type { AgentDraft, AgentCandidate, AgentDraftEvent, AgentConflictChoice } from '@shared/agentDraft'
-import type { AgentPlan, AgentPlanEvent, ReadPlanInput } from '../shared/agentPlan'
+import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
+import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
+import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
   AppPaths,
@@ -91,6 +92,15 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    getFlowDraft(pid: string, id: string): Promise<Result<AgentFlowDraft>>
+    syncFlowEditorDraft(pid: string, flow: Flow): Promise<Result<AgentFlowDraft>>
+    saveManualFlowForRun(pid: string, flow: Flow): Promise<Result<Flow>>
+    listAgentFlowDrafts(pid: string): Promise<Result<AgentFlowDraft[]>>
+    listFlowCandidates(pid: string, id?: string): Promise<Result<AgentFlowCandidate[]>>
+    applyFlowCandidate(pid: string, id: string): Promise<Result<AgentFlowCandidate>>
+    rejectFlowCandidate(pid: string, id: string): Promise<Result<AgentFlowCandidate>>
+    resolveFlowCandidate(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentFlowCandidate>>
+    onFlowDraftChanged(callback: (event: AgentFlowDraftEvent) => void): () => void
     releaseEditorDraft(projectId: string, id: string): Promise<Result<boolean>>
     resolveCandidate(projectId: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentCandidate>>
     saveManualDraftOnQuit(projectId: string, target: Target, revision: string): Promise<Result<boolean>>
@@ -106,6 +116,8 @@ export interface ApiBridge {
     onDraftChanged(callback: (event: AgentDraftEvent) => void): () => void
     getActivity(): Promise<Result<{ running: number }>>
     prepareQuit(): Promise<Result<boolean>>
+    proposeCreateApiPlan(projectId: string, input: CreateApiPlanInput): Promise<Result<AgentPlan>>
+    listProjectCandidates(projectId: string): Promise<Result<ProjectCandidateSummary[]>>
     proposeSavePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     proposeExecutePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     cancelPlan(projectId: string, id: string): Promise<Result<AgentPlan>>

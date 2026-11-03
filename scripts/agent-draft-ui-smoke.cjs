@@ -26,9 +26,28 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
     const manual = (await window.api.targets.create(p.project_id, '0', 'api')).data
     manual.name = '人工验收接口'; await window.api.targets.save(p.project_id, manual)
     await window.api.agent.saveConnection({ name: '草稿测试', base_url: base, model: 'draft-ui', protocol: 'chat-completions' }); await window.api.agent.testConnection()
-    return { pid: p.project_id, targetId: target.target_id, manualId: manual.target_id }
+    return { pid: p.project_id, originalName: p.name, targetId: target.target_id, manualId: manual.target_id }
   }, `http://127.0.0.1:${server.address().port}/v1`)
   ;({ pid, targetId, manualId } = info)
+  // Switch projects while a stream is active through the real project selector.
+  await page.getByRole('button', { name: '新建/导入项目' }).click()
+  await page.getByPlaceholder('项目名称').fill('后台任务另一个项目')
+  await page.locator('.ant-modal').getByRole('button', { name: '创 建' }).click()
+  await page.locator('.project-switch').filter({ hasText: '后台任务另一个项目' }).waitFor()
+  await page.locator('.project-switch').click()
+  await page.getByRole('menuitem', { name: info.originalName }).click()
+  await page.locator('.project-switch').filter({ hasText: info.originalName }).waitFor()
+  hold = true
+  const backgroundId = await page.evaluate(async pid => { const c = (await window.api.agent.createConversation(pid)).data; await window.api.agent.sendMessage(pid, c.conversation_id, '跨项目任务'); return c.conversation_id }, pid)
+  await page.locator('.project-switch').click()
+  await page.getByRole('menuitem', { name: '后台任务另一个项目' }).click()
+  await page.locator('.project-switch').filter({ hasText: '后台任务另一个项目' }).waitFor()
+  assert.equal((await page.evaluate(async ({ pid, backgroundId }) => (await window.api.agent.getConversation(pid, backgroundId)).data, { pid, backgroundId })).status, 'running')
+  await page.locator('.project-switch').click()
+  await page.getByRole('menuitem', { name: info.originalName }).click()
+  await page.locator('.project-switch').filter({ hasText: info.originalName }).waitFor()
+  await page.evaluate(async ({ pid, backgroundId }) => window.api.agent.cancelMessage(pid, backgroundId), { pid, backgroundId })
+  hold = false
   await page.getByRole('link', { name: 'Agent' }).click()
   await page.getByRole('button', { name: '修改草稿', exact: true }).click()
   await page.getByLabel('计划目标').fill('把接口说明改为 Agent 候选说明')
@@ -54,6 +73,10 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   // Trigger a real unfinished model stream, then use the actual native quit guard.
   hold = true
   await page.evaluate(async pid => { const c = (await window.api.agent.createConversation(pid)).data; await window.api.agent.sendMessage(pid, c.conversation_id, '持续任务') }, pid)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false)
+  assert.equal((await page.evaluate(async pid => (await window.api.agent.listConversations(pid)).data, pid))[0].status, 'running')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show())
   await app.evaluate(({ app }) => { app.quit() })
   await page.locator('.ant-modal-confirm-title').filter({ hasText: '退出将停止 Agent 任务' }).waitFor()
   await page.getByRole('button', { name: '继续工作', exact: true }).click()
@@ -66,6 +89,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   assert.equal(state.saved.description, '原说明'); assert.notEqual(state.saved.url, 'https://example.invalid/agent-unsaved')
   assert.equal(state.draft.target.description, 'Agent 候选说明'); assert.equal(state.draft.target.url, 'https://example.invalid/agent-unsaved')
   assert.equal(state.manual.url, 'https://example.invalid/manual-saved-on-exit')
+  assert(state.conversations.some(c => c.status === 'interrupted'))
   assert(state.conversations.every(c => c.status !== 'running'))
   assert.equal(state.candidates.length, 2)
   await page.getByText('Agent 验收接口', { exact: true }).first().click()
