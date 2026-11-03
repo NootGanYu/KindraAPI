@@ -18,6 +18,9 @@ export default function AgentPage(): JSX.Element {
 function ProjectAgent({ projectId, projectName }: { projectId: string; projectName: string }): JSX.Element {
   const { message, modal } = App.useApp()
   const [connection, setConnection] = useState<AgentConnection | null>(null)
+  const [connections, setConnections] = useState<AgentConnection[]>([])
+  const [defaultId, setDefaultId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<AgentConversation[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [text, setText] = useState('')
@@ -40,16 +43,19 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
         return event.conversation ? [event.conversation, ...other] : other
       })
     })
-    Promise.all([window.api.agent.getConnection(), window.api.agent.listConversations(projectId)]).then(([config, list]) => {
+    Promise.all([window.api.agent.getProjectConnection(projectId), window.api.agent.listConversations(projectId), window.api.agent.listConnections()]).then(([config, list, all]) => {
       if (!mounted) return
-      setConnection(unwrap(config))
+      const preferred = unwrap(config)
+      setConnection(preferred); setDefaultId(preferred?.connection_id ?? null); setConnections(unwrap(all))
       const items = unwrap(list); setConversations(items); setSelected(items[0]?.conversation_id ?? null)
     }).catch(error => mounted && setError(error.message))
     return () => { mounted = false; off() }
   }, [projectId])
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }) }, [conversation?.messages])
-  function openConfig(): void {
-    form.setFieldsValue({ name: connection?.name ?? '模型连接', base_url: connection?.base_url ?? '', model: connection?.model ?? '', protocol: connection?.protocol ?? 'chat-completions', api_key: undefined })
+  function openConfig(config: AgentConnection | null = connection): void {
+    setEditingId(config?.connection_id ?? null)
+    form.resetFields()
+    form.setFieldsValue({ name: config?.name ?? '模型连接', base_url: config?.base_url ?? '', model: config?.model ?? '', protocol: config?.protocol ?? 'chat-completions', api_key: undefined })
     setConfigOpen(true)
   }
   async function saveConfig(): Promise<void> {
@@ -58,7 +64,9 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
       setBusy(true)
       // A blank field preserves an existing secret.
       if (!values.api_key) delete values.api_key
-      const saved = unwrap(await window.api.agent.saveConnection(values))
+      const saved = unwrap(await (editingId ? window.api.agent.saveConnection(values, editingId) : window.api.agent.createConnection(values)))
+      if (!defaultId) { unwrap(await window.api.agent.setProjectConnection(projectId, saved.connection_id)); setDefaultId(saved.connection_id) }
+      setConnections(unwrap(await window.api.agent.listConnections()))
       setConnection(saved); setConfigOpen(false); form.resetFields(); setTestMessage(''); setError('')
       message.success('连接已保存')
     } catch (error) { if (error instanceof Error) setError(error.message) }
@@ -67,9 +75,10 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
   async function test(): Promise<void> {
     setTesting(true); setTestMessage(''); setError('')
     try {
-      const result = unwrap(await window.api.agent.testConnection())
+      const result = unwrap(await window.api.agent.testConnection(connection!.connection_id))
       setTestMessage(result.message)
-      setConnection(unwrap(await window.api.agent.getConnection()))
+      setConnection(unwrap(await window.api.agent.getConnection(connection!.connection_id)))
+      setConnections(unwrap(await window.api.agent.listConnections()))
     } catch (error) { setError((error as Error).message) }
     finally { setTesting(false) }
   }
@@ -84,10 +93,25 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
     setBusy(true); setError('')
     try {
       const current = conversation ?? await create()
-      unwrap(await window.api.agent.sendMessage(projectId, current.conversation_id, text))
+      unwrap(await window.api.agent.sendMessage(projectId, current.conversation_id, text, connection?.connection_id))
       setText('')
     } catch (error) { setError((error as Error).message) }
     finally { setBusy(false) }
+  }
+  async function setDefault(): Promise<void> {
+    if (!connection) return
+    try { unwrap(await window.api.agent.setProjectConnection(projectId, connection.connection_id)); setDefaultId(connection.connection_id); message.success('项目默认连接已更新') }
+    catch (error) { setError((error as Error).message) }
+  }
+  function removeConnection(): void {
+    if (!editingId) return
+    modal.confirm({ title: '删除这个模型连接？', content: '已开始的任务继续使用原配置；引用此连接的项目需要重新选择。', okText: '确认删除', cancelText: '取消', onOk: async () => {
+      unwrap(await window.api.agent.deleteConnection(editingId))
+      setConnections(unwrap(await window.api.agent.listConnections()))
+      if (connection?.connection_id === editingId) setConnection(null)
+      if (defaultId === editingId) setDefaultId(null)
+      setConfigOpen(false); form.resetFields()
+    } })
   }
   function remove(): void {
     if (!conversation) return
@@ -109,8 +133,14 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
     <section className="agent-chat">
       <header className="agent-toolbar"><div><Typography.Title level={4}>Agent 对话</Typography.Title>
         <Typography.Text type="secondary">{connection ? `${connection.name} · ${connection.model}` : '配置模型后开始对话'}</Typography.Text></div>
-        <Space><Button icon={<SettingOutlined />} onClick={openConfig}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
+        <Space><Button icon={<SettingOutlined />} onClick={() => openConfig()}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
       </header>
+      <Space wrap style={{ padding: '0 20px' }}>
+        <Select aria-label="本轮模型连接" placeholder="请选择本轮模型连接" style={{ minWidth: 240 }} value={connection?.connection_id} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} onChange={id => { setConnection(connections.find(item => item.connection_id === id) ?? null); setTestMessage('') }} />
+        <Button disabled={!connection || defaultId === connection.connection_id} onClick={() => void setDefault()}>设为项目默认</Button>
+        {connection && defaultId === connection.connection_id && <Tag>项目默认</Tag>}
+      </Space>
+      {running && conversation.connection && <Alert type="info" message={`本轮固定连接：${conversation.connection.name} · ${conversation.connection.model}；修改配置不影响本轮。`} />}
       {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
       {testMessage && <Alert type="success" showIcon message={testMessage} />}
       {connection?.capability === 'text-only' && <Alert type="info" message="仅文本对话；连续工具操作不可用" />}
@@ -131,13 +161,17 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
         <Space><Typography.Text type="secondary">⌘ / Ctrl + Enter 发送</Typography.Text>{running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(error => setError(error.message))}>停止回复</Button> : <Button type="primary" disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}</Space>
       </div>
     </section>
-    <Modal title="配置模型连接" open={configOpen} onCancel={() => { setConfigOpen(false); form.resetFields() }} footer={<Button type="primary" loading={busy} onClick={() => void saveConfig()}>保存连接</Button>}>
+    <Modal title="配置模型连接" open={configOpen} onCancel={() => { setConfigOpen(false); form.resetFields() }} footer={<Space>{editingId && <Button danger onClick={removeConnection}>删除连接</Button>}<Button type="primary" loading={busy} onClick={() => void saveConfig()}>保存连接</Button></Space>}>
+      <Space style={{ marginBottom: 16 }}>
+        <Select aria-label="管理模型连接" style={{ minWidth: 200 }} placeholder="新连接" value={editingId ?? undefined} options={connections.map(item => ({ value: item.connection_id, label: item.name }))} onChange={id => openConfig(connections.find(item => item.connection_id === id) ?? null)} />
+        <Button onClick={() => openConfig(null)}>新增连接</Button>
+      </Space>
       <Form form={form} layout="vertical">
         <Form.Item name="name" label="连接名称"><Input /></Form.Item>
         <Form.Item name="base_url" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="填写兼容服务的基础地址，例如 https://example.com/v1"><Input placeholder="https://example.com/v1" /></Form.Item>
         <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}><Input /></Form.Item>
         <Form.Item name="protocol" label="协议"><Select options={[{ label: 'Chat Completions', value: 'chat-completions' }, { label: 'Responses', value: 'responses' }]} /></Form.Item>
-        <Form.Item name="api_key" label="API Key" extra={connection?.has_key ? 'Key 已安全保存；留空保留。' : 'Key 由系统凭据存储保护，本机无明文配置。'}><Input.Password autoComplete="new-password" /></Form.Item>
+        <Form.Item name="api_key" label="API Key" extra={connections.find(item => item.connection_id === editingId)?.has_key ? 'Key 已安全保存；留空保留。' : 'Key 由系统凭据存储保护，本机无明文配置。'}><Input.Password autoComplete="new-password" /></Form.Item>
       </Form>
     </Modal>
   </div>

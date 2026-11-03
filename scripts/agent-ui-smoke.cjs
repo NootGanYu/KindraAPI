@@ -42,7 +42,7 @@ async function stop() { await app.evaluate(({ app }) => app.exit(0)); app = null
   await page.getByLabel('发送给 Agent 的消息').fill('你好')
   await page.getByRole('button', { name: /发\s*送/ }).click()
   await page.getByText('这是可恢复的 Agent 回复。', { exact: true }).waitFor()
-  const config = await page.evaluate(() => window.api.agent.getConnection())
+  const config = await page.evaluate(async () => { const projects = await window.api.projects.list(); return window.api.agent.getProjectConnection(projects.data[0].project_id) })
   assert(config.ok && config.data.has_key)
   assert.equal(config.data.protocol, protocol)
   assert(!JSON.stringify(config).includes('ui-test-secret'))

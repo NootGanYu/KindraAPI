@@ -3,6 +3,7 @@ export type AgentProtocol = 'chat-completions' | 'responses'
 export type AgentCapability = 'unchecked' | 'text-only' | 'tools'
 export interface AgentConnection {
   connection_id: string
+  revision: string
   name: string
   base_url: string
   model: string
@@ -33,6 +34,8 @@ export interface AgentConversation {
   updated_at: string
   status: 'idle' | 'running' | 'interrupted' | 'error'
   messages: AgentMessage[]
+  /** Configuration used by the last turn; never contains the credential. */
+  connection?: AgentConnection
   error?: string
 }
 export interface AgentEvent {

@@ -18,14 +18,19 @@ const subscribe = (
 
 const api = {
   agent: {
-    getConnection: () => invoke('agent:getConnection'),
-    saveConnection: (input: unknown) => invoke('agent:saveConnection', input),
-    testConnection: () => invoke('agent:testConnection'),
+    getConnection: (connectionId?: string) => invoke('agent:getConnection', connectionId),
+    listConnections: () => invoke('agent:listConnections'),
+    createConnection: (input: unknown) => invoke('agent:createConnection', input),
+    deleteConnection: (connectionId: string) => invoke('agent:deleteConnection', connectionId),
+    getProjectConnection: (projectId: string) => invoke('agent:getProjectConnection', projectId),
+    setProjectConnection: (projectId: string, connectionId: string | null) => invoke('agent:setProjectConnection', projectId, connectionId),
+    saveConnection: (input: unknown, connectionId?: string) => invoke('agent:saveConnection', input, connectionId),
+    testConnection: (connectionId?: string) => invoke('agent:testConnection', connectionId),
     createConversation: (projectId: string) => invoke('agent:createConversation', projectId),
     listConversations: (projectId: string) => invoke('agent:listConversations', projectId),
     getConversation: (projectId: string, id: string) => invoke('agent:getConversation', projectId, id),
     deleteConversation: (projectId: string, id: string) => invoke('agent:deleteConversation', projectId, id),
-    sendMessage: (projectId: string, id: string, content: string) => invoke('agent:sendMessage', projectId, id, content),
+    sendMessage: (projectId: string, id: string, content: string, connectionId?: string) => invoke('agent:sendMessage', projectId, id, content, connectionId),
     cancelMessage: (projectId: string, id: string) => invoke('agent:cancelMessage', projectId, id),
     onChanged: (callback: (event: unknown) => void) => subscribe('agent:changed', callback)
   },
