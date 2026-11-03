@@ -54,6 +54,10 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   // Trigger a real unfinished model stream, then use the actual native quit guard.
   hold = true
   await page.evaluate(async pid => { const c = (await window.api.agent.createConversation(pid)).data; await window.api.agent.sendMessage(pid, c.conversation_id, '持续任务') }, pid)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false)
+  assert.equal((await page.evaluate(async pid => (await window.api.agent.listConversations(pid)).data, pid))[0].status, 'running')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show())
   await app.evaluate(({ app }) => { app.quit() })
   await page.locator('.ant-modal-confirm-title').filter({ hasText: '退出将停止 Agent 任务' }).waitFor()
   await page.getByRole('button', { name: '继续工作', exact: true }).click()
@@ -66,6 +70,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   assert.equal(state.saved.description, '原说明'); assert.notEqual(state.saved.url, 'https://example.invalid/agent-unsaved')
   assert.equal(state.draft.target.description, 'Agent 候选说明'); assert.equal(state.draft.target.url, 'https://example.invalid/agent-unsaved')
   assert.equal(state.manual.url, 'https://example.invalid/manual-saved-on-exit')
+  assert(state.conversations.some(c => c.status === 'interrupted'))
   assert(state.conversations.every(c => c.status !== 'running'))
   assert.equal(state.candidates.length, 2)
   await page.getByText('Agent 验收接口', { exact: true }).first().click()

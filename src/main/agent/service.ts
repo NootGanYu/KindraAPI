@@ -11,6 +11,7 @@ import { agentRoot, getConnection, saveConnection, createConnection, listConnect
 import { completeModel } from './model'
 
 const active = new Map<string, AbortController>()
+const tasks = new Set<Promise<void>>()
 const listeners = new Set<(event: AgentEvent) => void>()
 export function onAgentEvent(listener: (event: AgentEvent) => void): () => void {
   listeners.add(listener)
@@ -79,6 +80,9 @@ async function sendMessage(projectId: string, id: string, content: string, conne
   if (active.has(id)) throw new Error('当前会话仍在回复中')
   const controller = new AbortController()
   active.set(id, controller)
+  let finish!: () => void
+  const task = new Promise<void>(resolve => { finish = resolve })
+  tasks.add(task)
   try {
     const snapshot = await connectionSnapshot(connectionId, projectId)
     const { api_key: _secret, ...publicSnapshot } = snapshot
@@ -108,16 +112,19 @@ async function sendMessage(projectId: string, id: string, content: string, conne
         conversation.status = controller.signal.aborted ? 'interrupted' : 'error'
         conversation.messages[conversation.messages.length - 1].status = controller.signal.aborted ? 'interrupted' : 'error'
         conversation.error = redact(error instanceof Error ? error.message : '模型请求失败')
-      } finally { active.delete(id); persist(conversation) }
+      } finally { active.delete(id); try { persist(conversation) } finally { tasks.delete(task); finish() } }
     })()
     return conversation
-  } catch (error) { active.delete(id); throw error }
+  } catch (error) { active.delete(id); tasks.delete(task); finish(); throw error }
 }
 function cancelMessage(projectId: string, id: string): boolean {
   getConversation(projectId, id)
   active.get(id)?.abort()
   return true
 }
-export function shutdownAgent(): void { shutdownPlans(); for (const controller of active.values()) controller.abort() }
+export async function shutdownAgent(): Promise<void> {
+  for (const controller of active.values()) controller.abort()
+  await Promise.all([shutdownPlans(), ...tasks])
+}
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: () => { shutdownAgent(); stashAgentDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
