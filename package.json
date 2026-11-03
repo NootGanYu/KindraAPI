@@ -11,6 +11,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "test:flow-entry": "esbuild scripts/flow-entry-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-entry-smoke.cjs && electron node_modules/.tmp/flow-entry-smoke.cjs",
     "test:documentation": "esbuild scripts/documentation-smoke.ts --bundle --platform=node --format=cjs --external:electron --external:postman-runtime --external:postman-collection --external:mqtt --external:aedes --alias:@shared=./src/shared --outfile=scripts/.documentation-smoke.cjs && electron scripts/.documentation-smoke.cjs",
     "test:client-sync": "esbuild scripts/client-sync-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/client-sync-smoke.cjs && electron node_modules/.tmp/client-sync-smoke.cjs",
     "dev": "electron-vite dev",
