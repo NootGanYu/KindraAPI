@@ -4,7 +4,7 @@
 
 **Blocked by:** [05 只读连续操作与依赖](05-read-only-steps.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 
