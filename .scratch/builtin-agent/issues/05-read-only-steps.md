@@ -4,7 +4,7 @@
 
 **Blocked by:** [04 只读计划解释当前接口](04-read-only-plan.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 
