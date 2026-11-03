@@ -1,3 +1,5 @@
+import { projectRedactor } from './redaction'
+import { planCommands, shutdownPlans } from './plans'
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -78,7 +80,8 @@ async function sendMessage(projectId: string, id: string, content: string): Prom
   try {
     const snapshot = await connectionSnapshot()
     const now = new Date().toISOString()
-    const userText = redactKey(content.trim(), snapshot.api_key)
+    const redact = projectRedactor(projectId, [snapshot.api_key])
+    const userText = redact(content.trim())
     if (!conversation.messages.length) conversation.title = userText.slice(0, 40)
     conversation.messages.push({ message_id: randomUUID(), role: 'user', content: userText, status: 'complete', created_at: now })
     const modelMessages = conversation.messages.filter(message => message.status === 'complete').map(({ role, content }) => ({ role, content }))
@@ -91,10 +94,10 @@ async function sendMessage(projectId: string, id: string, content: string): Prom
         await chatCompletion(snapshot, [{ role: 'system', content: '你是 Kindra 项目内的助手。当前只提供文本对话，不具备读取项目、修改或执行接口的工具。不要声称已经执行操作。' }, ...modelMessages], {
           signal: controller.signal,
           onText: text => {
-            conversation.messages[conversation.messages.length - 1].content = redactStreamingKey(text, snapshot.api_key)
+            conversation.messages[conversation.messages.length - 1].content = redact.stream(text)
             emit(conversation)
           }
-        }).then(result => { conversation.messages[conversation.messages.length - 1].content = redactKey(result.text, snapshot.api_key) })
+        }).then(result => { conversation.messages[conversation.messages.length - 1].content = redact(result.text) })
         conversation.status = 'idle'
         conversation.messages[conversation.messages.length - 1].status = 'complete'
       } catch (error) {
@@ -111,6 +114,6 @@ function cancelMessage(projectId: string, id: string): boolean {
   active.get(id)?.abort()
   return true
 }
-export function shutdownAgent(): void { for (const controller of active.values()) controller.abort() }
+export function shutdownAgent(): void { shutdownPlans(); for (const controller of active.values()) controller.abort() }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { getConnection, saveConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...planCommands, getConnection, saveConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

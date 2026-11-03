@@ -1,8 +1,10 @@
 import type { AgentConnection } from '@shared/agent'
 
 export type ModelConnection = AgentConnection & { api_key: string }
-export interface ModelMessage { role: 'system' | 'user' | 'assistant'; content: string }
-export interface ModelReply { text: string; toolCalls: Array<{ name: string; arguments: string }> }
+export interface ModelToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
+export interface ModelMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; tool_calls?: ModelToolCall[] }
+export interface ModelTool { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }
+export interface ModelReply { text: string; toolCalls: Array<{ id: string; name: string; arguments: string }> }
 export function redactKey(text: string, key: string): string {
   return key ? text.split(key).join('[已隐藏]') : text
 }
@@ -20,9 +22,10 @@ export function redactStreamingKey(text: string, key: string): string {
 export async function chatCompletion(
   config: ModelConnection,
   messages: ModelMessage[],
-  options: { signal?: AbortSignal; onText?: (text: string) => void; probeTools?: boolean } = {}
+  options: { signal?: AbortSignal; onText?: (text: string) => void; probeTools?: boolean; tools?: ModelTool[]; toolChoice?: 'auto' | 'required' | 'none' } = {}
 ): Promise<ModelReply> {
   const body: Record<string, unknown> = { model: config.model, messages, stream: !!options.onText }
+  if (options.tools) { body.tools = options.tools; body.tool_choice = options.toolChoice ?? 'auto' }
   if (options.probeTools) {
     body.tools = [{ type: 'function', function: { name: 'kindra_capability_probe', description: 'Return the supplied token to confirm function calling. No side effects.', parameters: { type: 'object', properties: { token: { type: 'string', enum: ['kindra-probe'] } }, required: ['token'], additionalProperties: false } } }]
     body.tool_choice = { type: 'function', function: { name: 'kindra_capability_probe' } }
@@ -44,7 +47,7 @@ export async function chatCompletion(
     if (!message || (typeof message.content !== 'string' && !Array.isArray(message.tool_calls))) throw new Error('模型服务未返回有效消息')
     const text = typeof message.content === 'string' ? message.content : ''
     options.onText?.(text)
-    return { text, toolCalls: (message.tool_calls ?? []).map((call: any) => ({ name: call.function?.name, arguments: call.function?.arguments })) }
+    return { text, toolCalls: (message.tool_calls ?? []).map((call: any) => ({ id: call.id, name: call.function?.name, arguments: call.function?.arguments })) }
   }
   if (!response.body) throw new Error('模型返回空响应流')
   const reader = response.body.getReader(), decoder = new TextDecoder()

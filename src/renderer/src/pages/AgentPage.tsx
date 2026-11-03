@@ -1,3 +1,4 @@
+import AgentPlanPanel from '../components/AgentPlanPanel'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, App, Button, Empty, Form, Input, Modal, Select, Space, Tag, Typography } from 'antd'
 import { MessageOutlined, PlusOutlined, SettingOutlined } from '@ant-design/icons'
@@ -109,7 +110,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
     <section className="agent-chat">
       <header className="agent-toolbar"><div><Typography.Title level={4}>Agent 对话</Typography.Title>
         <Typography.Text type="secondary">{connection ? `${connection.name} · ${connection.model}` : '配置模型后开始对话'}</Typography.Text></div>
-        <Space><Button icon={<SettingOutlined />} onClick={openConfig}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
+        <Space><AgentPlanPanel projectId={projectId} connection={connection} /><Button icon={<SettingOutlined />} onClick={openConfig}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
       </header>
       {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
       {testMessage && <Alert type="success" showIcon message={testMessage} />}

@@ -18,6 +18,13 @@ const subscribe = (
 
 const api = {
   agent: {
+    proposeReadPlan: (projectId: string, input: unknown) => invoke('agent:proposeReadPlan', projectId, input),
+    getPlan: (projectId: string, id: string) => invoke('agent:getPlan', projectId, id),
+    listPlans: (projectId: string) => invoke('agent:listPlans', projectId),
+    approvePlan: (projectId: string, id: string) => invoke('agent:approvePlan', projectId, id),
+    rejectPlan: (projectId: string, id: string) => invoke('agent:rejectPlan', projectId, id),
+    deletePlan: (projectId: string, id: string) => invoke('agent:deletePlan', projectId, id),
+    onPlanChanged: (callback: (event: unknown) => void) => subscribe('agent:plan-changed', callback),
     getConnection: () => invoke('agent:getConnection'),
     saveConnection: (input: unknown) => invoke('agent:saveConnection', input),
     testConnection: () => invoke('agent:testConnection'),
