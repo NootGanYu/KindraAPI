@@ -65,6 +65,14 @@ const BODY_LANGUAGES: Record<RawBodyLanguage, string> = {
 }
 const TABS = ['Header', 'Query', 'Path', 'Body', '认证', 'Cookie', '预执行操作', '后执行操作']
 
+/** 打开接口时定位到最可能承载参数的标签：读请求看 Query，写请求看 Body。 */
+function defaultRequestTab(method?: string): string {
+  const verb = (method || 'GET').toUpperCase()
+  return verb === 'GET' || verb === 'HEAD' || verb === 'OPTIONS' || verb === 'DELETE'
+    ? 'Query'
+    : 'Body'
+}
+
 interface JsonError {
   message: string
   line: number
@@ -141,7 +149,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
   const modelEpoch = useModelEpoch(draft.target_id)
   const [urlEditing, setUrlEditing] = useState(false)
   const [urlText, setUrlText] = useState('')
-  const [activeTab, setActiveTab] = useState('Body')
+  const [activeTab, setActiveTab] = useState(() => defaultRequestTab(draft.method))
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
   const [bodyView, setBodyView] = useState<'raw' | 'fields'>(debug ? 'raw' : 'fields')
