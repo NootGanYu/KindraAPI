@@ -407,7 +407,7 @@ export async function sendRequest(
   projectId: string,
   target: Target,
   environmentId?: string,
-  options: { onRequestStart?: () => void; signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
+  options: { requireResolvedVariables?: boolean; onRequestStart?: () => void; signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
 ): Promise<SendRecord> {
   const settings = options.settings ?? store.getSettings()
   const { env, globals } = options.scopes ? { env: null, globals: { vars: {} } } : loadScopes(projectId, environmentId)
@@ -547,6 +547,18 @@ export async function sendRequest(
               controls.abort()
               finish({ error: { type: 'file-changed', message: (error as Error).message }, response: null, request: null })
               return
+            }
+            if (options.requireResolvedVariables) {
+              // Postman has applied API pre-scripts and variable scopes at this point.
+              const outgoing = request as { url?: { toString(): string }; headers?: { toJSON(): unknown }; body?: { toJSON(): unknown }; auth?: { toJSON(): unknown } }
+              let text = JSON.stringify({ url: outgoing.url?.toString(), headers: outgoing.headers?.toJSON(), body: outgoing.body?.toJSON(), auth: outgoing.auth?.toJSON() })
+              try { text = decodeURIComponent(text) } catch { /* preserve malformed URL escapes */ }
+              const missing = text.match(/\{\{\s*([^{}]+?)\s*\}\}/)
+              if (missing) {
+                controls.abort()
+                finish({ error: { type: 'missing-variable', message: `缺少运行变量 ${missing[1]}，无法满足请求前置条件` }, response: null, request })
+                return
+              }
             }
             requestRef = request
             options.onRequestStart?.()

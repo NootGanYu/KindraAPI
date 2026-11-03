@@ -5,7 +5,9 @@ const sensitive = /(?:authorization|cookie|token|password|passwd|secret|api[_-]?
 export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
   const secrets = new Set<string>()
   const remember = (value: unknown): void => {
-    if (typeof value === 'string' && value && value !== HIDDEN) {
+    if ((typeof value === 'number' || typeof value === 'boolean')) {
+      secrets.add(String(value))
+    } else if (typeof value === 'string' && value && value !== HIDDEN) {
       secrets.add(value)
       const bearer = value.match(/^(?:Bearer|Basic)\s+(.+)$/i)
       if (bearer) secrets.add(bearer[1])
@@ -40,7 +42,7 @@ export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
   const hide = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(hide)
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v]) => [k, hide(v)]))
-    return typeof value === 'string' ? HIDDEN : value
+    return value === undefined || value === null ? value : HIDDEN
   }
   const project = (value: unknown, key = ''): unknown => {
     if (key === 'body_base64') return undefined
@@ -49,7 +51,7 @@ export function redactEvidence<T>(value: T, seeds: unknown[] = []): T {
     if (/^(script|pre_script|post_script)$/.test(key) && typeof value === 'string' && value) return HIDDEN
     if (typeof value === 'string') {
       // These opaque identifiers are needed to query and deduplicate the same Run.
-      if (/^(?:run_id|project_id|flow_id|event_id|instance_id|after_instance_id|parent_event_id|step_id|logical_step_id|target_id|env_id|environment_id|request_id|request_environment_id|preview_id|instance_id|after_instance_id|revision|previous_revision|next_revision|api_revision|flow_revision|fingerprint|sha256)$/.test(key)) return value
+      if (/^(?:run_id|project_id|flow_id|event_id|instance_id|after_instance_id|parent_event_id|step_id|logical_step_id|target_id|env_id|environment_id|request_id|request_environment_id|preview_id|instance_id|after_instance_id|revision|previous_revision|next_revision|api_revision|definition_revision|flow_revision|fingerprint|sha256)$/.test(key)) return value
       try {
         const decoded: unknown = JSON.parse(value)
         if (decoded && typeof decoded === 'object') return JSON.stringify(project(decoded))

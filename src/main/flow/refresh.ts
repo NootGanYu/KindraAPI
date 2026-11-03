@@ -3,6 +3,7 @@ import type { Environment, FlowEvent, FlowRefreshConflict, FlowRefreshPreview, F
 import { createId } from '@shared/factories';
 import * as store from '../storage/store';
 import { captureRequestDefinition, type RequestExecutionDefinition } from '../request/executor';
+import { verifiedFileResolver } from '../request/files';
 import { redactEvidence } from './evidence';
 export const definitionRevision = (definition: RequestExecutionDefinition): string => crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex');
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -23,10 +24,11 @@ export class FlowRefreshController {
         baseBlockers: string[];
     };
     private reviewed?: Candidate[];
+    validateDispatch = false;
     constructor(private projectId: string, private environment: Environment | null, private definitions: Map<string, RequestExecutionDefinition>, private remaining: () => Array<{
         event: FlowEvent;
         count: number;
-    }>, private applyInput: (target: Target, input?: FlowRequestInput) => Target, private variables: () => Record<string, string>, events: FlowEvent[], private position: () => string | undefined) {
+    }>, private applyInput: (target: Target, input?: FlowRequestInput) => Target, private variables: () => Record<string, string>, events: FlowEvent[], private position: () => string | undefined, private nextEvent: () => FlowEvent | undefined) {
         const capture = (items: FlowEvent[]): void => {
             for (const event of items) {
                 if (event.target_id) {
@@ -98,7 +100,7 @@ export class FlowRefreshController {
             else input[section]![key] = candidate.event.input![section]![key];
         }
         const definition = captureRequestDefinition(this.projectId, this.applyInput(candidate.raw, input), this.environment);
-        const effective = this.effective(definition, true);
+        const effective = this.effective(definition, this.needsVariablesNow(candidate.event, definition));
         candidate.input = input;
         candidate.definition = definition;
         conflict.resolution = choice;
@@ -134,9 +136,21 @@ export class FlowRefreshController {
             this.validate(this.reviewed.filter(item => remaining.has(item.event.event_id)));
         }
         // A deleted API is never silently resumed even when the user keeps the original snapshot.
-        for (const { event } of this.remaining())
+        for (const { event } of this.remaining()) {
             if (event.target_id && !store.getTarget(this.projectId, event.target_id))
                 throw new Error('接口已删除，请保持暂停并重新审阅');
+            verifiedFileResolver(this.definitions.get(event.event_id)?.files ?? []);
+        }
+        // Only the next executable event can require completed outputs now. Later
+        // requests may depend on a pending request or script; validate at dispatch.
+        const event = this.nextEvent();
+        const definition = event && this.definitions.get(event.event_id);
+        if (event && definition) this.effective(definition, this.needsVariablesNow(event, definition));
+        this.validateDispatch = true;
+    }
+    private needsVariablesNow(event: FlowEvent, definition: RequestExecutionDefinition): boolean {
+        return this.nextEvent()?.event_id === event.event_id &&
+            !(definition.target.request?.pre_script_enabled !== false && definition.target.request?.pre_script?.trim());
     }
     approveScope(previewId: string): FlowRefreshPreview {
         if (!this.pending || this.pending.preview.preview_id !== previewId)
@@ -181,7 +195,7 @@ export class FlowRefreshController {
             const captured = captureRequestDefinition(this.projectId, this.applyInput(current.target, item.input), this.environment);
             if (definitionRevision(captured) !== definitionRevision(item.definition))
                 throw new Error('继承、模型或文件定义已变化，请重新审阅');
-            this.effective(item.definition, true);
+            this.effective(item.definition, this.needsVariablesNow(item.event, item.definition));
         }
     }
     private effective(definition: RequestExecutionDefinition, validate = false): FlowRefreshReference['effective_request'] {

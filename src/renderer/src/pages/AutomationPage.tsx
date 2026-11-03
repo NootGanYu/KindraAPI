@@ -1,3 +1,4 @@
+import { isActiveFlowRunStatus } from '@shared/flow'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -98,7 +99,6 @@ function countRun(events: FlowEventResult[]): { passed: number; failed: number; 
   return acc
 }
 
-const isActiveRunStatus = (status: FlowRun['status']): boolean => ['running', 'pausing', 'paused', 'cancelling', 'permission_revoked'].includes(status)
 function runStatusLabel(status: string): string {
   return ({ permission_revoked: 'MCP 权限已撤销', cancelling: '正在取消', cancelled: '已取消', running: '运行中', pausing: '正在暂停', paused: '已暂停', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知', blocked: '依赖阻塞' } as Record<string, string>)[status] ?? status
 }
@@ -119,7 +119,7 @@ export default function AutomationPage(): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [starting, setStarting] = useState(false)
   const running = starting || run?.status === 'running' || run?.status === 'pausing'
-  const active = Boolean(run && isActiveRunStatus(run.status))
+  const active = Boolean(run && isActiveFlowRunStatus(run.status))
   const [controlling, setControlling] = useState(false)
   const projectSelection = useRef(project?.project_id)
   projectSelection.current = project?.project_id
@@ -187,7 +187,7 @@ export default function AutomationPage(): JSX.Element {
   }, [project?.project_id])
 
   useEffect(() => {
-    if (!project || !run || !isActiveRunStatus(run.status)) return
+    if (!project || !run || !isActiveFlowRunStatus(run.status)) return
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const projectId = project.project_id
@@ -197,7 +197,7 @@ export default function AutomationPage(): JSX.Element {
       if (stopped) return
       if (result.ok && result.data) {
         setRun(result.data)
-        if (!isActiveRunStatus(result.data.status)) {
+        if (!isActiveFlowRunStatus(result.data.status)) {
           await reloadRuns(result.data.flow_id)
           return
         }
@@ -523,8 +523,8 @@ export default function AutomationPage(): JSX.Element {
       </main>
 
       <aside className="automation-panel">
-        <div className="automation-panel-head">
-          <span>运行结果</span>
+        <div className="automation-panel-head automation-results-head">
+          <span className="automation-results-title">运行结果</span>
           {run?.status === 'running' || run?.status === 'pausing' ? (
             <Button size="small" disabled={run.status === 'pausing'} loading={controlling} onClick={() => void controlRun('pause')}>
               {run.status === 'pausing' ? '正在暂停' : '暂停'}
@@ -532,7 +532,7 @@ export default function AutomationPage(): JSX.Element {
           ) : run?.status === 'paused' || run?.status === 'permission_revoked' ? (
             <Button size="small" type="primary" loading={controlling} onClick={() => void controlRun('resume')}>{run.version_switches?.length ? '继续已审阅快照' : '继续原快照'}</Button>
           ) : null}
-          {run && isActiveRunStatus(run.status) ? (
+          {run && isActiveFlowRunStatus(run.status) ? (
             <Button size="small" danger disabled={run.status === 'cancelling'} loading={controlling} onClick={() => void controlRun('cancel')}>
               {run.status === 'cancelling' ? '正在取消' : '取消运行'}
             </Button>
@@ -541,7 +541,7 @@ export default function AutomationPage(): JSX.Element {
             <Tag>运行版本：{run.snapshot?.flow_revision.slice(0, 8) ?? '旧记录'}</Tag>
           </Tooltip> : null}
           {run ? (
-            <Tag color={isActiveRunStatus(run.status) ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
+            <Tag color={isActiveFlowRunStatus(run.status) ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
               {runStatusLabel(run.status)}
             </Tag>
           ) : null}
