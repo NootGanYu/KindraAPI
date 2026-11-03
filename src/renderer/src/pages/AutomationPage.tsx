@@ -209,7 +209,7 @@ export default function AutomationPage(): JSX.Element {
     if (!project || !flow) return false
     setSaving(true)
     try {
-      const result = await window.api.flows.save(project.project_id, { ...flow, env_id: envId })
+      const result = await window.api.flows.save(project.project_id, { ...flow, env_id: envId }, flow.revision ?? '')
       if (!result.ok) {
         message.error(result.error)
         return false

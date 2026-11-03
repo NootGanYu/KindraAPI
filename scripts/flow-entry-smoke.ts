@@ -58,7 +58,8 @@ async function main(): Promise<void> {
     const env = createEnvironment(project.project_id, '入口指定环境')
     env.env_var_list.entry = { current_value: 'chosen', initial_value: '', description: '', is_checked: 1 }
     store.saveEnvironment(project.project_id, env)
-    const grouped = createFlow(project.project_id, '所有既有事件', env.env_id)
+    const grouped = unwrap(await invoke<Flow>('flow:create', project.project_id, '所有既有事件'))
+    grouped.env_id = env.env_id
     grouped.events = [
       createFlowEvent('script', { script: 'pm.environment.set("entry", "chosen");' }),
       createFlowEvent('begin', { children: [
@@ -75,7 +76,7 @@ async function main(): Promise<void> {
       createFlowEvent('if', { condition: 'false', children: [createFlowEvent('api', { target_id: target.target_id })] }),
       createFlowEvent('api', { target_id: target.target_id, enabled: false })
     ]
-    const saved = unwrap(await invoke<Flow>('flow:save', project.project_id, grouped))
+    const saved = unwrap(await invoke<Flow>('flow:save', project.project_id, grouped, grouped.revision))
     requests.length = 0
     const uiRun = unwrap(await invoke<FlowRun>('flow:run', project.project_id, saved.flow_id, env.env_id))
     assert.equal(uiRun.status, 'passed')
