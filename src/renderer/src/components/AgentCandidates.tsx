@@ -1,3 +1,4 @@
+import AgentConflictReview from './AgentConflictReview'
 import { candidateDiff } from './candidateDiff'
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Space, Tag } from 'antd'
@@ -31,7 +32,7 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
       await flushAgentDrafts()
       const result = await window.api.agent.applyCandidate(projectId, item.candidate_id)
       if (!result.ok) throw new Error(result.error)
-      if (result.data.error) setError(result.data.error)
+      if (result.data.error) { setError(result.data.error); setSelected(item.candidate_id) }
       await load()
     } catch (error) { setError((error as Error).message) }
   }
@@ -46,9 +47,11 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
     {items.map(item => <div key={item.candidate_id} style={{ padding: '12px 0', borderBottom: '1px solid #ddd' }}>
       <Space wrap><strong>{item.number}</strong><Tag color={item.status === 'conflict' ? 'error' : item.status === 'pending' ? 'warning' : 'default'}>{({ pending: '待确认', conflict: '冲突候选', applied: '已应用草稿', rejected: '未采纳' })[item.status]}</Tag>
         <Button size="small" onClick={() => setSelected(item.candidate_id)}>查看差异</Button>
+        {item.status === 'conflict' && <Button size="small" onClick={() => { setSelected(item.candidate_id); void apply(item) }}>重新检查冲突</Button>}
         {item.status === 'pending' && <Button size="small" type="primary" onClick={() => void apply(item)}>应用到草稿</Button>}
       </Space>{item.error && <p>{item.error}</p>}
     </div>)}
+    {candidate && <AgentConflictReview key={candidate.merge?.review_id ?? candidate.candidate_id} candidate={candidate} onUpdated={load} onError={setError} />}
     {candidate && <div aria-label="候选双栏差异" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, marginTop: 16 }}>
       {(['before', 'after'] as const).map(side => <div key={side}><strong>{side === 'before' ? '基线' : 'Agent 提案'}</strong><pre style={{ overflow: 'auto', maxHeight: 420, fontSize: 12, background: '#fafafa', padding: 8 }}>{rows.map((row, index) => <div key={index} data-diff={row.changed && row[side] !== undefined ? (side === 'before' ? 'removed' : 'added') : 'same'} style={{ minHeight: '1.5em', background: row.changed && row[side] !== undefined ? (side === 'before' ? '#fff0ef' : '#edfaef') : undefined }}><span style={{ opacity: .4 }}>{String(row[side === 'before' ? 'beforeNumber' : 'afterNumber'] ?? '').padStart(3)} </span>{row.changed && row[side] !== undefined ? (side === 'before' ? '- ' : '+ ') : '  '}{row[side] ?? ' '}</div>)}</pre></div>)}
     </div>}

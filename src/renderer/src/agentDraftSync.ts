@@ -1,20 +1,32 @@
 import { stableJson, targetDefinition } from '@shared/targetSync'
+import type { Result } from '@shared/types'
 import { useApp } from './store'
 
 let pending: Promise<unknown> = Promise.resolve()
+function enqueue(operation: () => Promise<Result<unknown>>): void {
+  pending = pending.catch(() => {}).then(async () => {
+    const result = await operation()
+    if (!result.ok) throw new Error(result.error)
+  }).catch(error => { useApp.setState({ syncNotice: `Agent 草稿暂存失败：${error.message}` }); throw error })
+  void pending.catch(() => {})
+}
 /** Main-process drafts survive tabs/project navigation; synchronous editor mutations are queued in order. */
 export function connectAgentDraftSync(): () => void {
   const off = useApp.subscribe((state, previous) => {
-    if (!state.project || state.drafts === previous.drafts) return
+    const projectChanged = state.project?.project_id !== previous.project?.project_id
+    if (!projectChanged && state.drafts === previous.drafts) return
+    if (previous.project) for (const [id, draft] of Object.entries(previous.drafts)) {
+      if (draft.target_type === 'api' && (projectChanged || !state.drafts[id])) {
+        const projectId = previous.project.project_id
+        enqueue(() => window.api.agent.releaseEditorDraft(projectId, id))
+      }
+    }
+    if (!state.project) return
     for (const [id, draft] of Object.entries(state.drafts)) {
-      if (draft.target_type !== 'api' || draft === previous.drafts[id]) continue
+      if (draft.target_type !== 'api' || (!projectChanged && draft === previous.drafts[id])) continue
       const projectId = state.project.project_id
-      pending = pending.catch(() => {}).then(async () => {
-        const result = await window.api.agent.syncEditorDraft(projectId, draft)
-        if (!result.ok) throw new Error(result.error)
-      }).catch(error => { useApp.setState({ syncNotice: `Agent 草稿暂存失败：${error.message}` }); throw error })
-      // Keep the queue usable after reporting failures; flush still sees its current rejection.
-      void pending.catch(() => {})
+      const baseRevision = state.baselines[id]?.revision
+      enqueue(() => window.api.agent.syncEditorDraft(projectId, draft, baseRevision))
     }
   })
   const offEvent = window.api.agent.onDraftChanged(event => {
@@ -35,7 +47,7 @@ export async function flushAgentDrafts(): Promise<void> {
   if (!state.project) return
   for (const draft of Object.values(state.drafts)) {
     if (draft.target_type !== 'api') continue
-    const result = await window.api.agent.syncEditorDraft(state.project.project_id, draft)
+    const result = await window.api.agent.syncEditorDraft(state.project.project_id, draft, state.baselines[draft.target_id]?.revision)
     if (!result.ok) throw new Error(result.error)
   }
 }

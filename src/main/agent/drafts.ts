@@ -1,10 +1,11 @@
+import { mergeDefinitions } from './merge'
 import { withTargetChanges } from '../storage/changes'
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Target } from '@shared/types'
-import type { AgentCandidate, AgentDraft, AgentDraftEvent } from '@shared/agentDraft'
-import { stableJson, targetDefinition } from '@shared/targetSync'
+import type { AgentCandidate, AgentDraft, AgentDraftEvent, AgentCandidateMerge, AgentConflictChoice } from '@shared/agentDraft'
+import { stableJson, targetDefinition, preserveCaseRuns } from '@shared/targetSync'
 import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal } from './store'
 
@@ -34,17 +35,29 @@ function persistDraft(draft: AgentDraft): void {
   mirrors.set(`${draft.project_id}:${draft.target_id}`, structuredClone(draft))
   if (draft.agent_owned) writeLocal(file(draft.project_id, 'drafts', draft.target_id), draft)
 }
-export function syncEditorDraft(pid: string, target: Target): AgentDraft {
+export function syncEditorDraft(pid: string, target: Target, baseRevision?: string | null): AgentDraft {
   if (target.project_id !== pid || target.target_type !== 'api') throw new Error('草稿项目或类型不符')
   const draft = getDraft(pid, target.target_id)
   draft.target = structuredClone(target)
+  if (!draft.agent_owned && baseRevision !== undefined) {
+    if (baseRevision !== null && typeof baseRevision !== 'string') throw new Error('草稿基线无效')
+    draft.base_revision = baseRevision
+  }
   const saved = store.readTargetSnapshot(pid, target.target_id)
-  if (draft.agent_owned && saved.target && draftSignature(saved.target) === draftSignature(target)) {
+  if (draft.agent_owned && !listCandidates(pid, target.target_id).some(candidate => candidate.status === 'conflict') && saved.target && draftSignature(saved.target) === draftSignature(target)) {
     draft.agent_owned = false; draft.base_revision = saved.revision
     fs.rmSync(file(pid, 'drafts', target.target_id), { force: true })
   }
   persistDraft(draft)
   return draft
+}
+/** Release a closed manual editing session; Agent-owned drafts remain recoverable. */
+export function releaseEditorDraft(pid: string, id: string): boolean {
+  const stored = readLocal<AgentDraft | null>(file(pid, 'drafts', id), null)
+  const mirror = mirrors.get(`${pid}:${id}`)
+  if (stored?.agent_owned || mirror?.agent_owned) return false
+  mirrors.delete(`${pid}:${id}`)
+  return true
 }
 export function listAgentDrafts(pid: string): AgentDraft[] {
   const dir = path.join(projectDir(pid), 'drafts')
@@ -57,13 +70,13 @@ export function listCandidates(pid: string, targetId?: string): AgentCandidate[]
 function readCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readLocal<AgentCandidate | null>(file(pid, 'candidates', id), null)
   if (!candidate) throw new Error('候选不存在')
-  const review = readLocal<{ status: AgentCandidate['status']; error?: string }>(file(pid, 'candidate-reviews', id), { status: 'pending' })
+  const review = readLocal<{ status: AgentCandidate['status']; error?: string; merge?: AgentCandidateMerge }>(file(pid, 'candidate-reviews', id), { status: 'pending' })
   return { ...candidate, ...review }
 }
-function review(candidate: AgentCandidate, status: AgentCandidate['status'], error?: string): AgentCandidate {
-  writeLocal(file(candidate.project_id, 'candidate-reviews', candidate.candidate_id), { status, error })
+function review(candidate: AgentCandidate, status: AgentCandidate['status'], error?: string, merge?: AgentCandidateMerge): AgentCandidate {
+  writeLocal(file(candidate.project_id, 'candidate-reviews', candidate.candidate_id), { target_id: candidate.target_id, status, error, merge })
   emit({ project_id: candidate.project_id, target_id: candidate.target_id })
-  return { ...candidate, status, error }
+  return { ...candidate, status, error, merge }
 }
 export function validatePatch(patch: unknown): asserts patch is Partial<Target> {
   const allowed = ['name', 'description', 'method', 'url', 'request', 'response', 'custom_attributes', 'mark_id']
@@ -97,24 +110,42 @@ export function createCandidate(pid: string, planId: string, stepId: string, bas
   emit({ project_id: pid, target_id: base.target_id })
   return candidate
 }
+function applyMergedCandidate(candidate: AgentCandidate, current: Target, merge: AgentCandidateMerge): AgentCandidate {
+  const draft = getDraft(candidate.project_id, candidate.target_id)
+  draft.target = merge.result; draft.agent_owned = true; draft.base_revision = candidate.base_revision
+  persistDraft(draft)
+  const result = review(candidate, merge.conflicts.length ? 'conflict' : 'applied', merge.conflicts.length ? '仅冲突字段需要确认，其他字段已合并到草稿。解决前不能正式保存。' : undefined, merge)
+  emit({ project_id: candidate.project_id, target_id: candidate.target_id, draft, previous: current })
+  return result
+}
+function buildMerge(candidate: AgentCandidate, current: Target, revision: string | null, choices: Record<string, AgentConflictChoice> = {}): AgentCandidateMerge {
+  const merged = mergeDefinitions(targetDefinition(candidate.base), targetDefinition(current), targetDefinition(candidate.proposal), choices)
+  const result = preserveCaseRuns({ ...current, ...merged.result } as Target, current)
+  return { review_id: randomUUID(), current, result, draft_signature: draftSignature(result), saved_revision: revision, conflicts: merged.conflicts, choices }
+}
 export function applyCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readCandidate(pid, id)
-  if (candidate.status !== 'pending') throw new Error('候选不是待确认状态')
+  if (!['pending', 'conflict'].includes(candidate.status)) throw new Error('候选不是待确认状态')
   const draft = getDraft(pid, candidate.target_id)
   const saved = store.readTargetSnapshot(pid, candidate.target_id)
-  if (saved.revision !== candidate.base_revision || draftSignature(draft.target) !== draftSignature(candidate.base)) return review(candidate, 'conflict', '草稿或正式定义已变化，已暂停此对象；不会覆盖当前内容。')
-  const previous = draft.target
-  draft.target = structuredClone(candidate.proposal); draft.agent_owned = true; draft.base_revision = candidate.base_revision
-  persistDraft(draft)
-  const result = review(candidate, 'applied')
-  emit({ project_id: pid, target_id: candidate.target_id, draft, previous })
-  return result
+  if (saved.revision !== candidate.base_revision) return review(candidate, 'conflict', '正式定义已变化，已暂停此对象；请先核对已保存版本。')
+  return applyMergedCandidate(candidate, draft.target, buildMerge(candidate, draft.target, saved.revision))
+}
+export function resolveCandidate(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): AgentCandidate {
+  const candidate = readCandidate(pid, id), merge = candidate.merge
+  if (candidate.status !== 'conflict' || !merge || merge.review_id !== reviewId) throw new Error('冲突审阅已变化，请重新打开候选')
+  const draft = getDraft(pid, candidate.target_id), saved = store.readTargetSnapshot(pid, candidate.target_id)
+  if (draftSignature(draft.target) !== merge.draft_signature || saved.revision !== merge.saved_revision) return applyCandidate(pid, id)
+  if (!choices || Object.keys(choices).some(key => !merge.conflicts.some(conflict => conflict.id === key)) || merge.conflicts.some(conflict => !['base', 'current', 'agent'].includes(choices[conflict.id]))) throw new Error('请为每个冲突字段明确选择结果')
+  const resolved = buildMerge(candidate, merge.current, saved.revision, choices)
+  if (resolved.conflicts.length) throw new Error('仍有未解决的冲突')
+  return applyMergedCandidate(candidate, draft.target, resolved)
 }
 export function stashAgentDrafts(): number {
   let added = 0
   for (const project of store.listProjects()) for (const draft of listAgentDrafts(project.project_id)) {
     const candidates = listCandidates(project.project_id, draft.target_id)
-    if (candidates.some(c => draftSignature(c.proposal) === draftSignature(draft.target))) continue
+    if (candidates.some(c => draftSignature(c.merge?.result ?? c.proposal) === draftSignature(draft.target))) continue
     const candidate = createCandidate(project.project_id, 'exit-stash', randomUUID(), draft.target, draft.base_revision, { description: draft.target.description })
     review(candidate, 'applied'); added++
   }
@@ -131,4 +162,4 @@ export function saveManualDraftOnQuit(pid: string, target: Target, revision: str
   })
 }
 
-export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, listAgentDrafts, listCandidates, applyCandidate, stashAgentDrafts }
+export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, applyCandidate, resolveCandidate, stashAgentDrafts }

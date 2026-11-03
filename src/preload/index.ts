@@ -18,9 +18,11 @@ const subscribe = (
 
 const api = {
   agent: {
+    releaseEditorDraft: (projectId: string, id: string) => invoke('agent:releaseEditorDraft', projectId, id),
+    resolveCandidate: (projectId: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveCandidate', projectId, id, reviewId, choices),
     saveManualDraftOnQuit: (projectId: string, target: unknown, revision: string) => invoke('agent:saveManualDraftOnQuit', projectId, target, revision),
     getDraft: (projectId: string, targetId: string) => invoke('agent:getDraft', projectId, targetId),
-    syncEditorDraft: (projectId: string, target: unknown) => invoke('agent:syncEditorDraft', projectId, target),
+    syncEditorDraft: (projectId: string, target: unknown, baseRevision?: string | null) => invoke('agent:syncEditorDraft', projectId, target, baseRevision),
     listAgentDrafts: (projectId: string) => invoke('agent:listAgentDrafts', projectId),
     listCandidates: (projectId: string, targetId?: string) => invoke('agent:listCandidates', projectId, targetId),
     applyCandidate: (projectId: string, candidateId: string) => invoke('agent:applyCandidate', projectId, candidateId),

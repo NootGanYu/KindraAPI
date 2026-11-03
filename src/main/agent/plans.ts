@@ -1,4 +1,4 @@
-import { createCandidate, getDraft, validatePatch } from './drafts'
+import { createCandidate, getDraft, validatePatch, draftSignature } from './drafts'
 import { readApiDetail } from '../business/apiRead'
 import { projectRedactor } from './redaction'
 import fs from 'node:fs'
@@ -80,13 +80,18 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
   for (const targetId of targetIds) {
     const snapshot = store.readTargetSnapshot(projectId, targetId)
     const saved = snapshot.target
-    revisions.set(targetId, snapshot.revision)
     if (!saved || saved.target_type !== 'api') throw new Error('当前项目中不存在该接口')
     const managed = getDraft(projectId, targetId)
-    if (!drafts[targetId] && managed.agent_owned) drafts[targetId] = managed.target
+    const supplied = drafts[targetId]
+    const suppliedRevision = input.draftRevisions?.[targetId]
+    if (suppliedRevision !== undefined && suppliedRevision !== null && typeof suppliedRevision !== 'string') throw new Error('草稿基线无效')
+    if (mode === 'edit' && supplied && suppliedRevision === undefined && draftSignature(supplied) !== draftSignature(managed.target)) throw new Error('修改计划需要同步当前编辑草稿或提供其保存基线')
+    if (!supplied && (managed.agent_owned || managed.base_revision !== snapshot.revision || draftSignature(managed.target) !== draftSignature(saved))) drafts[targetId] = managed.target
     const draft = drafts[targetId]
     if (draft && (draft.project_id !== projectId || draft.target_id !== targetId || draft.target_type !== 'api')) throw new Error('草稿不属于所选项目和接口')
-    targets.set(targetId, structuredClone(draft ?? getDraft(projectId, targetId).target))
+    // A saved revision belongs to the snapshot that produced the draft, never a later disk read.
+    revisions.set(targetId, suppliedRevision !== undefined ? suppliedRevision : draft ? managed.base_revision : snapshot.revision)
+    targets.set(targetId, structuredClone(draft ?? saved))
   }
   const environment = input.environmentId ? store.listEnvironments(projectId).find(item => item.env_id === input.environmentId) : null
   if (input.environmentId && !environment) throw new Error('环境不存在')

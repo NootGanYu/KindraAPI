@@ -6,6 +6,8 @@ export interface ReadPlanInput {
   targetId: string
   targetIds?: string[]
   drafts?: Record<string, Target>
+  /** Saved revisions from the editor sessions that produced these drafts. */
+  draftRevisions?: Record<string, string | null>
   environmentId?: string
   /** An unsaved editor snapshot, never a request to persist the definition. */
   draft?: Target
