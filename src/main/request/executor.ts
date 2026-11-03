@@ -1,3 +1,4 @@
+import { encodePreservingVars, withoutQueryKeys, withQueryParams } from '@shared/requestUrl'
 import fs from 'node:fs'
 import type {
   AssertionResult,
@@ -13,6 +14,7 @@ import type {
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { generateModelExample } from '../schema/example'
+import { mergeScriptVariables, requestScript } from './scripts'
 
 const runtime = require('postman-runtime') as any
 const { Collection, VariableScope } = require('postman-collection') as any
@@ -20,6 +22,7 @@ const { Collection, VariableScope } = require('postman-collection') as any
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 
 interface ResolvedRequest {
+  disabledSystemHeaders: Record<string, boolean>
   url: string
   method: string
   headers: Array<{ key: string; value: string }>
@@ -50,27 +53,20 @@ function normalizeKey(key: string): string {
   return key.trim().toLowerCase()
 }
 
-/**
- * Encode a URL component while keeping {{variable}} placeholders intact so that
- * postman-runtime can resolve them later.
- */
-function encodePreservingVars(value: string): string {
-  const placeholders: string[] = []
-  const masked = value.replace(/\{\{[^{}]+\}\}/g, (match) => {
-    placeholders.push(match)
-    return `\u0000${placeholders.length - 1}\u0000`
-  })
-  const encoded = encodeURIComponent(masked)
-  return encoded.replace(/\u0000(\d+)\u0000/g, (_m, index: string) => placeholders[Number(index)] ?? '')
-}
-
 function getHeader(headers: Record<string, string>, name: string): string | undefined {
   const target = name.toLowerCase()
   const key = Object.keys(headers).find((item) => item.toLowerCase() === target)
   return key ? headers[key] : undefined
 }
 
-function mergeParams(base: Param[], incoming: Param[], caseInsensitive = false): Param[] {
+function mergeParams(base: Param[], incoming: Param[], caseInsensitive = false, multiple = false): Param[] {
+  if (multiple) {
+    // 同层 Query 允许重名；下层按名称覆盖上层，未勾选的行也能屏蔽继承值。
+    const incomingKeys = new Set(incoming.map(param => param.key))
+    return [...base.filter(param => !incomingKeys.has(param.key)), ...incoming]
+      .filter(param => param.is_checked > 0 || (param.is_system ?? -1) > 0)
+      .map(param => ({ ...param }))
+  }
   const map = new Map<string, Param>()
   const keyOf = (key: string): string => (caseInsensitive ? normalizeKey(key) : key)
   for (const p of base) {
@@ -105,8 +101,16 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
   const chain = getChain(projectId, target) // nearest -> root
   const root = store.readProjectRequestDefaults(projectId)
 
+  const disabledSystemHeaders: Record<string, boolean> = {}
+  for (const request of [root, ...[...chain].reverse().map(node => node.request)]) {
+    for (const param of request?.header?.parameter ?? []) {
+      const key = normalizeKey(param.key)
+      if (param.is_checked > 0 || (param.is_system ?? -1) > 0) delete disabledSystemHeaders[key]
+      else disabledSystemHeaders[key] = true
+    }
+  }
   let header = mergeParams(root.header?.parameter ?? [], [], true)
-  let query = mergeParams(root.query?.parameter ?? [], [])
+  let query = mergeParams(root.query?.parameter ?? [], [], false, true)
   let restful = mergeParams(root.restful?.parameter ?? [], [])
   let cookie = mergeParams(root.cookie?.parameter ?? [], [])
   let bodyMode = root.body?.mode ?? 'none'
@@ -117,7 +121,7 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
     const req = node.request
     if (!req) continue
     header = mergeParams(header, req.header?.parameter ?? [], true)
-    query = mergeParams(query, req.query?.parameter ?? [])
+    query = mergeParams(query, req.query?.parameter ?? [], false, true)
     restful = mergeParams(restful, req.restful?.parameter ?? [])
     cookie = mergeParams(cookie, req.cookie?.parameter ?? [])
     if (req.auth && req.auth.type !== 'inherit') auth = req.auth
@@ -181,13 +185,9 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
 
   const querys: Record<string, string> = {}
   const activeQuery = query.filter((p) => p.key.trim() !== '')
-  if (activeQuery.length > 0) {
-    const parts = activeQuery.map((p) => {
-      querys[p.key] = p.value ?? ''
-      return `${encodePreservingVars(p.key)}=${encodePreservingVars(p.value ?? '')}`
-    })
-    url += (url.includes('?') ? '&' : '?') + parts.join('&')
-  }
+  for (const param of activeQuery) querys[param.key] = param.value ?? ''
+  const queryKeys = [root, ...chain.map(node => node.request)].flatMap(request => (request?.query?.parameter ?? []).map(param => param.key))
+  url = withQueryParams(withoutQueryKeys(url, queryKeys), activeQuery, target.request?.query?.omit_empty_equals ?? false)
 
   const headers = header
     .filter((p) => p.key.trim() !== '')
@@ -222,7 +222,7 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
     .join('; ')
   if (cookieHeader) headers.push({ key: 'Cookie', value: cookieHeader })
 
-  if (bodyMode === 'json' && !headers.some((h) => h.key.toLowerCase() === 'content-type')) {
+  if (bodyMode === 'json' && !disabledSystemHeaders['content-type'] && !headers.some((h) => h.key.toLowerCase() === 'content-type')) {
     headers.push({ key: 'Content-Type', value: 'application/json' })
   }
 
@@ -231,6 +231,7 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
     raw === 'auto' ? 'auto' : raw === 'http/1.1' || raw === 'http1' || !raw ? 'http1' : 'http2'
 
   return {
+    disabledSystemHeaders,
     url,
     method: (target.method || 'GET').toUpperCase(),
     headers,
@@ -317,8 +318,8 @@ function toPostmanBody(mode: string, body: any): unknown {
         .filter((p: Param) => p.key && (p.is_checked > 0 || (p.is_system ?? -1) > 0))
         .map((p: Param) =>
           p.field_type === 'file'
-            ? { key: p.key, type: 'file', src: p.value }
-            : { key: p.key, value: p.value ?? '', type: 'text' }
+            ? { key: p.key, type: 'file', src: p.value, contentType: p.content_type }
+            : { key: p.key, value: p.value ?? '', type: 'text', contentType: p.content_type }
         )
     }
   }
@@ -374,18 +375,19 @@ function headersToObject(headers: any): Record<string, string> {
   return {}
 }
 
-function bufferToText(buffer: Buffer): { text: string; truncated: boolean } {
+function bufferToText(buffer: Buffer, charset = 'utf-8'): { text: string; truncated: boolean } {
   if (!buffer) return { text: '', truncated: false }
-  if (buffer.length > MAX_BODY_BYTES) {
-    return { text: buffer.subarray(0, MAX_BODY_BYTES).toString('utf8'), truncated: true }
-  }
-  return { text: buffer.toString('utf8'), truncated: false }
+  const bytes = buffer.subarray(0, MAX_BODY_BYTES)
+  let text: string
+  try { text = new TextDecoder(charset).decode(bytes) } catch { text = bytes.toString('utf8') }
+  return { text, truncated: buffer.length > MAX_BODY_BYTES }
 }
 
 export async function sendRequest(
   projectId: string,
   target: Target,
-  environmentId?: string
+  environmentId?: string,
+  options: { signal?: AbortSignal } = {}
 ): Promise<SendRecord> {
   const settings = store.getSettings()
   const { env, globals } = loadScopes(projectId, environmentId)
@@ -419,6 +421,11 @@ export async function sendRequest(
     item: [
       {
         name: target.name || 'request',
+        event: [
+          { listen: 'prerequest', script: { type: 'text/javascript', exec: requestScript(target.request?.pre_script, target.request?.pre_script_enabled) } },
+          { listen: 'test', script: { type: 'text/javascript', exec: requestScript(target.request?.test, target.request?.test_enabled) } }
+        ],
+        protocolProfileBehavior: { disabledSystemHeaders: resolved.disabledSystemHeaders },
         request: {
           url: resolved.url,
           method: resolved.method,
@@ -435,6 +442,10 @@ export async function sendRequest(
   const startedAt = Date.now()
   let timingOffsets: Record<string, number> | null = null
   let networkInfo: Record<string, unknown> | null = null
+  const environmentScope = new VariableScope({ values: toValues(environmentValues) })
+  const globalScope = new VariableScope({ values: toValues(globalValues) })
+  const environmentBefore = environmentScope.toObject()
+  const globalsBefore = globalScope.toObject()
 
   const result = await new Promise<{
     error: { type: string; message: string } | null
@@ -442,6 +453,16 @@ export async function sendRequest(
     request: any
   }>((resolve) => {
     let settled = false
+    let runtimeRun: any
+    let requestRef: any = null
+    const activeRequests = new Map<string, { abort: () => void }>()
+    const abort = (): void => {
+      // run.abort 只清后续队列，正在等待网络/脚本时还需中止实际资源。
+      runtimeRun?.abort()
+      for (const request of activeRequests.values()) request.abort()
+      runtimeRun?.host?.dispose()
+      finish({ error: { type: 'cancelled', message: '请求已取消' }, response: null, request: requestRef })
+    }
     const finish = (payload: {
       error: { type: string; message: string } | null
       response: any
@@ -449,8 +470,11 @@ export async function sendRequest(
     }): void => {
       if (settled) return
       settled = true
+      options.signal?.removeEventListener('abort', abort)
       resolve(payload)
     }
+    if (options.signal?.aborted) { abort(); return }
+    options.signal?.addEventListener('abort', abort, { once: true })
 
     const runner = new runtime.Runner()
     runner.run(
@@ -467,13 +491,15 @@ export async function sendRequest(
         },
         timeout: {
           request: settings.send_timeout > 0 ? settings.send_timeout : 0,
-          script: 0,
+          script: 10000,
           global: 0
         },
+        abortOnError: true,
+        stopOnScriptError: true,
         iterationCount: 1,
         fileResolver: fs,
-        environment: new VariableScope({ values: toValues(environmentValues) }),
-        globals: new VariableScope({ values: toValues(globalValues) }),
+        environment: environmentScope,
+        globals: globalScope,
         localVariables: new VariableScope({ values: [] })
       },
       (err: Error | null, run: any) => {
@@ -481,10 +507,16 @@ export async function sendRequest(
           finish({ error: { type: 'runtime', message: err.message }, response: null, request: null })
           return
         }
+        runtimeRun = run
+        if (options.signal?.aborted) { abort(); return }
         let responseRef: any = null
-        let requestRef: any = null
         let responseError: Error | null = null
         run.start({
+          beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
+            requestRef = request
+            activeRequests.set(controls.httpRequestId, controls)
+            if (options.signal?.aborted) controls.abort()
+          },
           response: (
             error: Error | null,
             _cursor: unknown,
@@ -494,6 +526,7 @@ export async function sendRequest(
             _cookies: unknown,
             history: any
           ) => {
+            if (settled) return
             if (error) responseError = error
             responseRef = response
             requestRef = request
@@ -538,6 +571,10 @@ export async function sendRequest(
             })
           },
           done: (doneError: Error | null) => {
+            if (options.signal?.aborted) {
+              finish({ error: { type: 'cancelled', message: '请求已取消' }, response: null, request: requestRef })
+              return
+            }
             const finalError = doneError || responseError
             finish({
               error: finalError ? { type: 'request', message: finalError.message } : null,
@@ -551,6 +588,18 @@ export async function sendRequest(
   })
 
   const finishedAt = Date.now()
+  if (result.error?.type !== 'cancelled') {
+    if (env) {
+      const current = store.listEnvironments(projectId).find(item => item.env_id === env.env_id)
+      if (current) {
+        const values = mergeScriptVariables(env.env_var_list, current.env_var_list, environmentBefore, environmentScope.toObject(), value => ({ current_value: value, initial_value: '', is_checked: 1 }))
+        if (values) store.saveEnvironment(projectId, { ...current, env_var_list: values })
+      }
+    }
+    const current = store.getGlobalVars(projectId)
+    const values = mergeScriptVariables(globals.vars, current.vars, globalsBefore, globalScope.toObject(), value => ({ current_value: value, initial_value: '' }))
+    if (values) store.saveGlobalVars(projectId, { ...current, vars: values })
+  }
   const runtimeRequest = result.request
   const runtimeResponse = result.response
 
@@ -565,9 +614,12 @@ export async function sendRequest(
     const buffer: Buffer = Buffer.isBuffer(runtimeResponse.stream)
       ? runtimeResponse.stream
       : Buffer.from(runtimeResponse.stream ?? '')
-    const { text, truncated } = bufferToText(buffer)
     const headers = headersToObject(runtimeResponse.headers)
-    const mimeType = String(getHeader(headers, 'content-type') ?? '').split(';')[0].trim()
+    const contentType = String(getHeader(headers, 'content-type') ?? '')
+    const mimeType = contentType.split(';')[0].trim()
+    let charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(contentType)?.[1].toLowerCase() ?? 'utf-8'
+    try { new TextDecoder(charset) } catch { charset = 'utf-8' }
+    const { text, truncated } = bufferToText(buffer, charset)
     const extension = mimeType.includes('json')
       ? 'json'
       : mimeType.includes('xml')
@@ -592,7 +644,9 @@ export async function sendRequest(
       value: c.value,
       domain: c.domain,
       path: c.path,
-      expires: c.expires
+      expires: c.expires,
+      httpOnly: Boolean(c.httpOnly),
+      secure: Boolean(c.secure)
     }))
     if (cookies.length === 0) {
       const setCookie = Object.entries(headers)
@@ -604,7 +658,16 @@ export async function sendRequest(
         if (index <= 0) continue
         const name = pair.slice(0, index).trim()
         if (!name) continue
-        cookies.push({ name, value: pair.slice(index + 1).trim() })
+        const cookie: Record<string, unknown> = { name, value: pair.slice(index + 1).trim(), httpOnly: false, secure: false }
+        for (const attr of rawCookie.split(';').slice(1)) {
+          const index = attr.indexOf('=')
+          const key = (index < 0 ? attr : attr.slice(0, index)).trim().toLowerCase()
+          const value = index < 0 ? '' : attr.slice(index + 1).trim()
+          if (['domain', 'path', 'expires'].includes(key)) cookie[key] = value
+          else if (key === 'httponly') cookie.httpOnly = true
+          else if (key === 'secure') cookie.secure = true
+        }
+        cookies.push(cookie)
       }
     }
     responseSnapshot = {
@@ -613,6 +676,8 @@ export async function sendRequest(
       headers,
       body: text,
       body_truncated: truncated || undefined,
+      body_base64: buffer.subarray(0, MAX_BODY_BYTES).toString('base64'),
+      charset,
       mime: { ext: extension, mime: mimeType || 'text/plain' },
       size: Number(runtimeResponse.responseSize ?? buffer.length),
       response_time: Number(runtimeResponse.responseTime ?? finishedAt - startedAt),

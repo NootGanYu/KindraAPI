@@ -1,4 +1,6 @@
 import { rulesFromSchema } from '@shared/fieldRules'
+import { DICT_FIELD_TYPES } from '@shared/types'
+import { defaultApiStatus } from '@shared/apiStatuses'
 import { withTargetChanges } from '../storage/changes'
 import type {
   ApiCase,
@@ -722,6 +724,7 @@ const TOOLS: ToolDefinition[] = [
             updated += 1
           } else {
             target = createTarget(projectId, folderId, 'api')
+            target.mark_id = defaultApiStatus(store.getProject(projectId))
             created += 1
           }
           target.name = op.summary || op.operationId || `${methodUpper} ${rawPath}`
@@ -1514,6 +1517,10 @@ const TOOLS: ToolDefinition[] = [
           description: entry.description,
           remarks: entry.remarks ?? '',
           default_value: entry.default_value ?? '',
+          example_value: entry.example_value ?? '',
+          mock: entry.mock ?? '',
+          schema: entry.schema,
+          temporary: entry.temporary ?? false,
           source: entry.source
         }))
       return { entries, total: entries.length }
@@ -1530,13 +1537,16 @@ const TOOLS: ToolDefinition[] = [
         key: { type: 'string', description: '参数名称' },
         field_type: {
           type: 'string',
-          enum: ['string', 'number', 'integer', 'boolean', 'object', 'array']
+          enum: [...DICT_FIELD_TYPES]
         },
         description: { type: 'string', description: '参数描述' },
         remarks: { type: 'string' },
-        default_value: { type: 'string' }
+        default_value: { type: 'string' },
+        example_value: { type: 'string' },
+        mock: { type: 'string' },
+        schema: { type: 'object', description: '字段约束与示例' }
       },
-      ['project_id', 'key', 'description']
+      ['project_id', 'key']
     ),
     handler: (args) => {
       const entry = store.saveDictionaryEntry(projectIdOf(args), {
@@ -1547,6 +1557,9 @@ const TOOLS: ToolDefinition[] = [
         description: str(args, 'description'),
         remarks: str(args, 'remarks'),
         default_value: str(args, 'default_value'),
+        example_value: str(args, 'example_value'),
+        mock: str(args, 'mock'),
+        schema: args.schema && typeof args.schema === 'object' && !Array.isArray(args.schema) ? args.schema as Record<string, unknown> : undefined,
         created_at: '',
         updated_at: ''
       })
@@ -1565,11 +1578,14 @@ const TOOLS: ToolDefinition[] = [
         key: { type: 'string' },
         field_type: {
           type: 'string',
-          enum: ['string', 'number', 'integer', 'boolean', 'object', 'array']
+          enum: [...DICT_FIELD_TYPES]
         },
         description: { type: 'string' },
         remarks: { type: 'string' },
-        default_value: { type: 'string' }
+        default_value: { type: 'string' },
+        example_value: { type: 'string' },
+        mock: { type: 'string' },
+        schema: { type: 'object', description: '字段约束与示例' }
       },
       ['project_id', 'id']
     ),
@@ -1578,7 +1594,7 @@ const TOOLS: ToolDefinition[] = [
       const id = requiredStr(args, 'id')
       if (id.startsWith('builtin_')) throw new Error('系统内置描述不能修改')
       const existing = store
-        .listCustomDictionaryEntries(projectId)
+        .listDictionaryEntries(projectId)
         .find((entry) => entry.id === id)
       if (!existing) throw new Error('字典条目不存在')
       const entry = store.saveDictionaryEntry(projectId, {
@@ -1594,7 +1610,10 @@ const TOOLS: ToolDefinition[] = [
         default_value:
           args.default_value !== undefined
             ? str(args, 'default_value')
-            : existing.default_value
+            : existing.default_value,
+        example_value: args.example_value !== undefined ? str(args, 'example_value') : existing.example_value,
+        mock: args.mock !== undefined ? str(args, 'mock') : existing.mock,
+        schema: args.schema && typeof args.schema === 'object' && !Array.isArray(args.schema) ? args.schema as Record<string, unknown> : existing.schema
       })
       return { entry }
     }
@@ -2348,7 +2367,7 @@ const TOOLS: ToolDefinition[] = [
           patchBody(next, body)
         }
         if (request.auth) next.request.auth = { ...next.request.auth, ...request.auth }
-        for (const key of ['pre_script', 'test', 'pre_tasks', 'post_tasks'] as const) if (request[key] !== undefined) (next.request as any)[key] = request[key]
+        for (const key of ['pre_script', 'test', 'pre_script_enabled', 'test_enabled', 'pre_tasks', 'post_tasks'] as const) if (request[key] !== undefined) (next.request as any)[key] = request[key]
       }
       if (args.response && typeof args.response === 'object') {
         for (const example of (args.response as any).example ?? []) {

@@ -1,34 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AutoComplete, Input, Tag } from 'antd'
+import type { InputProps } from 'antd'
+import { MenuOutlined } from '@ant-design/icons'
 import type { DictionaryEntryView } from '@shared/types'
-
-interface CacheEntry {
-  entries: DictionaryEntryView[]
-  promise: Promise<DictionaryEntryView[]> | null
-}
-
-const cache = new Map<string, CacheEntry>()
-
-export function invalidateDictionaryCache(projectId?: string): void {
-  if (projectId) cache.delete(projectId)
-  else cache.clear()
-}
-
-async function loadSuggestions(projectId: string): Promise<DictionaryEntryView[]> {
-  const existing = cache.get(projectId)
-  if (existing?.entries?.length) return existing.entries
-  if (existing?.promise) return existing.promise
-  const promise = window.api.dictionary.suggestions(projectId).then((result) => {
-    if (!result.ok) throw new Error(result.error)
-    const entry = cache.get(projectId) ?? { entries: [], promise: null }
-    entry.entries = result.data
-    entry.promise = null
-    cache.set(projectId, entry)
-    return result.data
-  })
-  cache.set(projectId, { entries: existing?.entries ?? [], promise })
-  return promise
-}
+import { loadSuggestions } from './dictionarySuggestions'
+import DictionaryManager from './DictionaryManager'
 
 interface Props {
   projectId: string
@@ -37,6 +13,11 @@ interface Props {
   placeholder?: string
   size?: 'small' | 'middle' | 'large'
   disabled?: boolean
+  lookupField?: 'key' | 'description'
+  onSelectEntry?: (entry: DictionaryEntryView) => void
+  ariaLabel?: string
+  variant?: InputProps['variant']
+  className?: string
 }
 
 export default function DictionarySuggest({
@@ -45,8 +26,14 @@ export default function DictionarySuggest({
   onChange,
   placeholder = '描述',
   size,
-  disabled
+  disabled,
+  lookupField = 'description',
+  onSelectEntry,
+  ariaLabel,
+  variant,
+  className
 }: Props): JSX.Element {
+  const [managerOpen, setManagerOpen] = useState(false)
   const [entries, setEntries] = useState<DictionaryEntryView[]>([])
   const [query, setQuery] = useState('')
 
@@ -60,7 +47,7 @@ export default function DictionarySuggest({
     return () => {
       active = false
     }
-  }, [projectId])
+  }, [projectId, managerOpen])
 
   const options = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -72,9 +59,11 @@ export default function DictionarySuggest({
         )
       : entries
     return filtered.slice(0, 40).map((entry) => ({
-      value: entry.description,
+      key: `${entry.source}:${entry.id}`,
+      value: `kindra-dictionary:${entry.source}:${entry.id}`,
+      entry,
       label: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <div data-dictionary-id={`${entry.source}:${entry.id}`} className={lookupField === 'key' ? 'param-name-suggestion' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           <span className="mono" style={{ fontSize: 11, color: '#8a6b3b', flex: 'none' }}>
             {entry.key}
           </span>
@@ -82,30 +71,35 @@ export default function DictionarySuggest({
             {entry.description}
           </span>
           <span style={{ flex: 1 }} />
-          <Tag
+          {lookupField !== 'key' && <Tag
             bordered={false}
             color={entry.source === 'builtin' ? 'default' : 'gold'}
             style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px' }}
           >
             {entry.source === 'builtin' ? '内置' : '自定义'}
-          </Tag>
+          </Tag>}
         </div>
       )
     }))
-  }, [entries, query])
+  }, [entries, query, lookupField])
 
-  return (
+  return <>
     <AutoComplete
       value={value}
       options={options}
-      onChange={(next) => onChange?.(next)}
+      className={className}
+      onChange={(next) => onChange?.(options.find(option => option.value === next)?.entry[lookupField] ?? next)}
       onSearch={(next) => setQuery(next)}
+      onFocus={() => { setQuery(value ?? ''); void loadSuggestions(projectId).then(setEntries).catch(() => undefined) }}
+      onSelect={(_value, option) => onSelectEntry?.(option.entry)}
       style={{ width: '100%' }}
       disabled={disabled}
-      popupMatchSelectWidth={360}
-      placeholder={placeholder}
+      popupMatchSelectWidth={lookupField === 'key' ? 320 : 360}
+      classNames={{ popup: { root: lookupField === 'key' ? 'param-name-suggestions' : '' } }}
+      popupRender={lookupField === 'key' ? menu => <>{menu}<button className="param-dictionary-link" onMouseDown={event => event.preventDefault()} onClick={() => setManagerOpen(true)}><MenuOutlined /> 字典库</button></> : undefined}
     >
-      <Input size={size} placeholder={placeholder} />
+      <Input size={size} placeholder={placeholder} aria-label={ariaLabel} variant={variant} />
     </AutoComplete>
-  )
+    <DictionaryManager projectId={projectId} open={managerOpen} onClose={() => setManagerOpen(false)} />
+  </>
 }

@@ -114,7 +114,7 @@ export default function ParamTable({
   const someChecked = params.some((param) => param.is_checked > 0)
   const toggleAll = (): void => {
     const value = allChecked ? -1 : 1
-    onChange(params.map((param) => ({ ...param, is_checked: value })))
+    onChange(params.map((param) => ({ ...param, is_checked: value, is_system: -1 })))
   }
 
   return (
@@ -133,7 +133,7 @@ export default function ParamTable({
         </button>
         <span className="param-section-title">{title}</span>
         <Tooltip title="添加参数">
-          <button className="param-add-mini" onClick={add}>
+          <button className="param-add-mini" aria-label="添加参数" onClick={add}>
             <PlusOutlined style={{ fontSize: 12 }} />
           </button>
         </Tooltip>
@@ -160,7 +160,7 @@ export default function ParamTable({
                 <Checkbox
                   checked={param.is_checked > 0}
                   onChange={(event) =>
-                    update(index, { is_checked: event.target.checked ? 1 : -1 })
+                    update(index, { is_checked: event.target.checked ? 1 : -1, is_system: -1 })
                   }
                 />
               </div>
@@ -269,6 +269,7 @@ export default function ParamTable({
                 <Tooltip title="删除">
                   <button
                     className="param-delete"
+                    aria-label="删除参数"
                     onClick={() => onChange(params.filter((_, i) => i !== index))}
                   >
                     <DeleteOutlined style={{ fontSize: 12 }} />

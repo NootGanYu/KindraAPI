@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { methodColor } from '@shared/httpMethods'
 import { App as AntApp, Button, Drawer, Empty, Input, Modal, Spin, Tag } from 'antd'
 import { HistoryOutlined, TagOutlined } from '@ant-design/icons'
 import type { Target, TargetVersionSummary } from '@shared/types'
@@ -151,7 +152,7 @@ export default function TargetVersionDrawer({
                   <span className="version-time">{formatTime(item.created_at)}</span>
                 </div>
                 <div className="version-sub">
-                  <span className="method-text">{item.method || 'GET'}</span>
+                  <span className="method-text" style={{ color: methodColor(item.method) }}>{item.method || 'GET'}</span>
                   <span className="version-name">{item.name || '未命名接口'}</span>
                   <span className="version-url">{item.url || '（未设置 URL）'}</span>
                 </div>

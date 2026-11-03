@@ -1,33 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  App as AntApp,
-  Button,
-  Form,
-  Input,
-  Modal,
-  Select,
-  Switch,
-  Table,
-  Tag,
-  Tooltip
-} from 'antd'
-import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
+import { App as AntApp, Button, Input, Switch, Table, Tooltip } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import { DeleteOutlined, EditOutlined, ImportOutlined, PlusOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons'
 import type { DictionaryEntry, DictionaryEntryView, DictionarySettings } from '@shared/types'
-import { invalidateDictionaryCache } from './DictionarySuggest'
-
-const TYPE_COLORS: Record<string, string> = {
-  string: 'default',
-  number: 'blue',
-  integer: 'geekblue',
-  boolean: 'purple',
-  object: 'gold',
-  array: 'cyan'
-}
-
-const TYPE_OPTIONS = ['string', 'number', 'integer', 'boolean', 'object', 'array'].map((value) => ({
-  value,
-  label: value
-}))
+import { invalidateDictionaryCache } from './dictionarySuggestions'
+import DictionaryEntryEditor from './DictionaryEntryEditor'
+import DictionaryImport from './DictionaryImport'
 
 interface Props {
   projectId: string
@@ -44,7 +22,8 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState<DictionaryEntry | null>(null)
   const [open, setOpen] = useState(false)
-  const [form] = Form.useForm<DictionaryEntry>()
+  const [selected, setSelected] = useState<React.Key[]>([])
+  const [importOpen, setImportOpen] = useState(false)
 
   const reload = async (): Promise<void> => {
     setLoading(true)
@@ -55,7 +34,9 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
       ])
       if (!list.ok) throw new Error(list.error)
       if (!current.ok) throw new Error(current.error)
+      invalidateDictionaryCache(projectId)
       setEntries(list.data)
+      setSelected(keys => keys.filter(key => list.data.some(entry => entry.id === key)))
       setSettings(current.data)
     } catch (error) {
       message.error((error as Error).message)
@@ -77,25 +58,11 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
   const openCreate = (): void => {
     setSource('custom')
     setEditing(null)
-    form.setFieldsValue({
-      key: '',
-      field_type: 'string',
-      description: '',
-      remarks: '',
-      default_value: ''
-    })
     setOpen(true)
   }
 
   const openEdit = (entry: DictionaryEntryView): void => {
     setEditing(entry)
-    form.setFieldsValue({
-      key: entry.key,
-      field_type: entry.field_type,
-      description: entry.description,
-      remarks: entry.remarks ?? '',
-      default_value: entry.default_value ?? ''
-    })
     setOpen(true)
   }
 
@@ -112,57 +79,21 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
       )
   }, [entries, source, keyword])
 
-  const doSave = async (): Promise<void> => {
-    try {
-      const values = await form.validateFields()
-      const result = await window.api.dictionary.save(projectId, {
-        ...(editing ?? {}),
-        ...values,
-        id: editing?.id ?? '',
-        project_id: projectId
-      } as DictionaryEntry)
-      if (!result.ok) throw new Error(result.error)
-      invalidateDictionaryCache(projectId)
-      setOpen(false)
-      await reload()
-      message.success(editing ? '已更新' : '已新建')
-    } catch (error) {
-      if ((error as { errorFields?: unknown }).errorFields) return
-      message.error((error as Error).message)
-    }
-  }
+  useEffect(() => { setPage(current => Math.min(current, Math.max(1, Math.ceil(filtered.length / 10)))) }, [filtered.length])
 
-  const submit = async (): Promise<void> => {
-    let values: DictionaryEntry
-    try {
-      values = (await form.validateFields()) as DictionaryEntry
-    } catch {
-      return
-    }
-    const duplicate = entries.find(
-      (entry) =>
-        entry.source === 'custom' &&
-        entry.key.trim() === String(values.key).trim() &&
-        entry.id !== editing?.id
-    )
-    if (duplicate) {
-      modal.confirm({
-        title: '已存在同名条目',
-        content: `自定义字典中已有「${duplicate.key}」，仍要保存吗？`,
-        okText: '仍然保存',
-        cancelText: '取消',
-        onOk: () => void doSave()
-      })
-      return
-    }
-    await doSave()
+  const save = async (entry: DictionaryEntry): Promise<void> => {
+    const result = await window.api.dictionary.save(projectId, entry)
+    if (!result.ok) throw new Error(result.error)
+    invalidateDictionaryCache(projectId)
+    setOpen(false)
+    await reload()
+    message.success(editing ? '已更新' : '已新建')
   }
 
   const remove = (entry: DictionaryEntryView): void => {
     modal.confirm({
-      title: `删除自定义描述「${entry.key}」？`,
-      content: '删除后联想与列表会同步更新，此操作不可撤销。',
-      okText: '删除',
+      title: '确定删除该条描述吗？',
+      okText: '确定',
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
@@ -189,81 +120,54 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
     message.success(checked ? '已开启系统内置描述联想' : '已关闭系统内置描述联想')
   }
 
-  const columns = [
-    {
-      title: '参数名称',
-      dataIndex: 'key',
-      key: 'key',
-      width: 260,
-      render: (value: string, entry: DictionaryEntryView) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="mono" style={{ fontWeight: 500 }}>
-            {value}
-          </span>
-          <Tag bordered={false} color={TYPE_COLORS[entry.field_type] ?? 'default'}>
-            {entry.field_type}
-          </Tag>
-        </div>
-      )
-    },
-    {
-      title: '参数描述',
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true
-    },
-    {
-      title: '备注',
-      dataIndex: 'remarks',
-      key: 'remarks',
-      width: 180,
-      ellipsis: true,
-      render: (value?: string) => value || <span className="muted">—</span>
-    },
-    {
-      title: '默认值',
-      dataIndex: 'default_value',
-      key: 'default_value',
-      width: 140,
-      ellipsis: true,
-      render: (value?: string) => value || <span className="muted">—</span>
-    },
-    ...(source === 'custom'
-      ? [
-          {
-            title: '操作',
-            key: 'actions',
-            width: 100,
-            render: (_: unknown, entry: DictionaryEntryView) => (
-              <div style={{ display: 'flex', gap: 4 }}>
-                <Tooltip title="编辑">
-                  <button className="icon-btn" onClick={() => openEdit(entry)}>
-                    <EditOutlined />
-                  </button>
-                </Tooltip>
-                <Tooltip title="删除">
-                  <button className="icon-btn" onClick={() => remove(entry)}>
-                    <DeleteOutlined />
-                  </button>
-                </Tooltip>
-              </div>
-            )
-          }
-        ]
-      : [])
+  const saveTemporary = async (ids?: string[]): Promise<void> => {
+    const result = await window.api.dictionary.saveTemporary(projectId, ids)
+    if (!result.ok) { message.error(result.error); return }
+    invalidateDictionaryCache(projectId)
+    await reload()
+    message.success(result.data.length ? '保存成功' : '暂无临时数据')
+  }
+
+  const removeSelected = (): void => {
+    modal.confirm({ title: '是否确定删除？', okText: '确定', cancelText: '取消', onOk: async () => {
+      const result = await window.api.dictionary.deleteMany(projectId, selected.map(String))
+      if (!result.ok) { message.error(result.error); throw Error(result.error) }
+      invalidateDictionaryCache(projectId)
+      await reload()
+      message.success('已删除')
+    } })
+  }
+
+  const columns: ColumnsType<DictionaryEntryView> = source === 'builtin' ? [
+    { title: '参数名称', dataIndex: 'key', width: 260, render: (value: string, entry) => <div className="dict-builtin-name"><span>{value}</span><small>{entry.field_type}</small></div> },
+    { title: '参数描述', dataIndex: 'description' }
+  ] : [
+    { title: '参数名称', dataIndex: 'key', width: 180, ellipsis: true },
+    { title: '备注名', dataIndex: 'remarks', width: 140, ellipsis: true },
+    { title: '字段类型', dataIndex: 'field_type', width: 100 },
+    { title: '默认值', dataIndex: 'default_value', width: 130, ellipsis: true },
+    { title: '示例值', dataIndex: 'example_value', width: 130, ellipsis: true },
+    { title: 'Mock规则', dataIndex: 'mock', width: 140, ellipsis: true },
+    { title: '参数描述', dataIndex: 'description', width: 200, ellipsis: true },
+    { title: '状态', key: 'status', width: 90, render: (_, entry) => <span className={entry.temporary ? 'dict-temporary' : 'muted'}>{entry.temporary ? '临时' : '永久'}</span> },
+    { title: '操作', key: 'actions', width: 112, fixed: 'right', render: (_, entry) => <div className="dict-actions">
+      {entry.temporary && <Tooltip title="保存"><button aria-label={`保存 ${entry.key}`} className="icon-btn" onClick={() => void saveTemporary([entry.id])}><SaveOutlined /></button></Tooltip>}
+      <Tooltip title="编辑"><button aria-label={`编辑 ${entry.key}`} className="icon-btn" onClick={() => openEdit(entry)}><EditOutlined /></button></Tooltip>
+      <Tooltip title="删除"><button aria-label={`删除 ${entry.key}`} className="icon-btn" onClick={() => remove(entry)}><DeleteOutlined /></button></Tooltip>
+    </div> }
   ]
 
   return (
     <div className="dict-panel">
-      <div className="dict-head">
-        <div className="segmented">
-          <button className={source === 'custom' ? 'active' : ''} onClick={() => { setSource('custom'); setPage(1) }}>
+      <div className="dict-tabs" role="tablist">
+          <button role="tab" aria-selected={source === 'custom'} className={source === 'custom' ? 'active' : ''} onClick={() => { setSource('custom'); setPage(1) }}>
             自定义
           </button>
-          <button className={source === 'builtin' ? 'active' : ''} onClick={() => { setSource('builtin'); setPage(1) }}>
+          <button role="tab" aria-selected={source === 'builtin'} className={source === 'builtin' ? 'active' : ''} onClick={() => { setSource('builtin'); setPage(1) }}>
             系统内置
           </button>
         </div>
+      <div className="dict-head">
         <Input
           allowClear
           prefix={<SearchOutlined style={{ color: '#a2967f' }} />}
@@ -286,16 +190,8 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
             />
           </span>
         ) : (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建字段描述
-          </Button>
+          <>{selected.length > 0 && <Button danger onClick={removeSelected}>批量删除</Button>}<Tooltip title="将所有临时数据保存为永久数据"><Button onClick={() => void saveTemporary()}>保存临时数据</Button></Tooltip><Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>导入</Button><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建</Button></>
         )}
-      </div>
-
-      <div className="dict-note">
-        {source === 'custom'
-          ? '自定义描述参与所有参数与模型字段的联想。'
-          : '系统内置描述为只读常量；关闭开关后仅停止联想，仍可在此查看。'}
       </div>
 
       <Table<DictionaryEntryView>
@@ -304,6 +200,7 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
         loading={loading}
         columns={columns}
         dataSource={filtered}
+        rowSelection={source === 'custom' ? { selectedRowKeys: selected, onChange: setSelected, columnWidth: 40 } : undefined}
         pagination={{
           current: page,
           pageSize: 10,
@@ -312,44 +209,11 @@ export default function DictionaryPanel({ projectId, actionToken = 0 }: Props): 
           showTotal: (total) => `共 ${total} 条`,
           onChange: (next) => setPage(next)
         }}
-        scroll={{ y: 'calc(100vh - 330px)' }}
+        scroll={{ x: source === 'custom' ? 1250 : undefined, y: 'calc(100vh - 330px)' }}
       />
 
-      <Modal
-        title={editing ? '编辑字段描述' : '新建字段描述'}
-        open={open}
-        onCancel={() => setOpen(false)}
-        onOk={() => void submit()}
-        okText={editing ? '保存' : '新建'}
-        cancelText="取消"
-        destroyOnHidden
-      >
-        <Form form={form} layout="vertical" preserve={false}>
-          <Form.Item
-            name="key"
-            label="参数名称"
-            rules={[{ required: true, message: '请输入参数名称' }]}
-          >
-            <Input placeholder="例如 user_id" />
-          </Form.Item>
-          <Form.Item name="field_type" label="类型" rules={[{ required: true }]}>
-            <Select options={TYPE_OPTIONS} />
-          </Form.Item>
-          <Form.Item
-            name="description"
-            label="描述"
-            rules={[{ required: true, message: '请输入参数描述' }]}
-          >
-            <Input placeholder="例如 用户 ID" />
-          </Form.Item>
-          <Form.Item name="remarks" label="备注">
-            <Input placeholder="可选" />
-          </Form.Item>
-          <Form.Item name="default_value" label="默认值">
-            <Input placeholder="可选" />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <DictionaryEntryEditor open={open} entry={editing} projectId={projectId} onClose={() => setOpen(false)} onSave={save} />
+      <DictionaryImport open={importOpen} projectId={projectId} entries={entries} onClose={() => setImportOpen(false)} onImported={async () => { invalidateDictionaryCache(projectId); setPage(1); await reload() }} />
     </div>
   )
 }

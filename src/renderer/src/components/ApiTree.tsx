@@ -33,6 +33,7 @@ import {
   ThunderboltOutlined
 } from '@ant-design/icons'
 import type { TargetSummary } from '@shared/types'
+import { methodColor, methodLabel } from '@shared/httpMethods'
 import { useApp } from '../store'
 import ApiDescriptionDialog from './ApiDescriptionDialog'
 
@@ -348,7 +349,7 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
         {item.target_type === 'folder' ? (
           <FolderOutlined style={{ color: '#a58a58', fontSize: 14 }} />
         ) : (
-          <span className="method-text">{(item.method || 'GET').toUpperCase()}</span>
+          <span className="method-text" style={{ color: methodColor(item.method) }}>{methodLabel(item.method, true)}</span>
         )}
         <span className="tree-node-name">{item.name}</span>
         <span className="tree-node-actions">

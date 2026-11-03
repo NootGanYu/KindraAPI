@@ -21,9 +21,13 @@ export interface Param extends FieldRules {
   field_type?: string
   is_checked: number
   is_system?: number
+  /** 当前接口对继承参数的禁用覆盖，不作为自定义参数行展示。 */
+  inherited_override?: boolean
   schema?: unknown
   /** form-data 文件行的大小（字节），仅用于展示 */
   file_size?: number
+  /** multipart/form-data 单个参数的 MIME 类型；缺省时自动推断。 */
+  content_type?: string
 }
 
 export type AuthType =
@@ -66,6 +70,8 @@ export type JsonFieldType =
  */
 export interface FieldDoc extends FieldRules {
   pointer: string
+  /** 同级字段的显示顺序；未设置时沿用示例/定义中的顺序。 */
+  order?: number
   type?: JsonFieldType
   required?: boolean
   description?: string
@@ -91,7 +97,7 @@ export interface BodyModel {
 export interface RequestModel {
   auth: AuthModel
   header: { parameter: Param[] }
-  query: { parameter: Param[] }
+  query: { parameter: Param[]; omit_empty_equals?: boolean }
   restful: { parameter: Param[] }
   cookie: { parameter: Param[] }
   body: BodyModel
@@ -99,6 +105,8 @@ export interface RequestModel {
   post_tasks: unknown[]
   pre_script?: string
   test?: string
+  pre_script_enabled?: boolean
+  test_enabled?: boolean
 }
 
 export interface ResponseExampleRequest {
@@ -120,6 +128,8 @@ export interface ResponseExample {
     is_default?: number
     schema?: unknown
     verify_type?: string
+    /** 设计期望的返回延迟，单位 ms；不修改实际请求的响应耗时。 */
+    sleep?: number
     /** 引用数据模型；存在时 raw 仅作为最近一次生成结果 */
     model_id?: string
   }
@@ -244,6 +254,12 @@ export interface TargetSummary {
   updated_at: string
 }
 
+export interface ApiStatus {
+  id: string
+  name: string
+  color: string
+}
+
 export interface Project {
   project_id: string
   name: string
@@ -254,6 +270,8 @@ export interface Project {
   updated_at: string
   /** 系统内置描述总开关：1 开启，-1 关闭 */
   is_describe_library?: number
+  api_statuses?: ApiStatus[]
+  default_api_status_id?: string
 }
 
 export interface EnvVar {
@@ -323,6 +341,9 @@ export interface ResponseSnapshot {
   headers: Record<string, string>
   body: string
   body_truncated?: boolean
+  /** 截断上限内的原始字节，用于切换编码、图片预览和下载。 */
+  body_base64?: string
+  charset?: string
   mime: { ext: string; mime: string }
   size: number
   response_time: number
@@ -544,7 +565,8 @@ export interface McpStatus {
 // Data dictionary
 // ---------------------------------------------------------------------------
 
-export type DictFieldType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array'
+export const DICT_FIELD_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array', 'null', 'any', 'allOf', 'anyOf', 'oneOf'] as const
+export type DictFieldType = typeof DICT_FIELD_TYPES[number]
 
 export interface DictionaryEntry {
   id: string
@@ -554,6 +576,9 @@ export interface DictionaryEntry {
   description: string
   remarks?: string
   default_value?: string
+  example_value?: string
+  mock?: string
+  temporary?: boolean
   schema?: Record<string, unknown>
   created_at: string
   updated_at: string

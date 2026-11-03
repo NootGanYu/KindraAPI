@@ -7,6 +7,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import * as store from '../src/main/storage/store'
+import { buildFieldRows, buildFieldSchema, fieldDocsFromSchema, mergeFieldDocs, normalizeFieldDocs } from '../src/shared/jsonFields'
 import { createDocSettings } from '../src/shared/factories'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
 import { startDocServer, stopDocServer } from '../src/main/docs/server'
@@ -20,6 +21,19 @@ async function freePort(): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  const rootDocs = normalizeFieldDocs([{ pointer: '', nullable: true, description: '根对象' }, { pointer: '/id', type: 'integer', required: true }])!
+  assert.equal(rootDocs[0].pointer, '')
+  const rootSchema = buildFieldSchema('{"id":1}', rootDocs).schema
+  assert.equal(rootSchema.nullable, true)
+  assert.equal(rootSchema.description, '根对象')
+  assert.deepEqual(rootSchema.required, ['id'])
+  const rootRoundTrip = fieldDocsFromSchema(rootSchema).find(doc => doc.pointer === '')
+  assert.equal(rootRoundTrip?.nullable, true)
+  assert.equal(rootRoundTrip?.description, '根对象')
+  assert.equal(mergeFieldDocs(fieldDocsFromSchema(rootSchema), rootDocs).find(doc => doc.pointer === '')?.nullable, true)
+  const orderedDocs = normalizeFieldDocs([{ pointer: '/first', order: 1 }, { pointer: '/second', order: 0 }])!
+  assert.deepEqual(buildFieldRows('{"first":1,"second":2}', orderedDocs).rows.map(row => row.name), ['second', 'first'])
+  assert.deepEqual(Object.keys(buildFieldSchema('{"first":1,"second":2}', orderedDocs).schema.properties as object), ['second', 'first'])
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-docs-'))
   app.setPath('userData', userData)
   await app.whenReady()

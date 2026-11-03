@@ -418,7 +418,7 @@ function buildFieldModel(raw: string, docsInput: FieldDoc[]): FieldModel {
       parts,
       token: parts[parts.length - 1] ?? '',
       parent: parentPointer(pointer),
-      order: orderMap.get(pointer) ?? 0,
+      order: docMap.get(pointer)?.order ?? orderMap.get(pointer) ?? 0,
       present: false,
       docOnly: false,
       orphan: false,
@@ -451,7 +451,8 @@ function buildFieldModel(raw: string, docsInput: FieldDoc[]): FieldModel {
     synthetic: false,
     childMap: new Map(),
     inferred: rootKind === 'array' || docsAreRootArray ? 'array' : 'object',
-    nullable: false,
+    doc: docs.find(doc => doc.pointer === ''),
+    nullable: docs.find(doc => doc.pointer === '')?.nullable ?? false,
     mixed: false,
     type: rootKind === 'array' || docsAreRootArray ? 'array' : 'object',
     typeOverridden: false,
@@ -777,7 +778,7 @@ export function normalizeFieldDocs(value: unknown): FieldDoc[] | null {
     } else if (typeof source.path === 'string') {
       pointer = pathToPointer(source.path)
     }
-    if (!pointer) continue
+    if (pointer === null) continue
     const doc: FieldDoc = { pointer }
     for (const key of RULE_KEYS) {
       if (Object.hasOwn(source, key)) (doc as unknown as Record<string, unknown>)[key] = source[key]
@@ -786,6 +787,7 @@ export function normalizeFieldDocs(value: unknown): FieldDoc[] | null {
     if (typeof source.required === 'boolean') doc.required = source.required
     if (typeof source.description === 'string') doc.description = source.description
     if (typeof source.doc_only === 'boolean') doc.doc_only = source.doc_only
+    if (typeof source.order === 'number' && Number.isFinite(source.order)) doc.order = source.order
     if (source.source === 'openapi' || source.source === 'manual') doc.source = source.source
     map.set(pointer, doc)
   }
@@ -798,11 +800,11 @@ export function mergeFieldDocs(
 ): FieldDoc[] {
   const map = new Map<string, FieldDoc>()
   for (const doc of existing ?? []) {
-    if (!doc?.pointer || doc.pointer === '') continue
+    if (typeof doc?.pointer !== 'string') continue
     map.set(doc.pointer, { ...doc })
   }
   for (const doc of incoming ?? []) {
-    if (!doc?.pointer || doc.pointer === '') continue
+    if (typeof doc?.pointer !== 'string') continue
     const previous = map.get(doc.pointer)
     if (!previous) {
       map.set(doc.pointer, { ...doc })
@@ -853,6 +855,13 @@ function normalizeSchemaType(schema: Record<string, unknown>): JsonFieldType | u
 /** 把 OpenAPI / JSON Schema 转成 FieldDoc[]；example 用于标记 raw 中不存在的字段。 */
 export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDoc[] {
   const byPointer = new Map<string, FieldDoc>()
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+    const source = schema as Record<string, unknown>
+    const rules = source['x-kindra-rules']
+    if (rules && typeof rules === 'object' && Object.keys(rules).length > 0) {
+      byPointer.set('', { pointer: '', source: 'openapi', ...rulesFromSchema(source) })
+    }
+  }
   const rawPaths = example === undefined ? null : collectJsonPaths(example)
   const ensure = (pointer: string): FieldDoc => {
     let doc = byPointer.get(pointer)
@@ -909,7 +918,7 @@ export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDo
   }
   walk(schema, [])
   return [...byPointer.values()].filter(
-    (doc) => doc.type || doc.required || doc.description || doc.doc_only
+    (doc) => doc.type || doc.doc_only || RULE_KEYS.some(key => doc[key] !== undefined)
   )
 }
 
@@ -920,7 +929,7 @@ function scalarVariant(type: JsonFieldType): Record<string, unknown> {
 }
 
 function schemaForNode(node: FieldNode, requiredSet: Set<string>): Record<string, unknown> {
-  const propertyChildren = [...node.childMap.values()].filter(
+  const propertyChildren = [...node.childMap.values()].sort((a, b) => a.order - b.order).filter(
     (child) => child.token !== '*' && !child.orphan
   )
   const itemChild = node.childMap.get('*')

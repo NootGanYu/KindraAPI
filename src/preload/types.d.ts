@@ -1,6 +1,7 @@
 import type {
   AppPaths,
   AppSettings,
+  ApiStatus,
   CaseRunResult,
   CaseRunSummary,
   DataModel,
@@ -96,7 +97,7 @@ export interface ApiBridge {
     confirmClose(): Promise<Result<boolean>>
   }
   dialog: {
-    openFiles(): Promise<Result<SelectedFile[]>>
+    openFiles(multiple?: boolean): Promise<Result<SelectedFile[]>>
   }
   files: {
     getPathForFile(file: File): string
@@ -109,6 +110,7 @@ export interface ApiBridge {
     list(): Promise<Result<Project[]>>
     create(name: string): Promise<Result<Project>>
     save(project: Project): Promise<Result<Project>>
+    saveApiStatuses(projectId: string, statuses: ApiStatus[], defaultId: string): Promise<Result<Project>>
     ensureDefault(): Promise<Result<Project>>
   }
   targets: {
@@ -187,7 +189,8 @@ export interface ApiBridge {
     save(settings: AppSettings): Promise<Result<AppSettings>>
   }
   http: {
-    send(projectId: string, target: Target, environmentId?: string): Promise<Result<SendRecord>>
+    send(projectId: string, target: Target, environmentId?: string, requestId?: string): Promise<Result<SendRecord>>
+    cancel(requestId: string): Promise<Result<boolean>>
   }
   history: {
     list(projectId: string): Promise<Result<SendRecordSummary[]>>
@@ -199,6 +202,11 @@ export interface ApiBridge {
     list(projectId: string): Promise<Result<DictionaryEntryView[]>>
     suggestions(projectId: string): Promise<Result<DictionaryEntryView[]>>
     save(projectId: string, entry: DictionaryEntry): Promise<Result<DictionaryEntry>>
+    saveMany(projectId: string, entries: DictionaryEntry[]): Promise<Result<DictionaryEntry[]>>
+    deleteMany(projectId: string, ids: string[]): Promise<Result<boolean>>
+    stage(projectId: string, entry: DictionaryEntry): Promise<Result<boolean>>
+    saveTemporary(projectId: string, ids?: string[]): Promise<Result<DictionaryEntry[]>>
+    apiFields(projectId: string, ids: string[]): Promise<Result<import('../shared/dictionaryImport').DictionaryField[]>>
     delete(projectId: string, id: string): Promise<Result<boolean>>
     getSettings(projectId: string): Promise<Result<DictionarySettings>>
     saveSettings(projectId: string, settings: DictionarySettings): Promise<Result<Project>>

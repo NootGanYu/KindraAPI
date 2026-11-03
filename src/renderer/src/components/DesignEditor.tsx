@@ -1,5 +1,6 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
-import { Button, Input } from 'antd'
+import { CodeOutlined, DeleteOutlined, PlusOutlined, SlidersOutlined } from '@ant-design/icons'
+import { Button, Input, Select } from 'antd'
+import { useApp } from '../store'
 import type { DesignError, Target } from '@shared/types'
 import { createDesignError } from '@shared/factories'
 import RequestEditor from './RequestEditor'
@@ -19,6 +20,7 @@ export default function DesignEditor({
   onEditDescription
 }: Props): JSX.Element {
   const errors = draft.design?.errors ?? []
+  const folders = useApp(state => state.targets).filter(target => target.target_type === 'folder')
 
   const setErrors = (next: DesignError[]): void => {
     onChange({ design: { ...(draft.design ?? {}), errors: next } })
@@ -28,24 +30,32 @@ export default function DesignEditor({
   }
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: '0 16px 32px' }}>
-      <div className="section-title">基本信息</div>
-      <div className="design-basic-row">
-        <span>详细说明</span>
-        <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
-        <span style={{ flex: 1 }} />
-        <Button size="small" type="text" onClick={onEditDescription}>
-          编辑
-        </Button>
+    <div className="design-editor">
+      <RequestEditor draft={draft} onChange={onChange} mode="design" intro={
+        <>
+          <div className="section-title">基本信息</div>
+          <div className="design-basic-row">
+            <label htmlFor="design-folder">目录</label>
+            <Select id="design-folder" aria-label="接口目录" value={draft.parent_id || '0'}
+              options={[{ value: '0', label: '根目录' }, ...folders.map(folder => ({ value: folder.target_id, label: folder.name }))]}
+              onChange={parent_id => onChange({ parent_id })} />
+            <label htmlFor="design-tags">标签</label>
+            <Select id="design-tags" aria-label="接口标签" mode="tags" value={draft.tags ?? []}
+              placeholder="添加标签" onChange={tags => onChange({ tags })} />
+          </div>
+          <div className="design-basic-row">
+            <span>详细说明</span>
+            <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
+            <span style={{ flex: 1 }} />
+            <Button size="small" type="text" onClick={onEditDescription}>编辑</Button>
+          </div>
+          <div className="section-title design-request-heading"><SlidersOutlined />设计请求参数</div>
+        </>
+      }>
+      <div className="section-title design-request-heading" style={{ marginTop: 8 }}>
+        <CodeOutlined />设计响应参数
       </div>
-
-      <div className="section-title">预定义请求参数</div>
-      <RequestEditor draft={draft} onChange={onChange} mode="design" />
-
-      <div className="section-title" style={{ marginTop: 8 }}>
-        预定义响应期望
-      </div>
-      <div style={{ height: 380, border: '1px solid var(--line, #e8e2d7)', borderRadius: 8, overflow: 'hidden' }}>
+      <div className="design-response">
         <ResponsePanel
           targetId={draft.target_id}
           record={null}
@@ -90,6 +100,7 @@ export default function DesignEditor({
               size="small"
               type="text"
               danger
+              aria-label="删除错误码"
               icon={<DeleteOutlined />}
               onClick={() => setErrors(errors.filter((_, i) => i !== index))}
             />
@@ -105,6 +116,7 @@ export default function DesignEditor({
           </Button>
         </div>
       </div>
+      </RequestEditor>
     </div>
   )
 }

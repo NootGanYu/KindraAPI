@@ -29,7 +29,15 @@
     "mcp": "node mcp-stdio.cjs",
     "demo": "node scripts/demo-server.cjs",
     "pack:mac": "npm run build && electron-builder --mac dmg zip",
-    "pack:win": "npm run build && electron-builder --win nsis zip --x64"
+    "pack:win": "npm run build && electron-builder --win nsis zip --x64",
+    "test:debug-runtime": "esbuild scripts/debug-runtime-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/debug-runtime-smoke.cjs && electron node_modules/.tmp/debug-runtime-smoke.cjs",
+    "test:debug-ui": "node scripts/debug-ui-smoke.cjs",
+    "test:debug-parity": "node scripts/debug-parity-smoke.cjs",
+    "test:parameter-inputs": "node scripts/dictionary-input-smoke.cjs",
+    "test:dictionary-ui": "node scripts/dictionary-module-smoke.cjs",
+    "test:review-regressions": "node scripts/review-regressions.cjs",
+    "test:model-actions": "node scripts/model-editor-actions-smoke.cjs",
+    "test:dictionary-data": "esbuild scripts/dictionary-import-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/dictionary-import-smoke.cjs && electron node_modules/.tmp/dictionary-import-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
