@@ -2,12 +2,14 @@ import { app, BrowserWindow } from 'electron'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import http from 'node:http'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import * as store from '../src/main/storage/store'
 import { createFlow, createFlowEvent } from '../src/shared/factories'
 import { callTool } from '../src/main/mcp/tools'
 import { registerIpc } from '../src/main/ipc'
+import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
 import type { FlowRun, Result } from '../src/shared/types'
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
@@ -80,6 +82,7 @@ async function main(): Promise<void> {
     assert.equal(finished.events[0].response?.code, 200)
     assert.equal(finished.request_id, args.request_id)
     const persisted = store.getFlowRun(projectId, run.run_id)!
+    assert(fs.existsSync(path.join(store.getPaths().localRoot, 'projects', projectId, 'executions', 'runs', `${run.run_id}.json`)))
     assert.equal(persisted.status, 'passed')
     const after = await callTool('start_flow_run', args, config)
     assert(after.ok)
@@ -112,8 +115,51 @@ async function main(): Promise<void> {
     assert.equal((legacy.result as any).scope, 'flow')
     assert.equal(typeof (legacy.result as any).elapsed_ms, 'number')
     console.log('PASS legacy execute_flow returns the original completed summary')
+
+    const legacyStarted = Date.now()
+    const slow = await callTool('execute_flow', { project_id: projectId, flow_id: flow.flow_id }, config)
+    const elapsed = Date.now() - legacyStarted
+    assert(slow.ok)
+    assert.equal((slow.result as any).status, 'running')
+    assert(elapsed >= 19_500 && elapsed < 23_000, `bounded legacy wait took ${elapsed}ms`)
+    assert.equal(requestCount, 3)
+    release()
+    await waitForRun(projectId, (slow.result as any).run_id, config)
+    console.log('PASS execute_flow returns a queryable active run after its 20 second bound')
+
+    const reservation = net.createServer()
+    await new Promise<void>(resolve => reservation.listen(0, '127.0.0.1', resolve))
+    const bridgePort = (reservation.address() as net.AddressInfo).port
+    await new Promise<void>(resolve => reservation.close(() => resolve()))
+    const bridgeConfig = store.saveMcpConfig({ ...config, port: bridgePort })
+    assert((await startMcpServer()).running)
+    const disconnectedArgs = { ...args, request_id: 'disconnected-run' }
+    const tcpRun = await new Promise<FlowRun>((resolve, reject) => {
+      const socket = net.connect(bridgePort, '127.0.0.1', () => {
+        socket.write(JSON.stringify({ id: 'start', token: bridgeConfig.token, tool: 'start_flow_run', args: disconnectedArgs }) + '\n')
+      })
+      let data = ''
+      socket.setEncoding('utf8')
+      socket.on('error', reject)
+      socket.on('data', chunk => {
+        data += chunk
+        if (!data.includes('\n')) return
+        const message = JSON.parse(data.split('\n')[0])
+        socket.destroy()
+        if (!message.ok) reject(new Error(message.error))
+        else resolve(message.result)
+      })
+    })
+    await waitUntil(() => requestCount === 4)
+    const reconnected = await callTool('start_flow_run', disconnectedArgs, bridgeConfig)
+    assert(reconnected.ok && (reconnected.result as FlowRun).run_id === tcpRun.run_id)
+    release()
+    await waitForRun(projectId, tcpRun.run_id, config)
+    assert.equal(requestCount, 4)
+    console.log('PASS real TCP MCP disconnect preserves Run and retry does not replay HTTP')
   } finally {
     release?.()
+    await stopMcpServer()
     window?.destroy()
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))

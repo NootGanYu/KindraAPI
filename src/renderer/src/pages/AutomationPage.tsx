@@ -330,6 +330,7 @@ export default function AutomationPage(): JSX.Element {
         <div className="automation-panel-head">
           <span>{flow ? flow.name : '流程编辑器'}</span>
           {dirty ? <Tag color="warning">未保存</Tag> : null}
+          {flow ? <span className="muted">编辑版本：{flow.revision?.slice(0, 8) ?? '未保存'}</span> : null}
           <span style={{ flex: 1 }} />
           <Button
             size="small"
