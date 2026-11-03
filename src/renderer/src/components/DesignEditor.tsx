@@ -1,10 +1,14 @@
-import { CodeOutlined, DeleteOutlined, PlusOutlined, SlidersOutlined } from '@ant-design/icons'
+import { useState } from 'react'
+import { CodeOutlined, DeleteOutlined, ImportOutlined, PlusOutlined, SlidersOutlined } from '@ant-design/icons'
 import { Button, Input, Select } from 'antd'
 import { useApp } from '../store'
 import type { DesignError, Target } from '@shared/types'
 import { createDesignError } from '@shared/factories'
 import RequestEditor from './RequestEditor'
 import ResponsePanel from './ResponsePanel'
+import ApiDocPreviewModal from './ApiDocPreviewModal'
+import ErrorCodeImportModal from './ErrorCodeImportModal'
+import CodeGenDialog from './CodeGenDialog'
 
 interface Props {
   draft: Target
@@ -19,6 +23,10 @@ export default function DesignEditor({
   onChange,
   onEditDescription
 }: Props): JSX.Element {
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [codeOpen, setCodeOpen] = useState(false)
+  const [errorImportOpen, setErrorImportOpen] = useState(false)
+  const currentEnvId = useApp(state => state.currentEnvId)
   const errors = draft.design?.errors ?? []
   const folders = useApp(state => state.targets).filter(target => target.target_type === 'folder')
 
@@ -31,7 +39,8 @@ export default function DesignEditor({
 
   return (
     <div className="design-editor">
-      <RequestEditor draft={draft} onChange={onChange} mode="design" intro={
+      <RequestEditor draft={draft} onChange={onChange} mode="design"
+        onPreview={() => setPreviewOpen(true)} onGenerateCode={() => setCodeOpen(true)} intro={
         <>
           <div className="section-title">基本信息</div>
           <div className="design-basic-row">
@@ -69,8 +78,9 @@ export default function DesignEditor({
         />
       </div>
 
-      <div className="section-title" style={{ marginTop: 20 }}>
-        错误码
+      <div className="design-error-head">
+        <div className="section-title" style={{ margin: 0 }}>错误码</div>
+        <Button size="small" icon={<ImportOutlined />} onClick={() => setErrorImportOpen(true)}>批量导入</Button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {errors.length === 0 ? (
@@ -117,6 +127,11 @@ export default function DesignEditor({
         </div>
       </div>
       </RequestEditor>
+      <ApiDocPreviewModal open={previewOpen} target={draft} onClose={() => setPreviewOpen(false)} />
+      <CodeGenDialog open={codeOpen} projectId={projectId ?? ''} target={draft}
+        environmentId={currentEnvId} onClose={() => setCodeOpen(false)} />
+      <ErrorCodeImportModal open={errorImportOpen} existing={errors}
+        onClose={() => setErrorImportOpen(false)} onApply={setErrors} />
     </div>
   )
 }

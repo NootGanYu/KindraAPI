@@ -52,7 +52,7 @@ const TYPE_OPTIONS: Array<{ value: JsonFieldType | '__auto__'; label: string }> 
 ]
 
 function docHasMeaning(doc: FieldDoc): boolean {
-  return Boolean(doc.type || doc.doc_only || doc.order !== undefined || RULE_KEYS.some(key => doc[key] !== undefined))
+  return Boolean(doc.type || doc.doc_only || doc.order !== undefined || doc.mock !== undefined || RULE_KEYS.some(key => doc[key] !== undefined))
 }
 
 function upsertDoc(

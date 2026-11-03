@@ -78,7 +78,8 @@ API 的样例数据，可在测试用例里作为 `sample` 事件引用。
 
 **Mark（状态标记）**
 接口的进度标记。原应用数值枚举：
-`DEVELOPING="1"`、`COMPLATED="2"`、`MODIFYING="3"`。
+`DEVELOPING="1"`、`COMPLATED="2"`、`MODIFYING="3"`；
+默认标记 1–4：开发中 / 已完成 / 需修改 / 已废弃。
 
 ## 自动化
 

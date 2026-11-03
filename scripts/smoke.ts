@@ -657,7 +657,7 @@ async function main(): Promise<void> {
     target_id: syncedId,
     body: {
       field_docs: [
-        { path: 'meta.note', type: 'string', description: '备注', doc_only: true }
+        { path: 'meta.note', type: 'string', description: '备注', doc_only: true, required: false, nullable: true, enum: null }
       ]
     }
   })

@@ -12,11 +12,12 @@ import {
   Tag,
   Tooltip
 } from 'antd'
-import { DeleteOutlined, DownOutlined, MoreOutlined, PaperClipOutlined, UploadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, EyeOutlined, MoreOutlined, PaperClipOutlined, UploadOutlined } from '@ant-design/icons'
 import type {
   AuthType,
   BodyMode,
   ModelSummary,
+  RawBodyLanguage,
   RequestModel,
   SendRecord,
   Target
@@ -25,6 +26,7 @@ import { createBody, createParam } from '@shared/factories'
 import { withQueryParams, withoutQueryKeys } from '@shared/requestUrl'
 import { methodColor } from '@shared/httpMethods'
 import { buildExampleFromDocs } from '@shared/jsonFields'
+import { buildBodyExample } from '@shared/bodyImport'
 import { exampleFromRecord, hasLocalEdits, useApp, useModelEpoch } from '../store'
 import ParameterTable from './DesignParamTable'
 import InheritedRequestParams from './InheritedRequestParams'
@@ -33,6 +35,8 @@ import JsonFieldTable from './JsonFieldTable'
 import JsonBodyInput from './JsonBodyInput'
 import { useTargetEditLock } from './TargetEditScope'
 import ModelPickerModal from './schemas/ModelPickerModal'
+import BodyPreviewModal from './BodyPreviewModal'
+import SmartImportModal from './SmartImportModal'
 
 interface Props {
   draft: Target
@@ -43,6 +47,8 @@ interface Props {
   children?: ReactNode
   /** 调试模式让 URL 与发送按钮横跨请求、响应分屏。 */
   toolbarContainer?: HTMLElement | null
+  onPreview?: () => void
+  onGenerateCode?: () => void
 }
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
@@ -53,6 +59,10 @@ const RAW_FORMATS = [
   { value: 'text/plain', label: 'Text' },
   { value: 'text/html', label: 'HTML' }
 ]
+const BODY_LANGUAGES: Record<RawBodyLanguage, string> = {
+  json: 'application/json', xml: 'application/xml', javascript: 'application/javascript',
+  text: 'text/plain', html: 'text/html'
+}
 const TABS = ['Header', 'Query', 'Path', 'Body', '认证', 'Cookie', '预执行操作', '后执行操作']
 
 interface JsonError {
@@ -113,9 +123,11 @@ function DocIllustration(): JSX.Element {
   )
 }
 
-export default function RequestEditor({ draft, onChange, mode = 'design', intro, children, toolbarContainer }: Props): JSX.Element {
+export default function RequestEditor({ draft, onChange, mode = 'design', intro, children, toolbarContainer, onPreview, onGenerateCode }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
   const debug = mode === 'debug'
+  const [bodyPreviewOpen, setBodyPreviewOpen] = useState(false)
+  const [smartImportOpen, setSmartImportOpen] = useState(false)
   const projectId = useApp((s) => s.project?.project_id ?? '')
   const saveTarget = useApp((s) => s.saveTarget)
   const sendActive = useApp((s) => s.sendActive)
@@ -158,6 +170,17 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
 
   const setBody = (patch: Partial<RequestModel['body']>): void => {
     setRequest({ body: { ...(latestRequest.current.body ?? createBody()), ...patch } })
+  }
+
+  const setBodyFormat = (contentType: string, patch: Partial<RequestModel['body']> = {}): void => {
+    const current = latestRequest.current
+    const parameters = current.header?.parameter ?? []
+    const header = parameters.find(param => param.key.toLowerCase() === 'content-type')
+    const parameter = header ? parameters.map(param => param === header ? { ...param, value: contentType, is_checked: 1 } : param)
+      : [...parameters, createParam({ key: 'Content-Type', value: contentType, is_checked: 1 })]
+    const raw_language = (Object.keys(BODY_LANGUAGES) as RawBodyLanguage[]).find(key => BODY_LANGUAGES[key] === contentType)
+    setRequest({ header: { ...current.header, parameter }, body: { ...(current.body ?? createBody()), raw_language,
+      mode: contentType === 'application/json' ? 'json' : 'raw', ...patch } })
   }
 
   useEffect(() => {
@@ -290,6 +313,10 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
 
   const body = request.body ?? createBody()
   const bodyValue = body.mode === 'json' ? 'raw' : body.mode
+  const bodyContentType = body.mode === 'json' ? 'application/json' :
+    (request.header?.parameter.find(param => param.key.toLowerCase() === 'content-type' && param.is_checked > 0)?.value.split(';')[0]
+      ?? (body.raw_language ? BODY_LANGUAGES[body.raw_language] : 'text/plain'))
+  const bodyLanguage = (Object.keys(BODY_LANGUAGES) as RawBodyLanguage[]).find(key => BODY_LANGUAGES[key] === bodyContentType) ?? 'text'
 
   const focusJsonError = (error: JsonError): void => {
     const input = document.querySelector<HTMLTextAreaElement>('.editor-shell textarea')
@@ -450,6 +477,12 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
                 }}>复制</button>
               </div>
             )}
+            {!debug && <div className="debug-body-toolbar">
+              <button disabled={Boolean(bodyModel)} onClick={() => setBodyView('raw')}>Raw编辑</button>
+              <button onClick={() => setBodyPreviewOpen(true)}>预览</button>
+              <button disabled={!onGenerateCode} onClick={onGenerateCode}>生成代码</button>
+              <button disabled={Boolean(bodyModel)} onClick={() => setSmartImportOpen(true)}>智能导入</button>
+            </div>}
           </div>
           {fieldView ? (
             <JsonFieldTable
@@ -581,16 +614,11 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
             {debug && <Select className="debug-body-mode-select" aria-label="Body 类型" variant="borderless" value={bodyValue} options={BODY_OPTIONS} onChange={changeMode} />}
             {(body.mode === 'json' || body.mode === 'raw') && <Select
               className="raw-format" aria-label="请求体格式" size="small" disabled={Boolean(bodyModel)}
-              value={body.mode === 'json' ? 'application/json' : (request.header?.parameter.find(param => param.key.toLowerCase() === 'content-type' && param.is_checked > 0)?.value.split(';')[0] ?? 'text/plain')}
+              value={bodyContentType}
               options={RAW_FORMATS}
-              onChange={contentType => {
-                const parameters = latestRequest.current.header?.parameter ?? []
-                const header = parameters.find(param => param.key.toLowerCase() === 'content-type')
-                const parameter = header ? parameters.map(param => param === header ? { ...param, value: contentType, is_checked: 1 } : param)
-                  : [...parameters, createParam({ key: 'Content-Type', value: contentType, is_checked: 1 })]
-                setRequest({ header: { parameter }, body: { ...body, mode: contentType === 'application/json' ? 'json' : 'raw' } })
-              }} />}
+              onChange={contentType => setBodyFormat(contentType)} />}
           </div>
+          {!debug && body.mode === 'none' && <Button size="small" onClick={() => setSmartImportOpen(true)}>智能导入</Button>}
           {renderBody()}
         </div>
       )
@@ -727,6 +755,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
           </div>
         ) : null}
 
+        {!debug && onPreview && <Button size="small" icon={<EyeOutlined />} onClick={onPreview}>预览</Button>}
         <div className="save-group">
           <button className="save-btn" onClick={() => void runAction('save')} disabled={busy}>
             {saving ? '保存中…' : '保存'}
@@ -766,6 +795,15 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
 
       {renderContent()}
       {children}
+      <BodyPreviewModal open={bodyPreviewOpen}
+        raw={bodyLanguage === 'json' ? buildBodyExample(body.raw ?? '', body.field_docs ?? []).text : body.raw ?? ''}
+        language={bodyLanguage} onClose={() => setBodyPreviewOpen(false)} />
+      <SmartImportModal open={smartImportOpen} existingDocs={body.field_docs ?? []}
+        onClose={() => setSmartImportOpen(false)} onApply={({ raw, fieldDocs }) => {
+          setBodyFormat('application/json', { raw, field_docs: fieldDocs })
+          setBodyView('fields')
+          setJsonError(validateJson(raw))
+        }} />
 
       <ModelPickerModal
         open={pickerOpen}
