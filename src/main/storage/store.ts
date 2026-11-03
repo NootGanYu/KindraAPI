@@ -1741,18 +1741,24 @@ function normalizeDocPort(value: unknown, fallback = DOC_DEFAULT_PORT): number {
   return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : fallback
 }
 
+function normalizeHostOverride(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, 200) : ''
+}
+
 export function getDocServiceConfig(): DocServiceConfig {
   const raw = readJson<Partial<DocServiceConfig>>(docServiceConfigPath(), {})
   return {
     enabled: raw.enabled !== false,
-    port: normalizeDocPort(raw.port)
+    port: normalizeDocPort(raw.port),
+    host_override: normalizeHostOverride(raw.host_override)
   }
 }
 
 export function saveDocServiceConfig(input: DocServiceConfig): DocServiceConfig {
   const config: DocServiceConfig = {
     enabled: input.enabled !== false,
-    port: normalizeDocPort(input.port)
+    port: normalizeDocPort(input.port),
+    host_override: normalizeHostOverride(input.host_override)
   }
   writeJson(docServiceConfigPath(), config)
   return config

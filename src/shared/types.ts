@@ -876,6 +876,8 @@ export interface DocShareInput {
 export interface DocServiceConfig {
   enabled: boolean
   port: number
+  /** 手动指定分享地址（IP、主机名或完整 URL）；留空自动选择内网网卡。 */
+  host_override?: string
 }
 
 export interface DocServiceStatus extends DocServiceConfig {

@@ -10,7 +10,8 @@ import * as store from '../src/main/storage/store'
 import { buildFieldRows, buildFieldSchema, fieldDocsFromSchema, mergeFieldDocs, normalizeFieldDocs } from '../src/shared/jsonFields'
 import { createCustomAttribute, createDocSettings } from '../src/shared/factories'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
-import { startDocServer, stopDocServer } from '../src/main/docs/server'
+import { getDocServiceStatus, startDocServer, stopDocServer } from '../src/main/docs/server'
+import { pickLanAddress } from '../src/shared/lanAddress'
 
 async function freePort(): Promise<number> {
   const probe = net.createServer()
@@ -21,6 +22,30 @@ async function freePort(): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  assert.equal(
+    pickLanAddress([
+      { name: 'OpenVPN Wintun', address: '10.8.0.6', family: 'IPv4' },
+      { name: '以太网', address: '192.168.1.100', family: 'IPv4' }
+    ]),
+    '192.168.1.100',
+    'VPN adapter must not be selected'
+  )
+  assert.equal(
+    pickLanAddress([
+      { name: 'Clash', address: '198.18.0.1', family: 'IPv4' },
+      { name: 'WLAN', address: '192.168.1.101', family: 'IPv4' }
+    ]),
+    '192.168.1.101',
+    'Clash TUN address must be excluded'
+  )
+  assert.equal(
+    pickLanAddress([
+      { name: 'en0', address: '192.168.5.104', family: 'IPv4' },
+      { name: 'utun3', address: '10.8.0.6', family: 'IPv4' }
+    ]),
+    '192.168.5.104',
+    'physical adapter wins on macOS'
+  )
   const rootDocs = normalizeFieldDocs([{ pointer: '', nullable: true, description: '根对象' }, { pointer: '/id', type: 'integer', required: true }])!
   assert.equal(rootDocs[0].pointer, '')
   const rootSchema = buildFieldSchema('{"id":1}', rootDocs).schema
@@ -122,6 +147,28 @@ async function main(): Promise<void> {
     const docPort = await freePort()
     store.saveDocServiceConfig({ enabled: true, port: docPort })
     await startDocServer()
+    store.saveDocServiceConfig({ ...store.getDocServiceConfig(), host_override: '192.168.1.50' })
+    assert.equal(
+      getDocServiceStatus().base_url,
+      `http://192.168.1.50:${docPort}`,
+      'manual share address override'
+    )
+    store.saveDocServiceConfig({ ...store.getDocServiceConfig(), host_override: '' })
+    const expectedLan = pickLanAddress(
+      Object.entries(os.networkInterfaces()).flatMap(([name, items]) =>
+        (items ?? []).map(item => ({
+          name,
+          address: item.address,
+          family: item.family,
+          internal: item.internal
+        }))
+      )
+    )
+    assert.equal(
+      getDocServiceStatus().base_url,
+      `http://${expectedLan}:${docPort}`,
+      'share address is resolved dynamically'
+    )
     const share = store.createDocShare(project.project_id, { name: '文档验证', scope: 'project', target_ids: [], settings: createDocSettings({ openapi: true }) })
     const base = `http://127.0.0.1:${docPort}/share/${share.share_id}`
     const html = await (await fetch(`${base}/a/${id}`)).text()
@@ -350,7 +397,7 @@ async function main(): Promise<void> {
     const removed = await call('upsert_api', { target_id: id, success_response: { field_docs: [{ path: 'data.note', remove: true }, { path: state.path, unset: ['default'], enum: null, unset_dummy: undefined }] } })
     assert(!removed.api.response.example[0].field_docs.some((d: any) => d.pointer === '/data/note'))
     assert.equal(removed.api.response.example[0].field_docs.find((d: any) => d.pointer.endsWith('/state')).default, undefined)
-    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'share environment', 'share logo', 'custom attributes', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
+    console.log(JSON.stringify({ ok: true, transport: 'stdio', checks: ['one-call authoring', 'idempotency', 'incremental merge', 'atomic rejection', 'legacy preservation', 'HTML/Markdown/OpenAPI', 'OpenAPI 3.1 / Swagger 2.0', 'LAN address selection', 'share environment', 'share logo', 'custom attributes', 'OpenAPI round trip', 'explicit removal', 'live models and safe detach', 'exact response update', 'form rules'], userData }))
   } finally {
     child.kill()
     await stopMcpServer()

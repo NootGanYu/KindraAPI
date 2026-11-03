@@ -69,7 +69,11 @@ export default function DocsPage(): JSX.Element {
   })
   const [link, setLink] = useState<DocShareLinkInfo | null>(null)
   const [serviceOpen, setServiceOpen] = useState(false)
-  const [serviceForm, setServiceForm] = useState({ enabled: true, port: 30999 })
+  const [serviceForm, setServiceForm] = useState({
+    enabled: true,
+    port: 30999,
+    host_override: ''
+  })
   const [serviceSaving, setServiceSaving] = useState(false)
 
   const reload = useCallback(async (): Promise<void> => {
@@ -103,7 +107,12 @@ export default function DocsPage(): JSX.Element {
   }, [project?.project_id])
 
   useEffect(() => {
-    if (status) setServiceForm({ enabled: status.enabled, port: status.port })
+    if (status)
+      setServiceForm({
+        enabled: status.enabled,
+        port: status.port,
+        host_override: status.host_override ?? ''
+      })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.port, status?.enabled])
 
@@ -209,7 +218,11 @@ export default function DocsPage(): JSX.Element {
   const saveService = async (): Promise<void> => {
     setServiceSaving(true)
     try {
-      const result = await window.api.docs.saveService(serviceForm)
+      const result = await window.api.docs.saveService({
+        enabled: serviceForm.enabled,
+        port: serviceForm.port,
+        host_override: serviceForm.host_override
+      })
       if (!result.ok) {
         message.error(result.error)
         return
@@ -438,6 +451,22 @@ export default function DocsPage(): JSX.Element {
               }
             />
             <div className="docs-hint">端口变更后，已复制的旧链接会失效。</div>
+          </div>
+          <div className="docs-field">
+            <label>分享地址（可选）</label>
+            <Input
+              value={serviceForm.host_override}
+              placeholder="例如 192.168.1.100 或 http://192.168.1.100:30999"
+              onChange={(event) =>
+                setServiceForm((current) => ({
+                  ...current,
+                  host_override: event.target.value
+                }))
+              }
+            />
+            <div className="docs-hint">
+              留空自动选择内网网卡；VPN 接管网络或自动识别不正确时，可手动指定内网 IP 或完整 URL。
+            </div>
           </div>
           <div className="docs-service-state">
             <span className={`docs-service-dot${status?.running ? ' on' : ''}`} />

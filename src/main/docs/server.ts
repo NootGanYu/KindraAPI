@@ -1,5 +1,6 @@
 import { ruleCells, rulesToSchema } from '@shared/fieldRules'
 import { optionLabel } from '@shared/customAttributes'
+import { pickLanAddress } from '@shared/lanAddress'
 import { documentedRequestExample, modelDocumentationWarnings, resolveDocumentedTarget } from './definition'
 import crypto from 'node:crypto'
 import http from 'node:http'
@@ -50,21 +51,15 @@ const authAttempts = new Map<string, { count: number; reset: number }>()
 
 function lanAddress(): string {
   try {
-    const candidates: Array<{ name: string; address: string }> = []
-    for (const [name, entries] of Object.entries(os.networkInterfaces())) {
-      for (const entry of entries ?? []) {
-        const family = String(entry.family)
-        if ((family === 'IPv4' || family === '4') && !entry.internal) {
-          candidates.push({ name, address: entry.address })
-        }
-      }
-    }
-    // 优先物理网卡（en0/en1…），避免选到 VPN / 虚拟网卡地址。
-    const physical = candidates.find((item) => /^en\d+$/i.test(item.name))
-    if (physical) return physical.address
-    const virtual = /^(utun|tun|tap|awdl|llw|bridge|gif|stf|lo|docker|veth|vmnet)/i
-    const fallback = candidates.find((item) => !virtual.test(item.name))
-    return (fallback ?? candidates[0])?.address ?? '127.0.0.1'
+    const entries = Object.entries(os.networkInterfaces()).flatMap(([name, items]) =>
+      (items ?? []).map((item) => ({
+        name,
+        address: item.address,
+        family: item.family,
+        internal: item.internal
+      }))
+    )
+    return pickLanAddress(entries)
   } catch {
     // fall through
   }
@@ -72,6 +67,12 @@ function lanAddress(): string {
 }
 
 function baseUrlFor(port: number): string {
+  const override = store.getDocServiceConfig().host_override?.trim()
+  if (override) {
+    return /^https?:\/\//i.test(override)
+      ? override.replace(/\/+$/, '')
+      : `http://${override}:${port}`
+  }
   return `http://${lanAddress()}:${port}`
 }
 
@@ -84,11 +85,12 @@ function countShares(): number {
 }
 
 export function getDocServiceStatus(): DocServiceStatus {
-  return { ...status, share_count: countShares() }
+  // 每次读取时重新解析，网络切换或修改覆盖地址后无需重启服务。
+  return { ...status, base_url: baseUrlFor(status.port), share_count: countShares() }
 }
 
 export function getDocShareUrl(shareId: string): string {
-  return `${status.base_url}/share/${shareId}`
+  return `${baseUrlFor(status.port)}/share/${shareId}`
 }
 
 export async function stopDocServer(): Promise<void> {
