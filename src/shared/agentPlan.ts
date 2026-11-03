@@ -12,7 +12,8 @@ export interface ReadPlanInput {
 }
 export interface AgentPlanStep {
   step_id: string
-  operation: 'read_api' | 'propose_api_change'
+  operation: 'read_api' | 'propose_api_change' | 'execute_api'
+  execution?: { method: string; url: string; effects: string[] }
   changes?: unknown
   target_name?: string
   source?: 'draft' | 'saved'
@@ -20,7 +21,7 @@ export interface AgentPlanStep {
   error?: string
   target_id: string
   depends_on: string[]
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'paused'
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'paused' | 'unknown' | 'cancelled'
   result?: unknown
 }
 export interface AgentPlan {

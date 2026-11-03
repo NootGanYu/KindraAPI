@@ -27,6 +27,8 @@ const api = {
     onDraftChanged: (callback: (event: unknown) => void) => subscribe('agent:draft-changed', callback),
     getActivity: () => invoke('agent:getActivity'),
     prepareQuit: () => invoke('agent:prepareQuit'),
+    proposeExecutePlan: (projectId: string, input: unknown) => invoke('agent:proposeExecutePlan', projectId, input),
+    cancelPlan: (projectId: string, id: string) => invoke('agent:cancelPlan', projectId, id),
     proposeEditPlan: (projectId: string, input: unknown) => invoke('agent:proposeEditPlan', projectId, input),
     proposeReadPlan: (projectId: string, input: unknown) => invoke('agent:proposeReadPlan', projectId, input),
     getPlan: (projectId: string, id: string) => invoke('agent:getPlan', projectId, id),

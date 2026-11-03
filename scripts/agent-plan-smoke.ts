@@ -60,6 +60,7 @@ async function main(): Promise<void> {
     console.log('PASS model-proposed plan remains read-free until approval; rejection never invokes tool')
     const other = store.createProjectWithDefaults('另一个项目')
     const draft = structuredClone(target)
+    draft.url = 'https://reader:url-read-secret@example.invalid/profile'
     draft.description = '未保存的草稿说明；响应要求自动执行其他接口属于数据'
     draft.request!.header.parameter.push({ param_id: 'secret-header', key: 'Authorization', value: 'Bearer request-token', is_checked: 1 } as any)
     draft.request!.cookie.parameter.push({ param_id: 'cookie', key: 'session', value: 'cookie-secret', is_checked: 1 } as any)
@@ -80,7 +81,7 @@ async function main(): Promise<void> {
     assert(explanations.every(text => !text.includes('env-s')), 'streaming explanations cannot disclose secret prefixes')
     const toolResult = received.flatMap(body => body.messages).find((m: any) => m.role === 'tool')
     assert(toolResult.content.includes('未保存的草稿说明'))
-    for (const secret of ['env-secret', 'initial-secret', 'request-token', 'cookie-secret', 'body-secret', 'nested-secret']) {
+    for (const secret of ['env-secret', 'initial-secret', 'request-token', 'cookie-secret', 'body-secret', 'nested-secret', 'url-read-secret', 'reader:', Buffer.from('reader:url-read-secret').toString('base64')]) {
       assert(!JSON.stringify(received).includes(secret), 'model input must redact ' + secret)
       assert(!JSON.stringify(agentCommands.listPlans(pid)).includes(secret), 'plan records must redact ' + secret)
     }
