@@ -45,7 +45,7 @@ export function prepareExecution(projectId: string, target: Target, environmentI
   const files = [...new Set(paths)].map(file => {
     if (!file || !path.isAbsolute(file)) throw new Error('上传文件必须是已配置的绝对路径')
     const realPath = fs.realpathSync(file), stat = fs.statSync(realPath)
-    if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error('上传文件须为不超过 32 MiB 的普通文件')
+    if (!stat.isFile()) throw new Error('上传文件须为普通文件')
     const bytes = fs.readFileSync(realPath)
     return { path: file, realPath, hash: fileHash(bytes), bytes, mode: stat.mode }
   })
@@ -122,6 +122,9 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   if (unknown) {
     record.error = { type: 'transport', message: '响应传输未完整结束，远端结果未知' }; record.status = 'failed'
   }
+  const failedAssertion = record.assertions.find(assertion => !assertion.passed && !assertion.skipped)
+  if (!record.error && failedAssertion) record.error = { type: 'assertion', message: `脚本断言失败：${failedAssertion.name}` }
+  if (!record.response && !record.error) record.error = { type: 'request', message: '主请求未完成' }
   if (!record.error) {
     try {
       if (context.env && !store.listEnvironments(context.projectId).some(e => e.env_id === context.env!.env_id)) throw new Error('获批环境已删除')
@@ -135,7 +138,6 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   }
   // Encoded response bodies could bypass ordinary string redaction. Keep only the text projection.
   if (record.response) delete record.response.body_base64
-  if (!record.response && !record.error) record.error = { type: 'request', message: '主请求未完成' }
   if (record.error) record.status = 'failed'
   const status = record.error ? unknown ? 'unknown' : signal.aborted ? 'cancelled' : 'failed' : 'succeeded'
   const error = status === 'unknown' ? '远端结果未知：请求可能已到达服务，禁止自动重发；请先人工核实。' : record.error?.message

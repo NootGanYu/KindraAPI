@@ -57,6 +57,15 @@ async function main(): Promise<void> {
     assert.equal(store.getGlobalVars(pid).vars.fromResponse, undefined)
     for (const secret of ['initial-secret', 'script-login-secret', 'local-result-secret']) { assert(!JSON.stringify(models).includes(secret)); assert(!JSON.stringify(commands.listPlans(pid)).includes(secret)) }
     console.log('PASS approved pre/post scripts and extra request evolve runtime variables without implicit persistence or leaking credentials')
+    const assertionFailure = structuredClone(target); assertionFailure.request!.pre_script = ''
+    assertionFailure.request!.test = "pm.globals.set('failedAssertionValue', 'must-not-write'); pm.test('business assertion', () => pm.expect(1).to.equal(2));"
+    const assertionPlan = await commands.proposeExecutePlan(pid, { goal: '断言失败不能误报成功或提交后续保存', targetId: target.target_id, draft: assertionFailure, environmentId: env.env_id, execution: { writeVariables: true, saveResponse: true } })
+    const assertionHits = hits.length
+    const failedAssertion = await commands.approvePlan(pid, assertionPlan.plan_id)
+    assert.equal(failedAssertion.status, 'paused'); assert.equal(failedAssertion.steps[0].status, 'failed')
+    assert.equal(failedAssertion.steps[1].status, 'paused'); assert.equal(hits.length, assertionHits + 1)
+    assert.equal(store.getGlobalVars(pid).vars.failedAssertionValue, undefined)
+
     const queryToken = structuredClone(target); queryToken.request!.auth = { type: 'kv', kv: { key: 'access_token', value: '{{token}}', in: 'query' } }
     const queryPlan = await commands.proposeExecutePlan(pid, { goal: '使用演进的查询认证变量', targetId: target.target_id, draft: queryToken, environmentId: env.env_id, execution: { requests: [{ method: 'GET', url: `${base}/login` }] } })
     assert.equal((await commands.approvePlan(pid, queryPlan.plan_id)).status, 'completed')
@@ -174,6 +183,11 @@ async function main(): Promise<void> {
     const multipart = await commands.proposeExecutePlan(pid, { goal: '上传multipart文件', targetId: target.target_id, draft: upload })
     assert.equal((await commands.approvePlan(pid, multipart.plan_id)).status, 'completed')
     assert(hits.at(-1)!.body.includes('multipart-approved-bytes'))
+    fs.writeFileSync(file, Buffer.alloc(33 * 1024 * 1024, 'L'))
+    upload.request!.body = { mode: 'binary', binary: { file_path: file } }
+    const largeFile = await commands.proposeExecutePlan(pid, { goal: '较大的已配置文件仍可获批上传', targetId: target.target_id, draft: upload })
+    assert.equal((await commands.approvePlan(pid, largeFile.plan_id)).status, 'completed')
+    assert.equal(hits.at(-1)!.body.length, 33 * 1024 * 1024)
     console.log('PASS configured upload is authorized and exact file changes pause before network')
   } finally { for (const server of [api, model]) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) } }
 }
