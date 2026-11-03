@@ -5,6 +5,7 @@ export interface AgentDraft {
   target: Target
   base_revision: string | null
   agent_owned: boolean
+  new_object?: boolean
   candidate_ids?: string[]
   updated_at: string
 }
@@ -57,4 +58,12 @@ export interface AgentCandidateMerge {
   saved_revision: string | null
   conflicts: AgentFieldConflict[]
   choices: Record<string, AgentConflictChoice>
+}
+
+export interface ProjectCandidateSummary {
+  kind: 'api' | 'flow'
+  entity_id: string
+  name: string
+  lifecycle: 'uncreated' | 'saved' | 'unavailable'
+  candidate_count: number
 }

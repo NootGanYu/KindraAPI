@@ -1,5 +1,5 @@
-import type { AgentDraft, AgentCandidate, AgentDraftEvent, AgentConflictChoice } from '@shared/agentDraft'
-import type { AgentPlan, AgentPlanEvent, ReadPlanInput } from '../shared/agentPlan'
+import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
+import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
   AppPaths,
@@ -106,6 +106,8 @@ export interface ApiBridge {
     onDraftChanged(callback: (event: AgentDraftEvent) => void): () => void
     getActivity(): Promise<Result<{ running: number }>>
     prepareQuit(): Promise<Result<boolean>>
+    proposeCreateApiPlan(projectId: string, input: CreateApiPlanInput): Promise<Result<AgentPlan>>
+    listProjectCandidates(projectId: string): Promise<Result<ProjectCandidateSummary[]>>
     proposeSavePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     proposeExecutePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     cancelPlan(projectId: string, id: string): Promise<Result<AgentPlan>>
