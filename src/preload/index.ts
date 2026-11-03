@@ -194,6 +194,7 @@ const api = {
     pauseRun: (projectId: string, runId: string) => invoke('flow:run:pause', projectId, runId),
     previewRunRefresh: (projectId: string, runId: string) => invoke('flow:run:refresh:preview', projectId, runId),
     resolveRunConflict: (projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override') => invoke('flow:run:refresh:resolve-conflict', projectId, runId, previewId, eventId, field, choice),
+    approveRunScope: (projectId: string, runId: string, previewId: string) => invoke('flow:run:scope:approve', projectId, runId, previewId),
     applyRunRefresh: (projectId: string, runId: string, previewId: string) => invoke('flow:run:refresh:apply', projectId, runId, previewId),
     resumeRun: (projectId: string, runId: string) => invoke('flow:run:resume', projectId, runId),
     runs: (projectId: string, limit?: number) => invoke('flow:runs', projectId, limit),

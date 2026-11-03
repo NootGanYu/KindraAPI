@@ -579,13 +579,22 @@ export interface FlowRefreshReference {
   conflicts: FlowRefreshConflict[]
   scope_changes: string[]
 }
+export interface FlowScopeApproval {
+  preview_id: string
+  approved_at: number
+  fingerprint: string
+  environment_id: string
+  references: Array<{ event_id: string; next_revision: string; changes: string[] }>
+}
 export interface FlowRefreshPreview {
+  scope_approval?: FlowScopeApproval
   preview_id: string
   created_at: number
   references: FlowRefreshReference[]
   blockers: string[]
 }
 export interface FlowVersionSwitch {
+  scope_approval?: FlowScopeApproval
   after_instance_id?: string
   preview_id: string
   applied_at: number

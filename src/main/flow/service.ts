@@ -201,6 +201,12 @@ export function resolveFlowRunConflict(projectId: string, runId: string, preview
   store.saveFlowRun(projectId, active.run)
   return preview
 }
+export function approveFlowRunScope(projectId: string, runId: string, previewId: string): FlowRun {
+  const active = refreshableRun(projectId, runId)
+  active.run.refresh_preview = active.refresh!.approveScope(previewId)
+  store.saveFlowRun(projectId, active.run)
+  return copy(active.run)
+}
 export function applyFlowRunRefresh(projectId: string, runId: string, previewId: string): FlowRun {
   const active = refreshableRun(projectId, runId)
   if (!active.run.version_switches?.some(item => item.preview_id === previewId)) {

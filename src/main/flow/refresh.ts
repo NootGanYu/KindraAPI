@@ -108,20 +108,10 @@ export class FlowRefreshController {
         this.rebuildBlockers();
         return redactEvidence(clone(pending.preview), [this.variables()]);
     }
-    private rebuildBlockers(): void {
-        if (!this.pending) return;
-        const { preview, candidates, baseBlockers } = this.pending;
-        preview.blockers = [...baseBlockers];
-        for (const { reference } of candidates) {
-            if (reference.conflicts.some(conflict => !conflict.resolution))
-                preview.blockers.push(`${reference.name} 存在步骤覆盖冲突，需逐项审阅`);
-            if (reference.scope_changes.length)
-                preview.blockers.push(`${reference.name} 执行范围扩大，需明确审阅确认`);
-        }
-    }
     apply(previewId: string): FlowVersionSwitch {
         if (!this.pending || this.pending.preview.preview_id !== previewId)
             throw new Error('预览已失效，请重新审阅');
+        this.rebuildBlockers();
         if (this.pending.preview.blockers.length)
             throw new Error(this.pending.preview.blockers.join('；'));
         this.validate(this.pending.candidates);
@@ -131,9 +121,10 @@ export class FlowRefreshController {
             this.originals.set(item.event.event_id, item.raw);
         }
         this.reviewed = this.pending.candidates;
-        return redactEvidence({ after_instance_id: this.position(), preview_id: previewId, applied_at: Date.now(), references: clone(this.pending.preview.references) }, [this.variables()]);
+        return redactEvidence({ scope_approval: clone(this.pending.preview.scope_approval ?? null) ?? undefined, after_instance_id: this.position(), preview_id: previewId, applied_at: Date.now(), references: clone(this.pending.preview.references) }, [this.variables()]);
     }
     validateResume(): void {
+        this.rebuildBlockers();
         if (this.pending && this.pending.preview.blockers.length)
             throw new Error(this.pending.preview.blockers.join('；'));
         if (this.pending && this.pending.candidates.length && this.reviewed !== this.pending.candidates)
@@ -146,6 +137,41 @@ export class FlowRefreshController {
         for (const { event } of this.remaining())
             if (event.target_id && !store.getTarget(this.projectId, event.target_id))
                 throw new Error('接口已删除，请保持暂停并重新审阅');
+    }
+    approveScope(previewId: string): FlowRefreshPreview {
+        if (!this.pending || this.pending.preview.preview_id !== previewId)
+            throw new Error('预览已失效，请重新审阅');
+        this.validate(this.pending.candidates);
+        const { preview, candidates } = this.pending;
+        const expanded = candidates.filter(item => item.reference.scope_changes.length);
+        if (expanded.length) preview.scope_approval = {
+            preview_id: previewId, approved_at: Date.now(), fingerprint: this.scopeFingerprint(),
+            environment_id: this.environment?.env_id ?? '',
+            references: expanded.map(item => ({ event_id: item.event.event_id, next_revision: item.reference.next_revision, changes: [...item.reference.scope_changes] }))
+        };
+        this.rebuildBlockers();
+        return redactEvidence(clone(preview), [this.variables()]);
+    }
+    private scopeFingerprint(): string {
+        return crypto.createHash('sha256').update(JSON.stringify({
+            environment_id: this.environment?.env_id ?? '',
+            references: this.pending?.candidates.map(item => ({ event_id: item.event.event_id,
+                revision: definitionRevision(item.definition), effective: this.effective(item.definition), changes: item.reference.scope_changes }))
+        })).digest('hex');
+    }
+    private scopeApprovalMatches(): boolean {
+        const approval = this.pending?.preview.scope_approval;
+        return Boolean(approval && approval.preview_id === this.pending?.preview.preview_id && approval.fingerprint === this.scopeFingerprint());
+    }
+    private rebuildBlockers(): void {
+        if (!this.pending) return;
+        const { preview, candidates, baseBlockers } = this.pending;
+        if (preview.scope_approval && !this.scopeApprovalMatches()) delete preview.scope_approval;
+        preview.blockers = [...baseBlockers];
+        for (const item of candidates) {
+            if (item.reference.conflicts.some(conflict => !conflict.resolution)) preview.blockers.push(`${item.event.name} 存在步骤覆盖冲突，需逐项审阅`);
+            if (item.reference.scope_changes.length && !this.scopeApprovalMatches()) preview.blockers.push(`${item.event.name} 执行范围扩大，需明确审阅确认`);
+        }
     }
     private validate(candidates: Candidate[]): void {
         for (const item of candidates) {
@@ -202,10 +228,13 @@ export class FlowRefreshController {
         } };
         if (origin(old.url) !== origin(next.url))
             changes.push(`origin: ${origin(old.url)} → ${origin(next.url)}`);
-        if (JSON.stringify([before.target.request?.pre_script, before.target.request?.pre_script_enabled, before.target.request?.test, before.target.request?.test_enabled]) !== JSON.stringify([after.target.request?.pre_script, after.target.request?.pre_script_enabled, after.target.request?.test, after.target.request?.test_enabled]))
-            changes.push('脚本定义变化');
+        for (const [field, enabled, label] of [['pre_script', 'pre_script_enabled', '接口前脚本'], ['test', 'test_enabled', '接口后脚本']] as const) {
+            const previous = before.target.request?.[enabled] !== false ? before.target.request?.[field]?.trim() : '';
+            const nextScript = after.target.request?.[enabled] !== false ? after.target.request?.[field]?.trim() : '';
+            if (nextScript && previous !== nextScript) changes.push(`${label}新增或修改`);
+        }
         if (after.files.some(file => !before.files.some(old => old.path === file.path && old.sha256 === file.sha256)))
-            changes.push('文件范围或内容变化');
+            changes.push('文件范围或内容变化：' + after.files.filter(file => !before.files.some(old => old.path === file.path && old.sha256 === file.sha256)).map(file => file.path).join('、'));
         return changes;
     }
 }

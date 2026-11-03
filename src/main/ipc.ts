@@ -37,7 +37,7 @@ import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
-import { getActiveFlowRuns, listFlowRuns, runSavedFlow, startFlowRun, getFlowRun, pauseFlowRun, resumeFlowRun, previewFlowRunRefresh, applyFlowRunRefresh, resolveFlowRunConflict, cancelFlowRun } from './flow/service'
+import { getActiveFlowRuns, listFlowRuns, runSavedFlow, startFlowRun, getFlowRun, pauseFlowRun, resumeFlowRun, previewFlowRunRefresh, approveFlowRunScope, applyFlowRunRefresh, resolveFlowRunConflict, cancelFlowRun } from './flow/service'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
@@ -334,6 +334,7 @@ export function registerIpc(): void {
   handle('flow:run:pause', (projectId: string, runId: string) => pauseFlowRun(projectId, runId))
   handle('flow:run:refresh:preview', (projectId: string, runId: string) => previewFlowRunRefresh(projectId, runId))
   handle('flow:run:refresh:resolve-conflict', (projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override') => resolveFlowRunConflict(projectId, runId, previewId, eventId, field, choice))
+  handle('flow:run:scope:approve', (projectId: string, runId: string, previewId: string) => approveFlowRunScope(projectId, runId, previewId))
   handle('flow:run:refresh:apply', (projectId: string, runId: string, previewId: string) => applyFlowRunRefresh(projectId, runId, previewId))
   handle('flow:run:resume', (projectId: string, runId: string) => resumeFlowRun(projectId, runId))
   handle('flow:runs', (projectId: string, limit?: number) => listFlowRuns(projectId, limit))

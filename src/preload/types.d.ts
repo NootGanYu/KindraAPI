@@ -277,6 +277,7 @@ export interface ApiBridge {
     pauseRun(projectId: string, runId: string): Promise<Result<FlowRun>>
     previewRunRefresh(projectId: string, runId: string): Promise<Result<FlowRefreshPreview>>
     resolveRunConflict(projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override'): Promise<Result<FlowRefreshPreview>>
+    approveRunScope(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
     applyRunRefresh(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
     resumeRun(projectId: string, runId: string): Promise<Result<FlowRun>>
     startRun(projectId: string, flowId: string, environmentId: string | undefined, requestId: string): Promise<Result<FlowRun>>

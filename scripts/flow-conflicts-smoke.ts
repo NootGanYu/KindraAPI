@@ -79,6 +79,21 @@ async function main() {
     assert(!JSON.stringify(secretChoice).includes('new-private-auth'))
     assert(!JSON.stringify(store.getFlowRun(project,secret.run.run_id)).includes('new-private-auth'))
     console.log('PASS conflict old/new/override credentials are redacted in UI/MCP/persistent evidence')
+    const combined=await paused();combined.target.request!.header.parameter[0].value='combined-header';combined.target.method='PUT';store.saveTarget(project,combined.target)
+    let combinedPreview=service.previewFlowRunRefresh(project,combined.run.run_id)
+    const approved=service.approveFlowRunScope(project,combined.run.run_id,combinedPreview.preview_id)
+    assert(approved.refresh_preview!.scope_approval)
+    assert.throws(()=>service.applyFlowRunRefresh(project,combined.run.run_id,combinedPreview.preview_id),/冲突/)
+    combinedPreview=api.resolveFlowRunConflict(project,combined.run.run_id,combinedPreview.preview_id,combined.flow.events[1].event_id,'headers.x-choice','api')
+    assert.equal(combinedPreview.scope_approval,undefined)
+    assert.throws(()=>service.applyFlowRunRefresh(project,combined.run.run_id,combinedPreview.preview_id),/范围/)
+    service.approveFlowRunScope(project,combined.run.run_id,combinedPreview.preview_id)
+    service.applyFlowRunRefresh(project,combined.run.run_id,combinedPreview.preview_id)
+    assert.equal(service.getFlowRun(project,combined.run.run_id)!.status,'paused')
+    service.resumeFlowRun(project,combined.run.run_id);await until(project,combined.run.run_id,'passed')
+    assert.equal(hits.at(-1)!.header,'combined-header')
+    console.log('PASS scope approval cannot bypass conflicts; changed choice invalidates prior approval before manual resume')
+
 
 
   } finally { for(const run of service.getActiveFlowRuns())await service.cancelFlowRun(project,run.run_id);release?.();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));fs.rmSync(dir,{recursive:true,force:true}) }
