@@ -1065,11 +1065,12 @@ export function deleteFlow(projectId: string, flowId: string): void {
 
 function countResults(
   events: FlowEventResult[],
-  acc: { passed: number; failed: number; skipped: number }
+  acc: { passed: number; failed: number; skipped: number; blocked: number }
 ): void {
   for (const event of events) {
     if (event.status === 'passed') acc.passed += 1
     else if (event.status === 'failed') acc.failed += 1
+    else if (event.status === 'blocked') acc.blocked += 1
     else if (event.status === 'skipped') acc.skipped += 1
     if (event.children?.length) countResults(event.children, acc)
   }
@@ -1093,7 +1094,7 @@ export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
     .sort((a, b) => b.started_at - a.started_at)
     .slice(0, Math.max(1, limit))
     .map((run) => {
-      const counts = { passed: 0, failed: 0, skipped: 0 }
+      const counts = { passed: 0, failed: 0, skipped: 0, blocked: 0 }
       countResults(run.events, counts)
       return {
         run_id: run.run_id,

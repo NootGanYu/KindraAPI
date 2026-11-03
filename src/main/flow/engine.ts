@@ -22,6 +22,7 @@ import { createId, createParam, createRequest, createTarget } from '@shared/fact
 import * as store from '../storage/store'
 import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
 import { redactEvidence } from './evidence'
+import { FlowDependencies } from './dependencies'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
@@ -143,9 +144,11 @@ class FlowRuntime {
   onProgress?: () => void
   requestInFlight = false
   remoteUnknown = false
+  dependencies!: FlowDependencies
   readonly definitions = new Map<string, RequestExecutionDefinition>()
   readonly settings = store.getSettings()
   fileReviewRequired = false
+
 
   constructor(projectId: string, env: Environment | null, globals: GlobalVars) {
     this.projectId = projectId
@@ -501,8 +504,20 @@ function skipped(events: FlowEvent[] | undefined, detail: string): FlowEventResu
   }))
 }
 
+function blockedChildren(events: FlowEvent[] | undefined, detail: string): FlowEventResult[] {
+  return (events ?? []).map(event => result(event, 'blocked', Date.now(), { detail, children: blockedChildren(event.children, detail) }))
+}
+
 function hasFailure(events: FlowEventResult[]): boolean {
   return events.some((event) => event.status === 'failed' || hasFailure(event.children ?? []))
+}
+
+function hasBlocked(events: FlowEventResult[]): boolean {
+  return events.some(event => event.status === 'blocked' || hasBlocked(event.children ?? []))
+}
+
+function completedStatus(events: FlowEventResult[]): 'blocked' | 'failed' | 'passed' {
+  return hasBlocked(events) ? 'blocked' : hasFailure(events) ? 'failed' : 'passed'
 }
 
 function countFailed(events: FlowEventResult[]): number {
@@ -582,10 +597,10 @@ async function runRequestEvent(
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
 
-    const assertions = (event.assertions ?? []).map((assertion) =>
+    const assertions = [...record.assertions, ...(event.assertions ?? []).map((assertion) =>
       evalAssertion(assertion, runtime.lastResponse)
-    )
-    const failed = assertions.some((assertion) => !assertion.passed)
+    )]
+    const failed = assertions.some((assertion) => !assertion.passed && !assertion.skipped)
     const status: FlowEventResult['status'] = record.error || !record.response || failed ? 'failed' : 'passed'
     const detail = record.error
       ? record.error.message
@@ -692,7 +707,7 @@ async function runEvent(
       const children = runtime.resultStack.at(-1)!.children = []
       await runEvents(projectId, event.children ?? [], runtime, flow, children)
       const failed = hasFailure(children)
-      return result(event, failed ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `条件成立：${event.condition ?? ''}`,
         children
       })
@@ -701,7 +716,7 @@ async function runEvent(
     if (event.type === 'begin') {
       const children = runtime.resultStack.at(-1)!.children = []
       await runEvents(projectId, event.children ?? [], runtime, flow, children)
-      return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `分组 ${children.length} 个事件`,
         children
       })
@@ -715,7 +730,7 @@ async function runEvent(
         await runEvents(projectId, event.children ?? [], runtime, flow, children, index)
       }
       runtime.unsetLocal('loop_index')
-      return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `循环 ${count} 轮`,
         children
       })
@@ -744,11 +759,20 @@ async function runEvents(
       runtime.onProgress?.()
       continue
     }
+    const reason = runtime.dependencies.blockedReason(event, results)
+    if (reason) {
+      const blocked = result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) })
+      results.push(blocked)
+      runtime.dependencies.record(blocked)
+      runtime.onProgress?.()
+      continue
+    }
     const current = result(event, 'running', Date.now(), { iteration })
     results.push(current)
     runtime.resultStack.push(current)
     runtime.onProgress?.()
     Object.assign(current, await runEvent(projectId, event, runtime, flow))
+    runtime.dependencies.record(current)
     runtime.resultStack.pop()
     runtime.onProgress?.()
   }
@@ -768,6 +792,7 @@ export async function runFlow(
   const globals = store.getGlobalVars(projectId)
   flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
+  runtime.dependencies = new FlowDependencies(flow.events)
   const capture = (events: FlowEvent[]): void => {
     for (const event of events) {
       const target = event.type === 'api' && event.target_id
@@ -793,6 +818,7 @@ export async function runFlow(
     }))
   }
   options.onSnapshot?.(snapshot)
+
   const startedAt = options.startedAt ?? Date.now()
   const runId = options.runId ?? createId('run')
   runtime.onProgress = () => options.onProgress?.({
@@ -813,7 +839,7 @@ export async function runFlow(
     env_id: env?.env_id ?? '',
     started_at: startedAt,
     finished_at: finishedAt,
-    status: runtime.remoteUnknown ? 'unknown' : hasFailure(events) ? 'failed' : 'passed',
+    status: runtime.remoteUnknown ? 'unknown' : completedStatus(events),
     elapsed_ms: finishedAt - startedAt,
     variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
     request_in_flight: false,

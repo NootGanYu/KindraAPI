@@ -464,6 +464,8 @@ export interface FlowEvent {
   /** Stable legacy step identity and full-step pause boundary. */
   step_id?: string
   logical_step_id?: string
+  /** Omitted: conservative sequence. Empty array: explicitly independent. References event IDs. */
+  depends_on?: string[]
   type: FlowEventType
   name: string
   enabled: boolean
@@ -514,7 +516,7 @@ export interface FlowEventResult {
   event_id: string
   name: string
   type: FlowEventType
-  status: 'running' | 'passed' | 'failed' | 'skipped'
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked'
   started_at: number
   elapsed_ms: number
   detail?: string
@@ -542,7 +544,7 @@ export interface FlowExecutionSnapshot {
   environment_id: string
   requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
 }
-export type FlowRunStatus = 'running' | 'passed' | 'failed' | 'interrupted' | 'unknown'
+export type FlowRunStatus = 'running' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
 
 export interface FlowRun {
   snapshot?: FlowExecutionSnapshot
@@ -577,6 +579,7 @@ export interface FlowRunSummary {
   passed: number
   failed: number
   skipped: number
+  blocked?: number
 }
 
 // ---------------------------------------------------------------------------
