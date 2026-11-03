@@ -114,6 +114,20 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
   const [keyword, setKeyword] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [ascending, setAscending] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const refreshTree = async (): Promise<void> => {
+    if (refreshing) return
+    setRefreshing(true)
+    const started = Date.now()
+    try {
+      await reloadTargets()
+    } finally {
+      // 与顶栏刷新一致：至少完整旋转一圈，保证可见反馈。
+      const remain = Math.max(0, 600 - (Date.now() - started))
+      window.setTimeout(() => setRefreshing(false), remain)
+    }
+  }
   const [expanded, setExpanded] = useState<React.Key[] | null>(null)
   const [newOpen, setNewOpen] = useState(false)
   const [renaming, setRenaming] = useState<TargetSummary | null>(null)
@@ -461,7 +475,13 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
         <span>全部接口</span>
         <span style={{ flex: 1 }} />
         <Tooltip title="刷新">
-          <button className="mini" onClick={() => void reloadTargets()}>
+          <button
+            className={`mini${refreshing ? ' is-refreshing' : ''}`}
+            aria-label="刷新接口树"
+            aria-busy={refreshing}
+            disabled={refreshing}
+            onClick={() => void refreshTree()}
+          >
             <ReloadOutlined style={{ fontSize: 13 }} />
           </button>
         </Tooltip>

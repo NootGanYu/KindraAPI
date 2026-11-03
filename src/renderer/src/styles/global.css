@@ -1417,7 +1417,8 @@ body {
 .icon-btn { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; color: #7b6e59; cursor: pointer; }
 .icon-btn:hover { background: var(--primary-hover-2); color: var(--primary-2); }
 .icon-btn.is-refreshing { cursor: default; }
-.icon-btn.is-refreshing svg { animation: kindra-refresh-spin .6s linear infinite; }
+.icon-btn.is-refreshing svg,
+.mini.is-refreshing svg { animation: kindra-refresh-spin .6s linear infinite; }
 @keyframes kindra-refresh-spin { to { transform: rotate(360deg); } }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
 .ai { display: flex; align-items: center; gap: 4px; color: var(--primary-2); font-size: 12.5px; cursor: pointer; }
