@@ -50,7 +50,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
   }, [projectId])
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }) }, [conversation?.messages])
   function openConfig(): void {
-    form.setFieldsValue({ name: connection?.name ?? '模型连接', base_url: connection?.base_url ?? '', model: connection?.model ?? '', protocol: 'chat-completions', api_key: undefined })
+    form.setFieldsValue({ name: connection?.name ?? '模型连接', base_url: connection?.base_url ?? '', model: connection?.model ?? '', protocol: connection?.protocol ?? 'chat-completions', api_key: undefined })
     setConfigOpen(true)
   }
   async function saveConfig(): Promise<void> {
@@ -137,7 +137,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
         <Form.Item name="name" label="连接名称"><Input /></Form.Item>
         <Form.Item name="base_url" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="填写兼容服务的基础地址，例如 https://example.com/v1"><Input placeholder="https://example.com/v1" /></Form.Item>
         <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}><Input /></Form.Item>
-        <Form.Item name="protocol" label="协议"><Select options={[{ label: 'Chat Completions', value: 'chat-completions' }]} /></Form.Item>
+        <Form.Item name="protocol" label="协议"><Select options={[{ label: 'Chat Completions', value: 'chat-completions' }, { label: 'Responses', value: 'responses' }]} /></Form.Item>
         <Form.Item name="api_key" label="API Key" extra={connection?.has_key ? 'Key 已安全保存；留空保留。' : 'Key 由系统凭据存储保护，本机无明文配置。'}><Input.Password autoComplete="new-password" /></Form.Item>
       </Form>
     </Modal>
