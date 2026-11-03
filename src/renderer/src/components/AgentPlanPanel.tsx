@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Drawer, Input, Select, Space, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Checkbox, Drawer, Input, Select, Space, Tag, Typography } from 'antd'
 import type { AgentPlan, AgentPlanStep } from '@shared/agentPlan'
 import type { AgentConnection } from '@shared/agent'
 import type { Environment, Result, TargetSummary } from '@shared/types'
@@ -18,6 +18,9 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [targetIds, setTargetIds] = useState<string[]>(useApp.getState().activeId ? [useApp.getState().activeId!] : [])
   const [environmentId, setEnvironmentId] = useState<string | undefined>()
+  const [extraRequests, setExtraRequests] = useState('')
+  const [writeVariables, setWriteVariables] = useState(false)
+  const [saveResponse, setSaveResponse] = useState(false)
   const [goal, setGoal] = useState('解释当前接口')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -47,8 +50,13 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
       await flushAgentDrafts()
       const state = useApp.getState()
       const drafts = state.project?.project_id === projectId ? Object.fromEntries(targetIds.filter(id => state.drafts[id]).map(id => [id, state.drafts[id]])) : {}
+      const requests = extraRequests.split('\n').filter(line => line.trim()).map(line => {
+        const match = /^\s*([A-Za-z]+)\s+(\S+)(?:\s+(\d+))?\s*$/.exec(line)
+        if (!match) throw new Error('额外请求每行填写 METHOD URL，可选最大次数')
+        return { method: match[1].toUpperCase(), url: match[2], maxCalls: Number(match[3] ?? 1) }
+      })
       const draftRevisions = Object.fromEntries(Object.keys(drafts).map(id => [id, state.baselines[id]?.revision ?? null]))
-      unwrap(await window.api.agent[save ? 'proposeSavePlan' : execute ? 'proposeExecutePlan' : edit ? 'proposeEditPlan' : 'proposeReadPlan'](projectId, { goal, targetId: targetIds[0], targetIds, environmentId, drafts, draftRevisions, connectionId: connection?.connection_id }))
+      unwrap(await window.api.agent[save ? 'proposeSavePlan' : execute ? 'proposeExecutePlan' : edit ? 'proposeEditPlan' : 'proposeReadPlan'](projectId, { goal, targetId: targetIds[0], targetIds, environmentId, drafts, draftRevisions, ...(execute ? { execution: { requests, writeVariables, saveResponse } } : {}), connectionId: connection?.connection_id }))
     } catch (e) { setError((e as Error).message) }
     finally { setBusy(false) }
   }
@@ -74,6 +82,12 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
         <Input aria-label="计划目标" value={goal} onChange={event => setGoal(event.target.value)} maxLength={10000} />
         <Select mode="multiple" aria-label="计划接口" placeholder="选择一个或多个接口" style={{ width: '100%' }} value={targetIds} onChange={setTargetIds} options={targets.map(target => ({ value: target.target_id, label: `${target.method} ${target.name}` }))} />
         <Select aria-label="计划环境" placeholder={execute ? '无环境（不使用默认环境）' : '不读取环境'} allowClear style={{ width: '100%' }} value={environmentId} onChange={setEnvironmentId} options={environments.map(env => ({ value: env.env_id, label: env.name }))} />
+        {execute && <Space direction="vertical" style={{ width: '100%' }}>
+          <Typography.Text>现有脚本和配置的上传文件会在计划中列出；额外请求须明确列出方法、完整地址和最多次数。</Typography.Text>
+          <Input.TextArea aria-label="额外请求授权" placeholder="GET https://example.com/login 1" value={extraRequests} onChange={event => setExtraRequests(event.target.value)} />
+          <Checkbox checked={writeVariables} onChange={event => setWriteVariables(event.target.checked)}>允许环境与全局变量差量写回（冲突暂停）</Checkbox>
+          <Checkbox checked={saveResponse} onChange={event => setSaveResponse(event.target.checked)}>添加独立保存响应示例步骤（不保存其他草稿）</Checkbox>
+        </Space>}
         <Button type="primary" disabled={!capable || !targetIds.length || targetIds.length > 32 || !goal.trim()} loading={busy} onClick={() => void generate()}>{save ? '生成修改与保存计划' : execute ? '生成执行计划' : edit ? '生成草稿修改计划' : '生成只读计划'}</Button>
         {plans.map(plan => <Card key={plan.plan_id} size="small" title={plan.goal} extra={<Tag color={plan.status === 'pending' ? 'warning' : undefined}>{labels[plan.status]}</Tag>}>
           <Space direction="vertical" style={{ width: '100%' }}>
@@ -81,7 +95,7 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
             <Typography.Text>环境：{plan.environment_name} · 模型：{plan.model}</Typography.Text>
             <Typography.Text>影响：{plan.steps.some(step => step.operation === 'save_api') ? '含正式保存：批准后自动采纳本计划候选，校验通过即写入接口定义及正式版本。' : plan.steps.some(step => step.operation === 'execute_api') ? '真实发送获批请求，可能产生远端业务副作用；结果未知时不会自动重发。' : plan.steps.some(step => step.operation === 'propose_api_change') ? '创建本机修改候选，审阅后应用到草稿；不会正式保存或发送请求。' : '只读取所选接口并发送脱敏内容，不修改、保存或发送接口请求。'}</Typography.Text>
             {plan.steps.map(step => <div key={step.step_id} style={{ borderLeft: '2px solid var(--border-color, #ddd)', paddingLeft: 12 }}>
-              <Space><Typography.Text strong>{step.step_id} · {step.operation === 'save_api' ? '保存正式定义' : step.operation === 'execute_api' ? '执行' : step.operation === 'propose_api_change' ? '提议修改' : '读取'} {step.target_name ?? plan.target_name}</Typography.Text><Tag color={step.status === 'failed' ? 'error' : step.status === 'succeeded' ? 'success' : undefined}>{stepLabels[step.status]}</Tag></Space>
+              <Space><Typography.Text strong>{step.step_id} · {step.operation === 'save_api_response' ? '保存响应示例' : step.operation === 'save_api' ? '保存正式定义' : step.operation === 'execute_api' ? '执行' : step.operation === 'propose_api_change' ? '提议修改' : '读取'} {step.target_name ?? plan.target_name}</Typography.Text><Tag color={step.status === 'failed' ? 'error' : step.status === 'succeeded' ? 'success' : undefined}>{stepLabels[step.status]}</Tag></Space>
               <div><Typography.Text type="secondary">依赖：{step.dependencies_explicit ? (step.depends_on.length ? step.depends_on.join('、') : '无（独立步骤）') : `未声明，保守依赖${step.depends_on.length ? ` ${step.depends_on.join('、')}` : '此前步骤'}`} · 来源：{(step.source ?? plan.source) === 'draft' ? '未保存草稿' : '已保存定义'}</Typography.Text></div>
               {step.execution && <div><Typography.Text strong>{step.execution.method} {step.execution.url}</Typography.Text><ul>{step.execution.effects.map(effect => <li key={effect}>{effect}</li>)}</ul></div>}
               {step.changes !== undefined && <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(step.changes, null, 2)}</pre>}

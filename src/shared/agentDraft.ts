@@ -33,6 +33,7 @@ export interface AgentDraftEvent {
   draft?: AgentDraft
   previous?: Target
   saved_revision?: string
+  saved_target?: Target
 }
 export type AgentConflictChoice = 'base' | 'current' | 'agent'
 export interface AgentFieldConflict {

@@ -102,8 +102,11 @@ function mergePatch(base: unknown, patch: unknown): any {
   return structuredClone(patch)
 }
 /** Internal business action, called only after the plan dispatcher checks approval. */
-export function createCandidate(pid: string, planId: string, stepId: string, base: Target, revision: string | null, patch: Partial<Target>): AgentCandidate {
-  validatePatch(patch)
+export function createCandidate(pid: string, planId: string, stepId: string, base: Target, revision: string | null, patch: Partial<Target>, responseSnapshot = false): AgentCandidate {
+  if (responseSnapshot) {
+    if (Object.keys(patch).length !== 1 || !patch.response) throw new Error('响应快照不能修改其他定义字段')
+    validateNestedPatch(patch)
+  } else validatePatch(patch)
   const previous = listCandidates(pid).find(c => c.plan_id === planId && c.step_id === stepId)
   if (previous) return previous
   const sequenceFile = path.join(projectDir(pid), 'candidate-sequence.json')
@@ -223,7 +226,7 @@ export function stashAgentDrafts(): number {
   return added
 }
 /** Internal approved-save action; never registered as a standalone IPC command. */
-export async function saveApprovedApi(pid: string, planId: string, targetId: string, revision: string | null, candidateIds: string[]): Promise<{ saved_version: NonNullable<AgentCandidate['saved_version']>; candidate_ids: string[] }> {
+export async function saveApprovedApi(pid: string, planId: string, targetId: string, revision: string | null, candidateIds: string[], responseOnly?: string): Promise<{ saved_version: NonNullable<AgentCandidate['saved_version']>; candidate_ids: string[] }> {
   return withTargetChanges('system', planId, () => {
     const saved = store.readTargetSnapshot(pid, targetId)
     const current = getDraft(pid, targetId)
@@ -237,11 +240,24 @@ export async function saveApprovedApi(pid: string, planId: string, targetId: str
     }
     const draft = getDraft(pid, targetId)
     if (draft.base_revision !== revision) throw new Error('草稿保存基线已变化，保存已暂停')
-    const linkedIds = [...new Set([...candidateIds, ...(draft.candidate_ids ?? [])])].filter(id => readCandidate(pid, id).status === 'applied')
-    validateSystemParameterOrigins(saved.target!, draft.target)
-    validateAgentApiDocumentation(draft.target, saved.target, linkedIds.flatMap(id => { const patch = readCandidate(pid, id).patch; return patch ? [patch] : [] }))
+    const linkedIds = [...new Set([...candidateIds, ...(responseOnly ? [] : draft.candidate_ids ?? [])])].filter(id => readCandidate(pid, id).status === 'applied')
+    const saving = structuredClone(responseOnly ? saved.target! : draft.target)
+    let responseSubmission: Partial<Target> | undefined
+    if (responseOnly) {
+      const actual = draft.target.response?.example?.find(example => example.example_id === responseOnly)
+      if (!actual) throw new Error('获批响应示例不存在')
+      const examples = [...(saving.response?.example ?? [])]
+      const original = examples.find(example => example.example_id === responseOnly)
+      const captured = { ...original, example_id: responseOnly, raw: actual.raw, expect: { ...original?.expect, name: original?.expect?.name ?? '实时响应', code: actual.expect?.code, content_type: actual.expect?.content_type } }
+      if (original) examples[examples.indexOf(original)] = captured
+      else examples.push(captured)
+      saving.response = { ...saving.response, example: examples }
+      responseSubmission = { response: { example: [captured] } }
+    }
+    validateSystemParameterOrigins(saved.target!, saving)
+    validateAgentApiDocumentation(saving, saved.target, responseSubmission ? [responseSubmission] : linkedIds.flatMap(id => { const patch = readCandidate(pid, id).patch; return patch ? [patch] : [] }))
     const beforeSave = structuredClone(draft.target)
-    const outcome = store.saveTargetChecked(pid, draft.target, revision)
+    const outcome = store.saveTargetChecked(pid, saving, revision)
     if (outcome.status !== 'saved') throw new Error('正式定义已变化，保存已暂停')
     const version = store.listTargetVersions(pid, targetId).find(item => item.version === outcome.target.version)!
     const savedVersion = { version_id: version.version_id, version: version.version, revision: outcome.revision, plan_id: planId }
@@ -249,9 +265,12 @@ export async function saveApprovedApi(pid: string, planId: string, targetId: str
       const reviewFile = file(pid, 'candidate-reviews', id)
       writeLocal(reviewFile, { ...readLocal<Record<string, unknown>>(reviewFile, {}), saved_version: savedVersion })
     }
-    draft.target = outcome.target; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []
+    draft.target = responseOnly ? { ...draft.target, version: outcome.target.version, updated_at: outcome.target.updated_at } : outcome.target
+    draft.base_revision = outcome.revision
+    draft.candidate_ids = responseOnly ? (draft.candidate_ids ?? []).filter(id => !linkedIds.includes(id)) : []
+    draft.agent_owned = Boolean(responseOnly) && (current.agent_owned || draft.candidate_ids.length > 0) && draftSignature(draft.target) !== draftSignature(outcome.target)
     fs.rmSync(file(pid, 'drafts', targetId), { force: true }); persistDraft(draft)
-    emit({ project_id: pid, target_id: targetId, draft, previous: beforeSave, saved_revision: outcome.revision })
+    emit({ project_id: pid, target_id: targetId, draft, previous: beforeSave, saved_revision: outcome.revision, saved_target: outcome.target })
     return { saved_version: savedVersion, candidate_ids: linkedIds }
   })
 }

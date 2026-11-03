@@ -47,12 +47,14 @@ export interface RequestExecutionContext {
   globals: ReturnType<typeof store.getGlobalVars>
   resolved: ResolvedRequest
   dependencies: Array<Target | RequestModel>
+  variables?: { environment: Record<string, unknown>; globals: Record<string, unknown> }
 }
 export interface RequestExecutionPolicy {
-  beforeRequest(request: { method: string; url: { toString(): string } }): void
+  beforeRequest(request: { method: string; url: { toString(): string }; headers?: { get(name: string): string | undefined } }, variables: { environment: Record<string, unknown>; globals: Record<string, unknown> }): void
   fileResolver: unknown
   followRedirects: boolean
   persistVariables: boolean
+  onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown> }): void
 }
 export function captureRequestContext(projectId: string, target: Target, environmentId?: string): RequestExecutionContext {
   // Explicit absence means no environment for this captured run, never the manual fallback.
@@ -470,8 +472,8 @@ export async function sendRequest(
   const startedAt = Date.now()
   let timingOffsets: Record<string, number> | null = null
   let networkInfo: Record<string, unknown> | null = null
-  const environmentScope = new VariableScope({ values: toValues(environmentValues) })
-  const globalScope = new VariableScope({ values: toValues(globalValues) })
+  const environmentScope = new VariableScope({ values: context?.variables ? Object.entries(context.variables.environment).map(([key, value]) => ({ key, value })) : toValues(environmentValues) })
+  const globalScope = new VariableScope({ values: context?.variables ? Object.entries(context.variables.globals).map(([key, value]) => ({ key, value })) : toValues(globalValues) })
   const environmentBefore = environmentScope.toObject()
   const globalsBefore = globalScope.toObject()
 
@@ -542,7 +544,7 @@ export async function sendRequest(
         run.start({
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
             if (options.policy) {
-              try { options.policy.beforeRequest(request as any) }
+              try { options.policy.beforeRequest(request as any, { environment: environmentScope.toObject(), globals: globalScope.toObject() }) }
               catch (error) {
                 controls.abort()
                 runtimeRun?.abort()
@@ -552,7 +554,7 @@ export async function sendRequest(
                 return
               }
             }
-            requestRef = request
+            if (!options.policy || !responseRef) requestRef = request
             activeRequests.set(controls.httpRequestId, controls)
             if (options.signal?.aborted) controls.abort()
           },
@@ -626,6 +628,7 @@ export async function sendRequest(
     )
   })
 
+  options.policy?.onVariables?.({ environment: environmentScope.toObject(), globals: globalScope.toObject() })
   const finishedAt = Date.now()
   if (options.policy?.persistVariables !== false && result.error?.type !== 'cancelled') {
     if (env) {

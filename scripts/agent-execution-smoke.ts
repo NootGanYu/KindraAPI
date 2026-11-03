@@ -163,19 +163,23 @@ async function main(): Promise<void> {
     console.log('PASS approved dependencies remain fixed across env, parent, global defaults, model and settings changes; new runs re-resolve live model references')
     const sideEffect = structuredClone(target)
     sideEffect.request!.pre_script = "pm.environment.set('var','changed'); pm.sendRequest('http://127.0.0.1/extra')"
-    await assert.rejects(() => proposal(sideEffect), /不支持脚本/)
+    const scriptPlan = await proposal(sideEffect)
+    const scriptBefore = hits.length
+    assert.equal((await commands.approvePlan(pid, scriptPlan.plan_id)).status, 'paused'); assert.equal(hits.length, scriptBefore)
     sideEffect.request!.pre_script = ''; sideEffect.request!.body = { mode: 'binary', binary: { file_path: '/tmp/never-upload' } }
-    await assert.rejects(() => proposal(sideEffect), /不支持文件/)
+    await assert.rejects(() => proposal(sideEffect), /ENOENT|文件/)
     sideEffect.request!.body = { mode: 'none' }; sideEffect.parent_id = parent.target_id
     parent.request!.test = 'pm.globals.set("sideEffect", "value")'; store.saveTarget(pid, parent)
-    await assert.rejects(() => proposal(sideEffect), /不支持脚本/)
+    const inheritedScript = await proposal(sideEffect)
+    assert.equal((await commands.approvePlan(pid, inheritedScript.plan_id)).status, 'completed')
+    assert.equal(store.getGlobalVars(pid).vars.sideEffect, undefined)
     parent.request!.test = ''; store.saveTarget(pid, parent)
     const queryAuth = structuredClone(target); queryAuth.request!.auth = { type: 'kv', kv: { key: 'api_key', value: 'query-secret', in: 'query' } }
     const queryPlan = await proposal(queryAuth)
     assert.equal((await commands.approvePlan(pid, queryPlan.plan_id)).steps[0].status, 'succeeded')
     assert.equal(hits.at(-1).url, '/saved?api_key=query-secret')
     assert(!JSON.stringify(commands.listPlans(pid)).includes('query-secret'))
-    console.log('PASS unsupported scripts/files refuse explicitly and query credentials stay local')
+    console.log('PASS unauthorized script requests/files refuse explicitly and query credentials stay local')
     const userInfo = structuredClone(target); userInfo.url = target.url.replace('http://', 'http://alice:url-credential-secret@').replace('/saved', '/userinfo')
     const userInfoPlan = await proposal(userInfo)
     const userInfoDone = await commands.approvePlan(pid, userInfoPlan.plan_id)

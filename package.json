@@ -58,7 +58,9 @@
     "test:agent-save": "esbuild scripts/agent-save-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-save-smoke.cjs && electron node_modules/.tmp/agent-save-smoke.cjs && electron node_modules/.tmp/agent-save-smoke.cjs --responses",
     "test:agent-save-ui": "node scripts/agent-save-ui-smoke.cjs",
     "test:agent-candidate-undo": "esbuild scripts/agent-candidate-undo-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-candidate-undo-13.cjs && electron node_modules/.tmp/agent-candidate-undo-13.cjs",
-    "test:agent-candidate-undo-ui": "node scripts/agent-candidate-undo-ui-smoke.cjs"
+    "test:agent-candidate-undo-ui": "node scripts/agent-candidate-undo-ui-smoke.cjs",
+    "test:agent-effects": "esbuild scripts/agent-effects-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=.tmp/agent-effects-smoke.cjs && electron .tmp/agent-effects-smoke.cjs && electron .tmp/agent-effects-smoke.cjs --responses",
+    "test:agent-effects-ui": "node scripts/agent-effects-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
