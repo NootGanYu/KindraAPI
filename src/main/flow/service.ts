@@ -1,4 +1,4 @@
-import type { FlowEvent, FlowRun } from '@shared/types'
+import type { FlowRun } from '@shared/types'
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { runFlow } from './engine'
@@ -8,7 +8,6 @@ interface ActiveRun {
   run: FlowRun
   completion?: Promise<FlowRun>
   abortController: AbortController
-  pauseSupported: boolean
   resume?: () => void
   stateListeners: Set<(run: FlowRun) => void>
 }
@@ -47,8 +46,7 @@ export function startFlowRun(
     request_environment_id: environmentId ?? '', source
   }
   store.saveFlowRun(projectId, run)
-  const containsLoop = (events: FlowEvent[]): boolean => events.some(event => event.type === 'loop' || containsLoop(event.children ?? []))
-  const active: ActiveRun = { run, abortController: new AbortController(), pauseSupported: !containsLoop(flow.events), stateListeners: new Set() }
+  const active: ActiveRun = { run, abortController: new AbortController(), stateListeners: new Set() }
   activeRuns.set(key, active)
   active.completion = runFlow(projectId, flow, environmentId, {
     runId: run.run_id, startedAt: run.started_at, signal: active.abortController.signal,
@@ -109,7 +107,6 @@ export function pauseFlowRun(projectId: string, runId: string): FlowRun {
     if (!run) throw new Error('运行记录不存在')
     return run
   }
-  if (!active.pauseSupported) throw new Error('含循环的流程暂不支持暂停，请等待嵌套循环恢复支持')
   if (active.run.status === 'running') updateState(active, 'pausing')
   return copy(active.run)
 }

@@ -877,14 +877,16 @@ function ResultRows({
       {events.map((event) => (
         <div
           className="run-event"
-          key={`${event.event_id}-${event.iteration ?? 0}-${depth}`}
+          key={event.instance_id ?? `${event.event_id}-${event.iteration ?? 0}-${depth}`}
           style={{ marginLeft: depth * 12 }}
         >
           <div className="run-event-head">
             <span className={`run-dot ${event.status}`} />
             <span className={`event-type ${event.type}`}>{TYPE_LABEL[event.type]}</span>
             <span className="run-event-name">{event.name}</span>
-            {event.iteration !== undefined ? (
+            {event.iteration_path?.length ? (
+              <span className="muted">#{event.iteration_path.map(item => item.iteration + 1).join(" / ")}</span>
+            ) : event.iteration !== undefined ? (
               <span className="muted">#{event.iteration + 1}</span>
             ) : null}
             <span className="muted">{event.elapsed_ms}ms</span>
