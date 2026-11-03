@@ -6,7 +6,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import * as store from '../src/main/storage/store'
-import { createFlow, createFlowEvent } from '../src/shared/factories'
+import { createFlow, createFlowEvent, createTarget } from '../src/shared/factories'
 import { registerIpc } from '../src/main/ipc'
 import { callTool, listToolInfos } from '../src/main/mcp/tools'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
@@ -114,6 +114,34 @@ async function main(): Promise<void> {
     assert(ui.ok)
     assert.equal((await until(ui.data.run_id, 'passed')).source, 'ui')
     console.log('PASS paused MCP Run cannot resume after revocation; UI source remains independent')
+
+    store.saveMcpConfig(config)
+    const target = createTarget(projectId, 'api')
+    target.url = `${origin}/saved-api`
+    store.saveTarget(projectId, target)
+    const refreshFlow = createFlow(projectId, '继续前权限与 revision')
+    refreshFlow.events = [createFlowEvent('request', { url: `${origin}/hold` }), createFlowEvent('api', { target_id: target.target_id })]
+    store.saveFlow(projectId, refreshFlow)
+    arrival = new Promise<void>(resolve => { arrived = resolve })
+    const reviewStart = await tcp('start_flow_run', { flow_id: refreshFlow.flow_id, request_id: 'refresh-revoke' })
+    await arrival
+    assert((await tcp('pause_flow_run', { run_id: reviewStart.result.run_id })).ok)
+    release()
+    await until(reviewStart.result.run_id, 'paused')
+    target.url = `${origin}/adopted`
+    store.saveTarget(projectId, target)
+    const preview = await invoke<any>('flow:run:refresh:preview', projectId, reviewStart.result.run_id)
+    assert(preview.ok)
+    assert((await invoke('flow:run:refresh:apply', projectId, reviewStart.result.run_id, preview.data.preview_id)).ok)
+    store.saveMcpConfig({ ...config, allow_execute: false })
+    assert(!(await invoke('flow:run:resume', projectId, reviewStart.result.run_id)).ok)
+    assert(!hits.includes('/adopted'))
+    store.saveMcpConfig(config)
+    target.url = `${origin}/raced`
+    store.saveTarget(projectId, target)
+    assert(!(await invoke('flow:run:resume', projectId, reviewStart.result.run_id)).ok, 'restoring permission does not bypass revision review')
+    assert((await invoke('flow:run:cancel', projectId, reviewStart.result.run_id)).ok)
+    console.log('PASS reviewed snapshot resume rechecks both current permission and revision')
 
     store.saveMcpConfig({ ...config, allow_write: false })
     assert(!(await tcp('create_execution_flow', { name: 'denied', events: [] })).ok)

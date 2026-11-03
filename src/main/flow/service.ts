@@ -170,6 +170,8 @@ export function resumeFlowRun(projectId: string, runId: string): FlowRun {
   if (denied) throw new Error(`MCP 运行权限不足：${denied}`)
   if (active.run.status === 'paused' || active.run.status === 'permission_revoked') {
     active.run.error = undefined
+    // Restored access re-enters the paused review flow if definitions need attention.
+    if (active.run.status === 'permission_revoked') updateState(active, 'paused')
     active.refresh?.validateResume()
     const resume = active.resume
     active.resume = undefined
