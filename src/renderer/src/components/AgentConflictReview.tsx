@@ -12,6 +12,7 @@ export default function AgentConflictReview({ candidate, onUpdated, onError }: {
   const [choices, setChoices] = useState<Record<string, AgentConflictChoice>>({})
   const [busy, setBusy] = useState(false)
   const merge = candidate.merge
+  const undo = merge?.operation === 'undo'
   useEffect(() => { setChoices({}) }, [merge?.review_id])
   if (!merge || candidate.status !== 'conflict') return null
   async function resolve(): Promise<void> {
@@ -19,7 +20,7 @@ export default function AgentConflictReview({ candidate, onUpdated, onError }: {
     setBusy(true)
     try {
       await flushAgentDrafts()
-      const result = await window.api.agent.resolveCandidate(candidate.project_id, candidate.candidate_id, merge.review_id, choices)
+      const result = await window.api.agent[undo ? 'resolveCandidateUndo' : 'resolveCandidate'](candidate.project_id, candidate.candidate_id, merge.review_id, choices)
       if (!result.ok) throw new Error(result.error)
       if (result.data.status === 'conflict') onError('审阅期间内容发生变化，已刷新冲突；请检查最新内容再选择。')
       else onError('')
@@ -29,17 +30,17 @@ export default function AgentConflictReview({ candidate, onUpdated, onError }: {
   }
   return <section aria-label="Agent 冲突审阅" style={{ marginTop: 20 }}>
     <Typography.Title level={4}>逐字段解决冲突</Typography.Title>
-    <p>无冲突字段已合并到草稿。以下字段需要明确选择；保存已暂停。</p>
+    <p>{undo ? '撤销尚未改变草稿。请检查应用后快照、当前内容与应用前内容，明确选择后再撤销。' : '无冲突字段已合并到草稿。以下字段需要明确选择；保存已暂停。'}</p>
     {merge.conflicts.map(conflict => <section key={conflict.id} aria-label={`冲突 ${conflict.path}`} style={{ border: '1px solid #d8b3a9', marginBottom: 16, padding: 12 }}>
       <Typography.Text strong>{conflict.path}{conflict.reason === 'order' ? '（顺序冲突）' : ''}</Typography.Text>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, marginTop: 8 }}>
-        {(['base', 'current', 'agent'] as const).map(side => <div key={side}><strong>{{ base: '基线', current: '当前内容', agent: 'Agent 内容' }[side]}</strong><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 260, overflow: 'auto' }}>{valueText(conflict, side)}</pre></div>)}
+        {(['base', 'current', 'agent'] as const).map(side => <div key={side}><strong>{(undo ? { base: '应用后快照', current: '当前内容', agent: '应用前内容' } : { base: '基线', current: '当前内容', agent: 'Agent 内容' })[side]}</strong><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 260, overflow: 'auto' }}>{valueText(conflict, side)}</pre></div>)}
         <div><strong>合并结果</strong><pre aria-label={`结果 ${conflict.path}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{choices[conflict.id] ? valueText(conflict, choices[conflict.id]) : '等待选择（草稿暂保留当前内容）'}</pre></div>
       </div>
       <Radio.Group aria-label={`选择 ${conflict.path}`} value={choices[conflict.id]} onChange={event => setChoices(previous => ({ ...previous, [conflict.id]: event.target.value }))}>
-        <Space wrap><Radio value="current">保留当前</Radio><Radio value="agent">采用 Agent</Radio><Radio value="base">恢复基线</Radio></Space>
+        <Space wrap><Radio value="current">保留当前</Radio><Radio value="agent">{undo ? '恢复应用前' : '采用 Agent'}</Radio><Radio value="base">{undo ? '恢复应用后' : '恢复基线'}</Radio></Space>
       </Radio.Group>
     </section>)}
-    <Button type="primary" loading={busy} disabled={merge.conflicts.some(conflict => !choices[conflict.id])} onClick={() => void resolve()}>确认冲突选择并应用草稿</Button>
+    <Button type="primary" loading={busy} disabled={merge.conflicts.some(conflict => !choices[conflict.id])} onClick={() => void resolve()}>{undo ? '确认选择并撤销' : '确认冲突选择并应用草稿'}</Button>
   </section>
 }
