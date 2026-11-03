@@ -37,7 +37,7 @@ async function main(): Promise<void> {
   const server = http.createServer((req, res) => {
     requests++
     if (req.url === '/hold') release = () => res.end('{"ok":true}')
-    else { res.setHeader('Set-Cookie', 'session=cookie-secret'); res.end('{"token":"token-secret","nested":{"password":"nested-secret"}}') }
+    else { res.setHeader('Set-Cookie', 'session=cookie-secret'); res.end('{"token":"token-secret","nested":{"password":"nested-secret","credential":987654321},"numeric_token":123456789,"secrets":[246813579,false]}') }
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   let window: BrowserWindow | undefined
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     const flow = createFlow(projectId, '逐步进度')
     flow.events = [createFlowEvent('begin', { children: [
       createFlowEvent('request', { url: `http://127.0.0.1:${port}/login`, method: 'GET', headers: [{ key: 'Authorization', value: 'Bearer header-secret' }] }),
-      createFlowEvent('script', { script: 'console.log("token", "token-secret"); console.log({password:"nested-secret"});' }),
+      createFlowEvent('script', { script: 'console.log("token", "token-secret"); console.log({password:"nested-secret"}); console.log(123456789, 987654321, 246813579);' }),
       createFlowEvent('request', { url: `http://127.0.0.1:${port}/hold`, method: 'GET' })
     ] })]
     store.saveFlow(projectId, flow)
@@ -62,7 +62,10 @@ async function main(): Promise<void> {
     const partial = query.result as FlowRun
     assert.equal(partial.events[0]?.children?.[0].status, 'passed', 'completed nested request is visible while next request is in flight')
     assert.equal(partial.status, 'running')
-    for (const secret of ['token-secret','cookie-secret','nested-secret','header-secret']) assert(!JSON.stringify(partial).includes(secret), `MCP leaked ${secret}`)
+    const body = JSON.parse(partial.events[0].children![0].response!.body)
+    assert.deepEqual(body.secrets, ['[REDACTED]', '[REDACTED]'])
+    assert.equal(partial.events[0].children![0].definition_revision, partial.snapshot!.requests[0].revision)
+    for (const secret of ['token-secret','cookie-secret','nested-secret','header-secret','123456789','987654321','246813579']) assert(!JSON.stringify(partial).includes(secret), `MCP leaked ${secret}`)
     assert.deepEqual(store.getFlowRun(projectId, runId), partial, 'same evidence persisted as queried')
     const switched = store.createProjectWithDefaults('切换后的项目')
     store.saveSettings({ ...store.getSettings(), project_id: switched.project_id })
@@ -75,7 +78,7 @@ async function main(): Promise<void> {
     const ui = await window.webContents.executeJavaScript(`require('electron').ipcRenderer.invoke('flow:run:get', ${JSON.stringify(projectId)}, ${JSON.stringify(runId)})`)
     assert.deepEqual(ui.data, partial, 'UI and MCP share sanitized evidence')
     const local = path.join(store.getPaths().localRoot, 'projects', projectId, 'executions', 'runs', `${runId}.json`)
-    for (const secret of ['token-secret','cookie-secret','nested-secret','header-secret']) assert(!fs.readFileSync(local,'utf8').includes(secret))
+    for (const secret of ['token-secret','cookie-secret','nested-secret','header-secret','123456789','987654321','246813579']) assert(!fs.readFileSync(local,'utf8').includes(secret))
     const history = store.listSendRecords(projectId)
     const send = store.getSendRecord(projectId, history[0].record_id)!
     assert(Array.isArray(send.response?.cookies), 'redacted cookies retain their response shape')

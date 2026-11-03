@@ -6,7 +6,7 @@ import type { BodyModel, FlowFileDependency } from '@shared/types'
 
 export class FlowFileChangedError extends Error {
   constructor(file: string) {
-    super(`外部文件已变更或不可读取，需审查后重新运行：${file}`)
+    super(`外部文件已变更或不可读取，需审查并采用文件快照后继续：${file}`)
   }
 }
 

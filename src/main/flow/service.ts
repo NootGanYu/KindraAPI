@@ -1,3 +1,4 @@
+import { isActiveFlowRunStatus } from '@shared/flow'
 import { projectPermissionError } from '../mcp/permissions'
 import type { FlowRun } from '@shared/types'
 import { createId } from '@shared/factories'
@@ -68,6 +69,14 @@ export function startFlowRun(
       })
     },
     onControl: controller => { active.refresh = controller },
+    onReviewRequired: async message => {
+      if (active.abortController.signal.aborted) return
+      await new Promise<void>(resolve => {
+        active.resume = resolve
+        active.run.error = message
+        updateState(active, 'paused')
+      })
+    },
     onStepBoundary: async () => {
       if (active.run.status !== 'pausing') return
       await new Promise<void>(resolve => {
@@ -169,10 +178,10 @@ export function resumeFlowRun(projectId: string, runId: string): FlowRun {
   const denied = runPermissionError(active)
   if (denied) throw new Error(`MCP 运行权限不足：${denied}`)
   if (active.run.status === 'paused' || active.run.status === 'permission_revoked') {
-    active.run.error = undefined
     // Restored access re-enters the paused review flow if definitions need attention.
     if (active.run.status === 'permission_revoked') updateState(active, 'paused')
     active.refresh?.validateResume()
+    active.run.error = undefined
     const resume = active.resume
     active.resume = undefined
     updateState(active, 'running')
@@ -250,7 +259,7 @@ export async function runSavedFlow(projectId: string, flowId: string, environmen
 /** Recovery only records loss of the execution stack. It never recreates an executor. */
 export function recoverFlowRuns(projectId: string): void {
   for (const run of store.readFlowRuns(projectId)) {
-    if (!['running', 'pausing', 'paused', 'reviewing', 'cancelling', 'permission_revoked'].includes(run.status)) continue
+    if (!isActiveFlowRunStatus(run.status)) continue
     if (activeRuns.get(keyOf(projectId, run.flow_id))?.run.run_id === run.run_id) continue
     const now = Date.now()
     store.saveFlowRun(projectId, { ...run,
@@ -272,5 +281,5 @@ export function listFlowRuns(projectId: string, limit?: number) {
 }
 
 export function getActiveFlowRuns(): FlowRun[] {
-  return [...activeRuns.values()].map(active => copy(active.run))
+  return [...activeRuns.values()].filter(active => isActiveFlowRunStatus(active.run.status)).map(active => copy(active.run))
 }

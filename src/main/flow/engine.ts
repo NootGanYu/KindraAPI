@@ -1,6 +1,6 @@
 import vm from 'node:vm'
 import crypto from 'node:crypto'
-import { FlowFileChangedError } from '../request/files'
+import { FlowFileChangedError, verifiedFileResolver } from '../request/files'
 import type {
   AssertionResult,
   ConsoleEntry,
@@ -154,9 +154,10 @@ class FlowRuntime {
   requestInFlight = false
   remoteUnknown = false
   dependencies!: FlowDependencies
+  refresh!: FlowRefreshController
   readonly definitions = new Map<string, RequestExecutionDefinition>()
   readonly settings = store.getSettings()
-  fileReviewRequired = false
+  onReviewRequired?: (message: string) => Promise<void>
   signal?: AbortSignal
   onBeforeStep?: () => Promise<void>
   onStepBoundary?: () => Promise<void>
@@ -170,11 +171,11 @@ class FlowRuntime {
     this.globalValues = {}
     if (env) {
       for (const [key, value] of Object.entries(env.env_var_list)) {
-        this.envValues[key] = value.current_value || value.initial_value || ''
+        if (value.is_checked > 0) this.envValues[key] = value.current_value ?? value.initial_value ?? ''
       }
     }
     for (const [key, value] of Object.entries(globals.vars)) {
-      this.globalValues[key] = value.current_value || value.initial_value || ''
+      this.globalValues[key] = value.current_value ?? value.initial_value ?? ''
     }
   }
 
@@ -599,11 +600,11 @@ async function runRequestEvent(
   try {
     const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
       signal: runtime.signal,
+      requireResolvedVariables: runtime.refresh.validateDispatch,
       onRequestStart: () => { dispatched = true; runtime.requestInFlight = true; runtime.onProgress?.() },
       definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
       scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
     })
-    if (record.error?.type === 'file-changed') runtime.fileReviewRequired = true
     runtime.requestInFlight = false
     if (dispatched && record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
     store.addSendRecord(projectId, redactEvidence(record, [runtime.envValues, runtime.globalValues, runtime.localValues]))
@@ -640,8 +641,13 @@ async function runRequestEvent(
       error: record.error?.message
     })
   } catch (error) {
-    if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
-    else if (runtime.requestInFlight) runtime.remoteUnknown = true
+    if (error instanceof FlowFileChangedError && runtime.onReviewRequired) {
+      await runtime.onReviewRequired(error.message)
+      if (runtime.signal?.aborted) return result(event, 'cancelled', startedAt)
+      // Verification happens before API scripts or dispatch, so only this unsent request continues.
+      return runRequestEvent(projectId, event, runtime, flow)
+    }
+    if (runtime.requestInFlight) runtime.remoteUnknown = true
     runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
@@ -758,8 +764,7 @@ async function runEvent(
 
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
-    if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
-    else if (runtime.requestInFlight) runtime.remoteUnknown = true
+    if (runtime.requestInFlight) runtime.remoteUnknown = true
     runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
@@ -795,13 +800,26 @@ async function runEvents(
       frame.next_event_index = index
       updateCursor()
       const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
-      if (!index || logicalId(events[index - 1]) !== logicalId(event)) await runtime.onBeforeStep?.()
+      if (!index || logicalId(events[index - 1]) !== logicalId(event)) {
+        await runtime.onBeforeStep?.()
+        // Check the whole logical step before its first script. A later file change is
+        // checked again by sendRequest before its own scripts, without replaying this group.
+        for (const pending of events.slice(index)) {
+          if (logicalId(pending) !== logicalId(event)) break
+          if (!pending.enabled) continue
+          while (!runtime.signal?.aborted) {
+            try { verifiedFileResolver(runtime.definitions.get(pending.event_id)?.files ?? []); break }
+            catch (error) {
+              if (!(error instanceof FlowFileChangedError) || !runtime.onReviewRequired) throw error
+              runtime.onProgress?.()
+              await runtime.onReviewRequired(error.message)
+            }
+          }
+        }
+      }
       if (runtime.signal?.aborted) break
       let current: FlowEventResult
-      if (runtime.fileReviewRequired) {
-        current = identify(skipped([event], '外部文件变更，需审查后重新运行')[0])
-        results.push(current)
-      } else {
+      {
         const reason = runtime.dependencies.blockedReason(event, results)
         if (reason) {
           current = identify(result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) }))
@@ -836,7 +854,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
+  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void>; onReviewRequired?: (message: string) => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -849,6 +867,7 @@ export async function runFlow(
   runtime.signal = options.signal
   runtime.onStepBoundary = options.onStepBoundary
   runtime.onBeforeStep = options.onBeforeStep
+  runtime.onReviewRequired = options.onReviewRequired
   const capture = (events: FlowEvent[]): void => {
     for (const event of events) {
       const target = event.type === 'api' && event.target_id
@@ -869,7 +888,7 @@ export async function runFlow(
     const pending = new Map<string, { event: FlowEvent; count: number }>()
     const add = (events: FlowEvent[], count = 1): void => { for (const event of events) {
       if (!event.enabled || count < 1) continue
-      if (event.type === 'api') pending.set(event.event_id, { event, count: count + (pending.get(event.event_id)?.count ?? 0) })
+      if (event.type === 'api' || event.type === 'request') pending.set(event.event_id, { event, count: count + (pending.get(event.event_id)?.count ?? 0) })
       add(event.children ?? [], count * (event.type === 'loop' ? Math.min(Math.max(event.loop_count ?? 1, 1), MAX_LOOP) : 1))
     } }
     if (!runtime.frames.length) add(flow.events)
@@ -882,8 +901,21 @@ export async function runFlow(
     })
     return [...pending.values()]
   }
-  options.onControl?.(new FlowRefreshController(projectId,env,runtime.definitions,remaining,applyRequestInput,
-    ()=>({...runtime.globalValues,...runtime.envValues,...runtime.localValues}),flow.events,()=>runtime.cursor.after_instance_id))
+  const nextEvent = (): FlowEvent | undefined => {
+    // The deepest frame is the continuation position; walk outward if its sequence ended.
+    for (let index = runtime.frames.length - 1; index >= 0; index--) {
+      const frame = runtime.frames[index]
+      const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
+      const events = parent?.children ?? flow.events
+      const next = events.slice(frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)).find(event => event.enabled)
+      if (next) return next
+      if (parent?.type === 'loop' && (frame.iteration ?? 0) + 1 < Math.min(Math.max(parent.loop_count ?? 1, 1), MAX_LOOP)) return events.find(event => event.enabled)
+    }
+    return undefined
+  }
+  runtime.refresh = new FlowRefreshController(projectId, env, runtime.definitions, remaining, applyRequestInput,
+    () => ({ ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues }), flow.events, () => runtime.cursor.after_instance_id, nextEvent)
+  options.onControl?.(runtime.refresh)
   const snapshot: FlowExecutionSnapshot = {
     flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
     captured_at: Date.now(),

@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as store from '../src/main/storage/store'
 import { createEnvironment, createFlow, createFlowEvent, createParam, createRequest } from '../src/shared/factories'
-import { runSavedFlow, startFlowRun, waitForFlowRun } from '../src/main/flow/service'
+import { runSavedFlow, startFlowRun, waitForFlowRun, getFlowRun, previewFlowRunRefresh, approveFlowRunScope, applyFlowRunRefresh, resumeFlowRun, cancelFlowRun } from '../src/main/flow/service'
 import { sendRequest } from '../src/main/request/executor'
 import { callTool } from '../src/main/mcp/tools'
 
@@ -48,6 +48,24 @@ async function main(): Promise<void> {
     assert.equal(run.env_id, envs[1].env_id)
     assert.deepEqual(requests.map(r => [r.server, r.url, r.headers['x-script-env']]), [['B', '/first?env=B', 'B']])
     console.log('PASS selected environment binds request and API script')
+    envs[1].env_var_list.disabled = { current_value: 'DISABLED-CREDENTIAL', initial_value: 'DISABLED-INITIAL', is_checked: 0 }
+    envs[1].env_var_list.empty = { current_value: '', initial_value: 'NOT-CURRENT', is_checked: 1 }
+    store.saveEnvironment(pid, envs[1])
+    const parity = store.createTargetInProject(pid, '0', 'api')
+    parity.url = '/parity?disabled={{disabled}}&empty={{empty}}'
+    parity.request!.pre_script = 'pm.test("disabled stays absent", () => pm.expect(pm.environment.get("disabled")).to.eql(undefined));'
+    store.saveTarget(pid, parity)
+    const parityFlow = createFlow(pid, '环境变量发送兼容')
+    parityFlow.events = [createFlowEvent('api', { target_id: parity.target_id })]
+    store.saveFlow(pid, parityFlow)
+    requests.length = 0
+    const ordinary = await sendRequest(pid, parity, envs[1].env_id)
+    const parityRun = await runSavedFlow(pid, parityFlow.flow_id, envs[1].env_id)
+    assert.equal(ordinary.assertions[0].passed, true)
+    assert.equal(parityRun.status, 'passed')
+    assert.deepEqual(requests.map(r => r.url), ['/parity?disabled=%7B%7Bdisabled%7D%7D&empty=', '/parity?disabled=%7B%7Bdisabled%7D%7D&empty='])
+    console.log('PASS unchecked and empty environment variables match ordinary sends')
+
     const globals = store.getGlobalVars(pid)
     globals.vars.flag = { current_value: 'old', initial_value: '' }
     store.saveGlobalVars(pid, globals)
@@ -116,26 +134,63 @@ async function main(): Promise<void> {
     const file = path.join(dir, 'upload.txt')
     fs.writeFileSync(file, 'original-file')
     next.request!.body = { mode: 'binary', binary: { file_path: file } }
+    next.request!.pre_script = 'pm.variables.set("upload_api_runs", String(Number(pm.variables.get("upload_api_runs") || 0) + 1));'
     store.saveTarget(pid, next)
-    flow.events = [createFlowEvent('api', { target_id: api.target_id }), createFlowEvent('api', { target_id: next.target_id }), createFlowEvent('api', { target_id: api.target_id })]
+    flow.events = [createFlowEvent('api', { target_id: api.target_id }), createFlowEvent('script', { logical_step_id: 'upload', script: 'pm.variables.set("upload_step_runs", String(Number(pm.variables.get("upload_step_runs") || 0) + 1));' }), createFlowEvent('api', { logical_step_id: 'upload', target_id: next.target_id }), createFlowEvent('api', { target_id: api.target_id })]
     store.saveFlow(pid, flow)
     const fileEntered = new Promise<void>(resolve => { onRequest = res => { release = () => res.end('{"token":"session-token","id":42}'); resolve() } })
     requests.length = 0
-    const filePending = runSavedFlow(pid, flow.flow_id, envs[1].env_id)
+    const filePending = startFlowRun(pid, flow.flow_id, envs[1].env_id, 'file-review')
     await fileEntered
     fs.writeFileSync(file, 'changed-file')
     release()
-    const fileRun = await filePending
-    assert.equal(fileRun.status, 'failed')
-    assert.match(fileRun.events[1].error!, /文件.*审查/)
+    const deadline = Date.now() + 5000
+    while (getFlowRun(pid, filePending.run_id)?.status === 'running') {
+      assert(Date.now() < deadline, 'file review did not pause')
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    const fileRun = getFlowRun(pid, filePending.run_id)!
+    assert.equal(fileRun.status, 'paused')
+    assert.match(fileRun.error!, /文件.*审查/)
     assert.equal(requests.length, 1)
-    assert.equal(fileRun.events[2].status, 'skipped')
+    assert.equal(fileRun.events[0].status, 'passed')
+    assert.equal(fileRun.variables.upload_step_runs, undefined, 'changed file pauses before logical step pre-script')
+    assert.equal(fileRun.variables.upload_api_runs, undefined)
+    assert.equal(fileRun.cursor!.stack.at(-1)!.next_event_index, 1)
     assert.equal(fileRun.snapshot!.requests[1].files[0].sha256!.length, 64)
-    console.log('PASS changed external file blocks this and remaining requests for review')
+    assert.throws(() => startFlowRun(pid, flow.flow_id, envs[1].env_id, 'locked'), /活动/)
+    assert.throws(() => resumeFlowRun(pid, fileRun.run_id), /文件/)
+    const preview = previewFlowRunRefresh(pid, fileRun.run_id)
+    assert.equal(preview.references.length, 1)
+    assert(preview.references[0].scope_changes.some(change => change.includes('文件')))
+    approveFlowRunScope(pid, fileRun.run_id, preview.preview_id)
+    applyFlowRunRefresh(pid, fileRun.run_id, preview.preview_id)
+    assert.equal(getFlowRun(pid, fileRun.run_id)!.status, 'paused')
+    resumeFlowRun(pid, fileRun.run_id)
+    const continued = await waitForFlowRun(pid, fileRun.run_id)
+    assert.equal(continued.status, 'passed')
+    assert.equal(continued.run_id, fileRun.run_id)
+    assert.equal(continued.variables.upload_step_runs, '1')
+    assert.equal(continued.variables.upload_api_runs, '1')
+    assert.equal(continued.events[0].instance_id, fileRun.events[0].instance_id)
+    assert.equal(requests.length, 3)
+    assert.equal(requests[1].body, 'changed-file')
+    console.log('PASS changed file retains active Run; explicit review and manual continuation do not replay completed requests')
+    const cancelEntered = new Promise<void>(resolve => { onRequest = res => { release = () => res.end('{"token":"session-token","id":42}'); resolve() } })
+    const cancelRun = startFlowRun(pid, flow.flow_id, envs[1].env_id, 'file-cancel')
+    await cancelEntered
+    fs.writeFileSync(file, 'changed-again')
+    release()
+    await waitForFlowRun(pid, cancelRun.run_id)
+    assert.equal(getFlowRun(pid, cancelRun.run_id)!.status, 'paused')
+    const beforeCancel = requests.length
+    assert.equal((await cancelFlowRun(pid, cancelRun.run_id)).status, 'cancelled')
+    assert.equal(requests.length, beforeCancel)
+    console.log('PASS cancellation exits external-file review without dispatch')
     requests.length = 0
     const fileNext = await runSavedFlow(pid, flow.flow_id, envs[1].env_id)
     assert.equal(fileNext.status, 'passed')
-    assert.equal(requests[1].body, 'changed-file')
+    assert.equal(requests[1].body, 'changed-again')
     console.log('PASS a new Run captures current file bytes and dispatches them')
     const captured = startFlowRun(pid, flow.flow_id, envs[1].env_id, 'snapshot-evidence')
     assert.equal(captured.snapshot!.flow_revision, store.getFlow(pid, flow.flow_id)!.revision)
