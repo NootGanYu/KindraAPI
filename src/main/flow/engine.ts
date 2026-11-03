@@ -749,7 +749,7 @@ export async function runFlow(
   }
   capture(flow.events)
   const snapshot = {
-    flow_revision: crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
+    flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
     captured_at: Date.now(),
     environment_id: env?.env_id ?? '',
     requests: [...runtime.definitions].map(([event_id, definition]) => ({ event_id, target_id: definition.target.target_id, files: definition.files, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }))
