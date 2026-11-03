@@ -144,6 +144,20 @@ async function main() {
         assert.deepEqual(hits.filter(h => h.startsWith('/loop-')), ['/loop-old?i=0&id=42&token=loop-token', '/loop-new?i=1&id=42&token=loop-token', '/loop-new?i=0&id=42&token=loop-token', '/loop-new?i=1&id=42&token=loop-token']);
         assert(loopDone.version_switches[0].after_instance_id);
         console.log('PASS nested future iterations refresh without replay and preserve token/object variables');
+        const failedSave = await paused();
+        const beforeSave = store.readTargetSnapshot(project, failedSave.t.target_id);
+        failedSave.t.url = origin + '/accepted-save';
+        store.saveTarget(project, failedSave.t);
+        const outcome = store.saveTargetChecked(project, {...failedSave.t, url:origin+'/rejected-save'}, beforeSave.revision!);
+        assert.equal(outcome.status, 'conflict');
+        assert.equal(service.getFlowRun(project, failedSave.r.run_id)?.status, 'paused');
+        const beforeCancel = hits.length;
+        await service.cancelFlowRun(project, conflict.r.run_id);
+        assert.equal(service.getFlowRun(project, conflict.r.run_id)?.status, 'cancelled');
+        assert.throws(() => api.applyFlowRunRefresh(project, conflict.r.run_id, conflicts.preview_id), /已暂停/);
+        assert.equal(hits.length, beforeCancel);
+        console.log('PASS save conflict stays paused and cancelling a blocked review never applies or dispatches');
+
     }
     finally {
         release?.();

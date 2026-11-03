@@ -90,8 +90,10 @@ export class FlowRefreshController {
             throw new Error(this.pending.preview.blockers.join('；'));
         if (this.pending && this.pending.candidates.length && this.reviewed !== this.pending.candidates)
             throw new Error('请先采用已审阅的剩余引用更新');
-        if (this.reviewed)
-            this.validate(this.reviewed);
+        if (this.reviewed) {
+            const remaining = new Set(this.remaining().map(item => item.event.event_id));
+            this.validate(this.reviewed.filter(item => remaining.has(item.event.event_id)));
+        }
         // A deleted API is never silently resumed even when the user keeps the original snapshot.
         for (const { event } of this.remaining())
             if (event.target_id && !store.getTarget(this.projectId, event.target_id))
