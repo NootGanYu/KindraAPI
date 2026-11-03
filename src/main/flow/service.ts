@@ -3,10 +3,13 @@ import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { runFlow } from './engine'
 import { redactEvidence } from './evidence'
+import type { FlowRefreshController } from './refresh'
+import type { FlowRefreshPreview } from '@shared/types'
 
 interface ActiveRun {
   run: FlowRun
   completion?: Promise<FlowRun>
+  refresh?: FlowRefreshController
   pauseSupported: boolean
   resume?: () => void
   stateListeners: Set<(run: FlowRun) => void>
@@ -51,6 +54,7 @@ export function startFlowRun(
   activeRuns.set(key, active)
   active.completion = runFlow(projectId, flow, environmentId, {
     runId: run.run_id, startedAt: run.started_at,
+    onControl: controller => { active.refresh = controller },
     onStepBoundary: async () => {
       if (active.run.status !== 'pausing') return
       await new Promise<void>(resolve => {
@@ -68,7 +72,7 @@ export function startFlowRun(
     }
   })
     .then(result => {
-      active.run = { ...run, ...result }
+      active.run = { ...active.run, ...result }
       store.saveFlowRun(projectId, active.run)
       return active.run
     }, error => {
@@ -123,10 +127,33 @@ export function resumeFlowRun(projectId: string, runId: string): FlowRun {
   }
   if (active.run.status === 'pausing') throw new Error('当前完整步骤尚未结束，请等待暂停后继续')
   if (active.run.status === 'paused') {
+    active.refresh?.validateResume()
     const resume = active.resume
     active.resume = undefined
     updateState(active, 'running')
     resume?.()
+  }
+  return copy(active.run)
+}
+
+function refreshableRun(projectId: string, runId: string): ActiveRun {
+  const active = findActive(projectId, runId)
+  if (!active || active.run.status !== 'paused' || !active.refresh) throw new Error('仅可审阅已暂停的活动 Run')
+  return active
+}
+export function previewFlowRunRefresh(projectId: string, runId: string): FlowRefreshPreview {
+  const active = refreshableRun(projectId, runId)
+  const preview = active.refresh!.preview()
+  active.run.refresh_preview = preview
+  store.saveFlowRun(projectId, active.run)
+  return preview
+}
+export function applyFlowRunRefresh(projectId: string, runId: string, previewId: string): FlowRun {
+  const active = refreshableRun(projectId, runId)
+  if (!active.run.version_switches?.some(item => item.preview_id === previewId)) {
+    const change = active.refresh!.apply(previewId)
+    active.run.version_switches = [...(active.run.version_switches ?? []), change]
+    store.saveFlowRun(projectId, active.run)
   }
   return copy(active.run)
 }

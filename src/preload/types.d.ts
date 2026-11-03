@@ -20,6 +20,7 @@ import type {
   Environment,
   Flow,
   FlowRun,
+  FlowRefreshPreview,
   FlowRunSummary,
   GeneratedExampleResult,
   GitAvailability,
@@ -273,6 +274,8 @@ export interface ApiBridge {
     delete(projectId: string, flowId: string): Promise<Result<boolean>>
     run(projectId: string, flowId: string, environmentId?: string): Promise<Result<FlowRun>>
     pauseRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    previewRunRefresh(projectId: string, runId: string): Promise<Result<FlowRefreshPreview>>
+    applyRunRefresh(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
     resumeRun(projectId: string, runId: string): Promise<Result<FlowRun>>
     startRun(projectId: string, flowId: string, environmentId: string | undefined, requestId: string): Promise<Result<FlowRun>>
     runs(projectId: string, limit?: number): Promise<Result<FlowRunSummary[]>>

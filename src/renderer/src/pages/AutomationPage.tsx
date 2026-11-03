@@ -208,8 +208,33 @@ export default function AutomationPage(): JSX.Element {
     return () => { stopped = true; if (timer) clearTimeout(timer) }
   }, [project?.project_id, run?.run_id, run?.status])
 
+  const ensureSavedRunApis = (): boolean => {
+    const references = new Set(run?.snapshot?.requests.map(item => item.target_id) ?? [])
+    if (useApp.getState().tabs.some(tab => references.has(tab.id) && (tab.dirty || tab.syncError))) {
+      message.error('相关接口有未保存修改或保存失败，请先主动保存后再审阅或继续')
+      return false
+    }
+    return true
+  }
+  const refreshRun = async (apply = false): Promise<void> => {
+    if (!run || !ensureSavedRunApis()) return
+    setControlling(true)
+    try {
+      if (apply && run.refresh_preview) {
+        const result = await window.api.flows.applyRunRefresh(run.project_id, run.run_id, run.refresh_preview.preview_id)
+        if (!result.ok) { message.error(result.error); return }
+        setRun(result.data)
+      } else {
+        const result = await window.api.flows.previewRunRefresh(run.project_id, run.run_id)
+        if (!result.ok) { message.error(result.error); return }
+        setRun(current => current?.run_id === run.run_id ? { ...current, refresh_preview: result.data } : current)
+      }
+    } finally { setControlling(false) }
+  }
+
   const controlRun = async (action: 'pause' | 'resume'): Promise<void> => {
     if (!run) return
+    if (action === 'resume' && !ensureSavedRunApis()) return
     setControlling(true)
     try {
       const result = action === 'pause'
@@ -470,7 +495,7 @@ export default function AutomationPage(): JSX.Element {
               {run.status === 'pausing' ? '正在暂停' : '暂停'}
             </Button>
           ) : run?.status === 'paused' ? (
-            <Button size="small" type="primary" loading={controlling} onClick={() => void controlRun('resume')}>继续原快照</Button>
+            <Button size="small" type="primary" loading={controlling} onClick={() => void controlRun('resume')}>{run.version_switches?.length ? '继续已审阅快照' : '继续原快照'}</Button>
           ) : null}
           {run ? <Tooltip title={run.snapshot?.flow_revision ?? '旧记录未记录快照版本'}>
             <Tag>运行版本：{run.snapshot?.flow_revision.slice(0, 8) ?? '旧记录'}</Tag>
@@ -513,6 +538,24 @@ export default function AutomationPage(): JSX.Element {
                 </div>
               </div>
 
+              {run.status === 'paused' ? <div style={{ padding: 12 }}>
+                <Button loading={controlling} onClick={() => void refreshRun()}>预览已保存变更</Button>
+                <div className="muted">保存接口后预览所有剩余引用；采用更新后仍需手动继续。</div>
+                {run.refresh_preview ? <div aria-label="剩余引用变更预览">
+                  {run.refresh_preview.references.map(reference => <div key={reference.event_id} style={{ marginTop: 10 }}>
+                    <b>{reference.name}</b> · 剩余 {reference.remaining_instances} 次
+                    <div className="mono">{reference.previous_revision.slice(0,8)} → {reference.next_revision.slice(0,8)}</div>
+                    <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(reference.effective_request, null, 2)}</pre>
+                  </div>)}
+                  {run.refresh_preview.references.length === 0 ? <div>没有需要更新的剩余引用</div> : null}
+                  {run.refresh_preview.blockers.map((blocker,index) => <div className="run-error" key={index}>{blocker}</div>)}
+                  <Button disabled={run.refresh_preview.blockers.length > 0 || run.refresh_preview.references.length === 0 || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} loading={controlling} onClick={() => void refreshRun(true)}>采用剩余引用更新</Button>
+                </div> : null}
+              </div> : null}
+              {run.version_switches?.length ? <div style={{ padding: 12 }} aria-label="快照版本切换">
+                <b>快照版本切换</b>
+                {run.version_switches.map(change => <div key={change.preview_id}>{new Date(change.applied_at).toLocaleTimeString()} · {change.references.map(item=>`${item.name} ${item.previous_revision.slice(0,8)} → ${item.next_revision.slice(0,8)}`).join('；')}</div>)}
+              </div> : null}
               <div className="run-section-title">事件</div>
               <ResultRows events={run.events} depth={0} />
 

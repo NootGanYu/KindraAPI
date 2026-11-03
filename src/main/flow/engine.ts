@@ -23,6 +23,7 @@ import * as store from '../storage/store'
 import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
 import { redactEvidence } from './evidence'
 import { FlowDependencies } from './dependencies'
+import { FlowRefreshController, definitionRevision } from './refresh'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
@@ -611,6 +612,7 @@ async function runRequestEvent(
 
     return result(event, status, startedAt, {
       detail,
+      definition_revision: runtime.definitions.has(event.event_id) ? definitionRevision(runtime.definitions.get(event.event_id)!) : undefined,
       request: {
         method: record.request.method,
         url: record.request.url,
@@ -787,7 +789,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void> } = {}
+  options: { runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -811,6 +813,22 @@ export async function runFlow(
     }
   }
   capture(flow.events)
+  const planned = new Map<string, { event: FlowEvent; count: number }>()
+  const plan = (events: FlowEvent[], count = 1): void => { for(const event of events) {
+    if (!event.enabled) continue
+    if(event.type === 'api') planned.set(event.event_id, { event, count })
+    plan(event.children ?? [], count * (event.type === 'loop' ? Math.min(Math.max(event.loop_count ?? 1, 1), MAX_LOOP) : 1))
+  } }; plan(flow.events)
+  const remaining = (): Array<{event: FlowEvent; count: number}> => {
+    const completed = new Map<string,number>()
+    const count = (items: FlowEventResult[]): void => { for(const item of items) {
+      if(item.status !== 'running') completed.set(item.event_id,(completed.get(item.event_id) ?? 0)+1)
+      count(item.children ?? [])
+    } }; count(runtime.progressRoot)
+    return [...planned.values()].map(item=>({...item,count:item.count-(completed.get(item.event.event_id) ?? 0)})).filter(item=>item.count>0)
+  }
+  options.onControl?.(new FlowRefreshController(projectId,env,runtime.definitions,remaining,applyRequestInput,
+    ()=>({...runtime.globalValues,...runtime.envValues,...runtime.localValues}),flow.events))
   const snapshot: FlowExecutionSnapshot = {
     flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
     captured_at: Date.now(),
