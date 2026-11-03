@@ -180,6 +180,7 @@ const api = {
   },
 
   flows: {
+    activeRuns: () => invoke('flow:runs:active'),
     list: (projectId: string) => invoke('flow:list', projectId),
     get: (projectId: string, flowId: string) => invoke('flow:get', projectId, flowId),
     create: (projectId: string, name: string) => invoke('flow:create', projectId, name),

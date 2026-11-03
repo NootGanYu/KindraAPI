@@ -265,6 +265,7 @@ export interface ApiBridge {
     ): Promise<Result<ImportDbResult>>
   }
   flows: {
+    activeRuns(): Promise<Result<FlowRun[]>>
     list(projectId: string): Promise<Result<Flow[]>>
     get(projectId: string, flowId: string): Promise<Result<Flow | null>>
     create(projectId: string, name: string): Promise<Result<Flow>>

@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     const savedRun = store.getFlowRun(project.project_id, run.run_id)!
     assert.equal(savedRun.status, 'passed')
     assert.equal(savedRun.events[0].response?.code, 200)
-    assert.equal(savedRun.events[0].response?.body, '{"token":"flow-token","orderId":17}')
+    assert.equal(savedRun.events[0].response?.body, '{"token":"[REDACTED]","orderId":17}')
     console.log('PASS saved flow public entry sends a request and exposes its persisted result')
 
     registerIpc()
@@ -81,7 +81,7 @@ async function main(): Promise<void> {
     const uiRun = unwrap(await invoke<FlowRun>('flow:run', project.project_id, saved.flow_id, env.env_id))
     assert.equal(uiRun.status, 'passed')
     assert.equal(uiRun.env_id, env.env_id)
-    assert.equal(uiRun.variables.token, 'flow-token')
+    assert.equal(uiRun.variables.token, '[REDACTED]')
     assert.equal(uiRun.events[3].status, 'skipped')
     assert.equal(uiRun.events[4].status, 'skipped')
     assert.deepEqual(uiRun.events[2].children![0].children!.map(event => event.iteration), [0, 0, 1, 1])
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     assert.equal(typeof summary.elapsed_ms, 'number')
     assert.deepEqual(requests, ['/login', '/orders?token=flow-token', '/orders?token=flow-token'])
     const mcpRun = unwrap(await invoke<FlowRun>('flow:run:get', project.project_id, summary.run_id))
-    assert.equal(mcpRun.variables.token, 'flow-token')
+    assert.equal(mcpRun.variables.token, '[REDACTED]')
     assert.equal(mcpRun.env_id, env.env_id)
     assert.deepEqual(mcpRun.events.map(event => event.status), uiRun.events.map(event => event.status))
     console.log('PASS MCP execute_flow keeps its summary and UI-readable report with the same requests')

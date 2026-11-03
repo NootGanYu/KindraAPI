@@ -21,6 +21,7 @@ import type {
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
 import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
+import { redactEvidence } from './evidence'
 import { FlowDependencies } from './dependencies'
 
 const MAX_LOOP = 50
@@ -138,6 +139,11 @@ class FlowRuntime {
   localValues: Record<string, string> = {}
   consoleEntries: ConsoleEntry[] = []
   lastResponse: FlowResponseSnapshot | null = null
+  progressRoot: FlowEventResult[] = []
+  resultStack: FlowEventResult[] = []
+  onProgress?: () => void
+  requestInFlight = false
+  remoteUnknown = false
   dependencies!: FlowDependencies
   readonly definitions = new Map<string, RequestExecutionDefinition>()
   readonly settings = store.getSettings()
@@ -579,12 +585,16 @@ async function runRequestEvent(
 
   const prepared = applyRequestInput(target, event.input)
   try {
+    runtime.requestInFlight = true
+    runtime.onProgress?.()
     const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
       definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
       scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
     })
     if (record.error?.type === 'file-changed') runtime.fileReviewRequired = true
-    store.addSendRecord(projectId, record)
+    runtime.requestInFlight = false
+    if (record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
+    store.addSendRecord(projectId, redactEvidence(record, [runtime.envValues, runtime.globalValues, runtime.localValues]))
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
 
@@ -618,6 +628,8 @@ async function runRequestEvent(
     })
   } catch (error) {
     if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
+    else if (runtime.requestInFlight) runtime.remoteUnknown = true
+    runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -693,7 +705,8 @@ async function runEvent(
           children: skipped(event.children, '条件不成立')
         })
       }
-      const children = await runEvents(projectId, event.children ?? [], runtime, flow)
+      const children = runtime.resultStack.at(-1)!.children = []
+      await runEvents(projectId, event.children ?? [], runtime, flow, children)
       const failed = hasFailure(children)
       return result(event, completedStatus(children), startedAt, {
         detail: `条件成立：${event.condition ?? ''}`,
@@ -702,7 +715,8 @@ async function runEvent(
     }
 
     if (event.type === 'begin') {
-      const children = await runEvents(projectId, event.children ?? [], runtime, flow)
+      const children = runtime.resultStack.at(-1)!.children = []
+      await runEvents(projectId, event.children ?? [], runtime, flow, children)
       return result(event, completedStatus(children), startedAt, {
         detail: `分组 ${children.length} 个事件`,
         children
@@ -711,11 +725,10 @@ async function runEvent(
 
     if (event.type === 'loop') {
       const count = Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
-      const children: FlowEventResult[] = []
+      const children: FlowEventResult[] = runtime.resultStack.at(-1)!.children = []
       for (let index = 0; index < count; index += 1) {
         runtime.setLocal('loop_index', String(index))
-        const iterationResults = await runEvents(projectId, event.children ?? [], runtime, flow, children)
-        children.push(...iterationResults.map((item) => ({ ...item, iteration: index })))
+        await runEvents(projectId, event.children ?? [], runtime, flow, children, index)
       }
       runtime.unsetLocal('loop_index')
       return result(event, completedStatus(children), startedAt, {
@@ -727,6 +740,8 @@ async function runEvent(
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
     if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
+    else if (runtime.requestInFlight) runtime.remoteUnknown = true
+    runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -736,19 +751,30 @@ async function runEvents(
   events: FlowEvent[],
   runtime: FlowRuntime,
   flow: Flow,
-  previousIterations: FlowEventResult[] = []
+  results: FlowEventResult[] = runtime.progressRoot,
+  iteration?: number
 ): Promise<FlowEventResult[]> {
-  const results: FlowEventResult[] = []
   for (const [index, event] of events.entries()) {
     if (runtime.fileReviewRequired) {
       results.push(...skipped([event], '外部文件变更，需审查后重新运行'))
+      runtime.onProgress?.()
     } else {
-      const reason = runtime.dependencies.blockedReason(event, [...previousIterations, ...results])
-      const entry = reason
-        ? result(event, 'blocked', Date.now(), { detail: reason, children: blockedChildren(event.children, reason) })
-        : await runEvent(projectId, event, runtime, flow)
-      results.push(entry)
-      runtime.dependencies.record(entry)
+      const reason = runtime.dependencies.blockedReason(event, results)
+      if (reason) {
+        const blocked = result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) })
+        results.push(blocked)
+        runtime.dependencies.record(blocked)
+        runtime.onProgress?.()
+      } else {
+        const current = result(event, 'running', Date.now(), { iteration })
+        results.push(current)
+        runtime.resultStack.push(current)
+        runtime.onProgress?.()
+        Object.assign(current, await runEvent(projectId, event, runtime, flow))
+        runtime.dependencies.record(current)
+        runtime.resultStack.pop()
+        runtime.onProgress?.()
+      }
     }
     const next = events[index + 1]
     const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
@@ -761,7 +787,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { runId?: string; startedAt?: number; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void> } = {}
+  options: { runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void> } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -799,25 +825,35 @@ export async function runFlow(
   options.onSnapshot?.(snapshot)
 
   const startedAt = options.startedAt ?? Date.now()
+  const runId = options.runId ?? createId('run')
+  runtime.onProgress = () => options.onProgress?.({
+    run_id: runId, project_id: projectId, flow_id: flow.flow_id, flow_name: flow.name,
+    env_id: env?.env_id ?? '', started_at: startedAt, finished_at: 0, status: 'running',
+    elapsed_ms: Date.now() - startedAt, variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
+    events: runtime.progressRoot, console: runtime.consoleEntries, request_in_flight: runtime.requestInFlight,
+    remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined
+  })
   const events = await runEvents(projectId, flow.events, runtime, flow)
   const finishedAt = Date.now()
   const run: FlowRun = {
     snapshot,
-    run_id: options.runId ?? createId('run'),
+    run_id: runId,
     project_id: projectId,
     flow_id: flow.flow_id,
     flow_name: flow.name,
     env_id: env?.env_id ?? '',
     started_at: startedAt,
     finished_at: finishedAt,
-    status: completedStatus(events),
+    status: runtime.remoteUnknown ? 'unknown' : completedStatus(events),
     elapsed_ms: finishedAt - startedAt,
-    variables: { ...runtime.envValues },
+    variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
+    request_in_flight: false,
+    remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined,
     events,
     console: runtime.consoleEntries
   }
-  store.saveFlowRun(projectId, run)
-  return run
+  if (!options.onProgress) store.saveFlowRun(projectId, run)
+  return redactEvidence(run)
 }
 
 export function flowRunFailureCount(run: FlowRun): number {

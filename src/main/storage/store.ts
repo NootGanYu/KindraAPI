@@ -1,3 +1,4 @@
+import { redactEvidence } from '../flow/evidence'
 import { app } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -1056,6 +1057,9 @@ export function saveFlow(projectId: string, flow: Flow): Flow {
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
+  if (readFlowRuns(projectId).some(run => run.flow_id === flowId && ['running', 'pausing', 'paused', 'reviewing'].includes(run.status))) {
+    throw new Error('活动运行绑定的流程不可删除')
+  }
   fs.rmSync(flowPath(projectId, flowId), { force: true })
 }
 
@@ -1067,7 +1071,7 @@ function countResults(
     if (event.status === 'passed') acc.passed += 1
     else if (event.status === 'failed') acc.failed += 1
     else if (event.status === 'blocked') acc.blocked += 1
-    else acc.skipped += 1
+    else if (event.status === 'skipped') acc.skipped += 1
     if (event.children?.length) countResults(event.children, acc)
   }
 }
@@ -1079,7 +1083,7 @@ export function readFlowRuns(projectId: string): FlowRun[] {
     if (!fs.existsSync(dir)) continue
     for (const file of fs.readdirSync(dir).filter(file => file.endsWith('.json'))) {
       const run = readJson<FlowRun | null>(path.join(dir, file), null)
-      if (run?.project_id === projectId) runs.set(run.run_id, run)
+      if (run?.project_id === projectId) runs.set(run.run_id, redactEvidence(run))
     }
   }
   return [...runs.values()]
@@ -1106,14 +1110,15 @@ export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
 }
 
 export function getFlowRun(projectId: string, runId: string): FlowRun | null {
-  return readJson<FlowRun | null>(runPath(projectId, runId), null)
-    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null)
+  return redactEvidence(readJson<FlowRun | null>(runPath(projectId, runId), null)
+    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null))
 }
 
 export function saveFlowRun(projectId: string, run: FlowRun): FlowRun {
   if (run.project_id !== projectId) throw new Error('项目不匹配')
-  writeJson(runPath(projectId, run.run_id), run)
-  return run
+  const evidence = redactEvidence(run)
+  writeJson(runPath(projectId, run.run_id), evidence)
+  return evidence
 }
 
 export function clearFlowRuns(projectId: string): void {
