@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] MCP 读取返回完整 events 树和 revision，条件、循环及脚本往返不丢失；现有 UI 可读写结果。
 - [ ] events 与 legacy steps 输入互斥，未知节点明确拒绝，不静默截断。

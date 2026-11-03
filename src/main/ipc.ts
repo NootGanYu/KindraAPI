@@ -37,7 +37,7 @@ import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
-import { runFlow } from './flow/engine'
+import { runSavedFlow } from './flow/service'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
@@ -322,11 +322,9 @@ export function registerIpc(): void {
     store.deleteFlow(projectId, flowId)
     return true
   })
-  handle('flow:run', (projectId: string, flowId: string, environmentId?: string) => {
-    const flow = store.getFlow(projectId, flowId)
-    if (!flow) throw new Error('流程不存在')
-    return runFlow(projectId, flow, environmentId)
-  })
+  handle('flow:run', (projectId: string, flowId: string, environmentId?: string) =>
+    runSavedFlow(projectId, flowId, environmentId)
+  )
   handle('flow:runs', (projectId: string, limit?: number) => store.listFlowRuns(projectId, limit))
   handle('flow:run:get', (projectId: string, runId: string) =>
     store.getFlowRun(projectId, runId)
