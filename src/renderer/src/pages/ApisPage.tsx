@@ -92,7 +92,7 @@ export default function ApisPage(): JSX.Element {
   const syncNotice = useApp(s => s.syncNotice)
 
   const [creating, setCreating] = useState(false)
-  const [mode, setMode] = useState<Mode>('设计')
+  const [mode, setMode] = useState<Mode>('调试')
   const [splitDir, setSplitDir] = useState<SplitDir>('vertical')
   const [debugToolbar, setDebugToolbar] = useState<HTMLDivElement | null>(null)
   const tabScrollRef = useRef<HTMLDivElement | null>(null)
