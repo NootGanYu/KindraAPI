@@ -1,3 +1,4 @@
+import { listFlowCandidates, getFlowDraft } from './flowDrafts'
 import { nextCandidateNumber } from './candidateSequence'
 import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
 import { validateAgentApiDocumentation } from './apiDocumentation'
@@ -7,7 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Target } from '@shared/types'
-import type { AgentCandidate, AgentDraft, AgentDraftEvent, AgentCandidateMerge, AgentConflictChoice } from '@shared/agentDraft'
+import type { AgentCandidate, AgentDraft, AgentDraftEvent, AgentCandidateMerge, AgentConflictChoice, ProjectCandidateSummary } from '@shared/agentDraft'
 import { stableJson, targetDefinition, preserveCaseRuns } from '@shared/targetSync'
 import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal } from './store'
@@ -69,6 +70,28 @@ export function listAgentDrafts(pid: string): AgentDraft[] {
 export function listCandidates(pid: string, targetId?: string): AgentCandidate[] {
   const dir = path.join(projectDir(pid), 'candidates')
   return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => readCandidate(pid, n.slice(0, -5))).filter(c => !targetId || c.target_id === targetId).sort((a, b) => Number(b.number.slice(1)) - Number(a.number.slice(1))) : []
+}
+export function listProjectCandidates(pid: string): ProjectCandidateSummary[] {
+  const candidates = listCandidates(pid)
+  const apis: ProjectCandidateSummary[] = [...new Set(candidates.map(c => c.target_id))].map(id => {
+    const saved = store.getTarget(pid, id)
+    const draft = readLocal<AgentDraft | null>(file(pid, 'drafts', id), null)
+    return { kind: 'api', entity_id: id, name: draft?.target.name ?? saved?.name ?? candidates.find(c => c.target_id === id)!.proposal.name,
+      lifecycle: saved ? 'saved' : draft?.new_object ? 'uncreated' : 'unavailable', candidate_count: candidates.filter(c => c.target_id === id).length }
+  })
+  const flows = listFlowCandidates(pid)
+  return [...apis, ...[...new Set(flows.map(c => c.flow_id))].map(id => ({
+    kind: 'flow' as const, entity_id: id, name: store.getFlow(pid, id) ? getFlowDraft(pid, id).flow.name : flows.find(c => c.flow_id === id)!.proposal.name,
+    lifecycle: store.getFlow(pid, id) ? 'saved' as const : 'unavailable' as const, candidate_count: flows.filter(c => c.flow_id === id).length
+  }))]
+}
+/** Called only by the approved create step; the factory identity was fixed before approval. */
+export function createApiDraft(pid: string, planId: string, stepId: string, base: Target, patch: Partial<Target>): AgentCandidate {
+  if (store.getTarget(pid, base.target_id)) throw new Error('新接口编号已存在，请重新生成计划')
+  if (base.parent_id !== '0' && store.getTarget(pid, base.parent_id)?.target_type !== 'folder') throw new Error('父目录已变化，请重新确认计划')
+  const candidate = createCandidate(pid, planId, stepId, base, null, patch)
+  persistDraft({ project_id: pid, target_id: base.target_id, target: base, base_revision: null, new_object: true, agent_owned: true, updated_at: new Date().toISOString() })
+  return applyCandidate(pid, candidate.candidate_id)
 }
 function readCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readLocal<AgentCandidate | null>(file(pid, 'candidates', id), null)
@@ -153,7 +176,7 @@ export function restoreCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readCandidate(pid, id)
   const draft = getDraft(pid, candidate.target_id)
   const saved = store.readTargetSnapshot(pid, candidate.target_id)
-  if (!saved.target) throw new Error('接口已删除，无法恢复到草稿')
+  if (!saved.target && !draft.new_object) throw new Error('接口已删除，无法恢复到草稿')
   if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后恢复候选')
   // A restored snapshot is still a proposal against today's draft, never a formal save.
   const source = candidate.status === 'conflict' && candidate.merge?.operation === 'restore'
@@ -167,7 +190,7 @@ export function undoCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readCandidate(pid, id), application = candidate.application
   if (!application || application.undone) throw new Error('候选没有已应用修改或已撤销')
   const draft = getDraft(pid, candidate.target_id), saved = store.readTargetSnapshot(pid, candidate.target_id)
-  if (!saved.target) throw new Error('接口已删除，无法撤销草稿')
+  if (!saved.target && !draft.new_object) throw new Error('接口已删除，无法撤销草稿')
   if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后撤销')
   const merge = buildMerge({ ...candidate, base: application.after, proposal: application.before }, draft.target, saved.revision)
   merge.operation = 'undo'
@@ -225,7 +248,8 @@ export async function saveApprovedApi(pid: string, planId: string, targetId: str
   return withTargetChanges('system', planId, () => {
     const saved = store.readTargetSnapshot(pid, targetId)
     const current = getDraft(pid, targetId)
-    if (!revision || saved.revision !== revision) throw new Error('正式定义 revision 已变化，保存已暂停，请重新核对计划')
+    const creating = current.new_object === true && revision === null
+    if ((!creating && !revision) || saved.revision !== revision) throw new Error('正式定义 revision 已变化，保存已暂停，请重新核对计划')
     if (current.base_revision !== revision) throw new Error('草稿保存基线已变化，保存已暂停，请重新核对计划')
     for (const id of candidateIds) {
       const candidate = readCandidate(pid, id)
@@ -236,10 +260,10 @@ export async function saveApprovedApi(pid: string, planId: string, targetId: str
     const draft = getDraft(pid, targetId)
     if (draft.base_revision !== revision) throw new Error('草稿保存基线已变化，保存已暂停')
     const linkedIds = [...new Set([...candidateIds, ...(draft.candidate_ids ?? [])])].filter(id => readCandidate(pid, id).status === 'applied')
-    validateSystemParameterOrigins(saved.target!, draft.target)
+    validateSystemParameterOrigins(saved.target ?? listCandidates(pid, targetId).find(c => c.base_revision === null)!.base, draft.target)
     validateAgentApiDocumentation(draft.target, saved.target, linkedIds.flatMap(id => { const patch = readCandidate(pid, id).patch; return patch ? [patch] : [] }))
     const beforeSave = structuredClone(draft.target)
-    const outcome = store.saveTargetChecked(pid, draft.target, revision)
+    const outcome = creating ? store.createAgentTargetChecked(pid, draft.target) : store.saveTargetChecked(pid, draft.target, revision!)
     if (outcome.status !== 'saved') throw new Error('正式定义已变化，保存已暂停')
     const version = store.listTargetVersions(pid, targetId).find(item => item.version === outcome.target.version)!
     const savedVersion = { version_id: version.version_id, version: version.version, revision: outcome.revision, plan_id: planId }
@@ -247,7 +271,7 @@ export async function saveApprovedApi(pid: string, planId: string, targetId: str
       const reviewFile = file(pid, 'candidate-reviews', id)
       writeLocal(reviewFile, { ...readLocal<Record<string, unknown>>(reviewFile, {}), saved_version: savedVersion })
     }
-    draft.target = outcome.target; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []
+    draft.target = outcome.target; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.new_object = false; draft.candidate_ids = []
     fs.rmSync(file(pid, 'drafts', targetId), { force: true }); persistDraft(draft)
     emit({ project_id: pid, target_id: targetId, draft, previous: beforeSave, saved_revision: outcome.revision })
     return { saved_version: savedVersion, candidate_ids: linkedIds }
@@ -264,4 +288,4 @@ export function saveManualDraftOnQuit(pid: string, target: Target, revision: str
   })
 }
 
-export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, applyCandidate, restoreCandidate, rejectCandidate, undoCandidate, resolveCandidateUndo, resolveCandidate, stashAgentDrafts }
+export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, listProjectCandidates, applyCandidate, restoreCandidate, rejectCandidate, undoCandidate, resolveCandidateUndo, resolveCandidate, stashAgentDrafts }

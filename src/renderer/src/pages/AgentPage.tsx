@@ -1,3 +1,4 @@
+import AgentProjectCandidates from '../components/AgentProjectCandidates'
 import AgentPlanPanel from '../components/AgentPlanPanel'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, App, Button, Empty, Form, Input, Modal, Select, Space, Tag, Typography } from 'antd'
@@ -134,7 +135,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
     <section className="agent-chat">
       <header className="agent-toolbar"><div><Typography.Title level={4}>Agent 对话</Typography.Title>
         <Typography.Text type="secondary">{connection ? `${connection.name} · ${connection.model}` : '配置模型后开始对话'}</Typography.Text></div>
-        <Space><AgentPlanPanel projectId={projectId} connection={connection} /><Button icon={<SettingOutlined />} onClick={() => openConfig()}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
+        <Space wrap><AgentProjectCandidates projectId={projectId} /><AgentPlanPanel projectId={projectId} connection={connection} /><Button icon={<SettingOutlined />} onClick={() => openConfig()}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
       </header>
       <Space wrap style={{ padding: '0 20px' }}>
         <Select aria-label="本轮模型连接" placeholder="请选择本轮模型连接" style={{ minWidth: 240 }} value={connection?.connection_id} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} onChange={id => { setConnection(connections.find(item => item.connection_id === id) ?? null); setTestMessage('') }} />

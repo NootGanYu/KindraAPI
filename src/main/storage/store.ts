@@ -662,8 +662,24 @@ export function getCookieJarForUrl(projectId: string, rawUrl: string): Record<st
   return result
 }
 
+const approvedAgentCreations = new Set<string>()
+/** Synchronous creation boundary used only by the independently approved Agent save step. */
+export function createAgentTargetChecked(projectId: string, target: Target): TargetSaveOutcome {
+  const current = readTargetSnapshot(projectId, target.target_id)
+  if (current.target) return { status: 'conflict', ...current }
+  if (target.parent_id !== '0' && getTarget(projectId, target.parent_id)?.target_type !== 'folder') throw new Error('父目录已删除，创建已暂停')
+  const key = `${projectId}:${target.target_id}`
+  approvedAgentCreations.add(key)
+  try {
+    const saved = saveTarget(projectId, target)
+    return { status: 'saved', target: saved, revision: targetRevision(saved) }
+  } finally { approvedAgentCreations.delete(key) }
+}
+
 export function saveTarget(projectId: string, target: Target): Target {
   assertAgentConflictsResolved(getPaths().localRoot, projectId, target.target_id)
+  const localDraft = readJson<{ new_object?: boolean } | null>(path.join(getPaths().localRoot, 'agent', 'projects', projectId, 'drafts', `${target.target_id}.json`), null)
+  if (localDraft?.new_object && !getTarget(projectId, target.target_id) && !approvedAgentCreations.has(`${projectId}:${target.target_id}`)) throw new Error('新接口草稿需要独立获批保存步骤才能正式创建')
   if (target.project_id !== projectId) throw new Error('项目不匹配')
   target.updated_at = new Date().toISOString()
   recordTargetVersion(projectId, target)
