@@ -17,7 +17,7 @@ export interface AgentPlanStep {
   kind?: 'api' | 'flow'
   flow_id?: string
   step_id: string
-  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api' | 'propose_flow_change'
+  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api' | 'create_api' | 'propose_flow_change'
   execution?: { method: string; url: string; effects: string[] }
   changes?: unknown
   target_name?: string
@@ -52,3 +52,10 @@ export interface AgentPlan {
   created_at: string
 }
 export interface AgentPlanEvent { project_id: string; plan_id: string; plan: AgentPlan | null }
+
+export interface CreateApiPlanInput {
+  goal: string
+  parentId?: string
+  save?: boolean
+  connectionId?: string
+}
