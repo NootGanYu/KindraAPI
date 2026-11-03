@@ -33,9 +33,11 @@ import {
   ShareAltOutlined
 } from '@ant-design/icons'
 import type { Target } from '@shared/types'
+import { methodColor, methodLabel } from '@shared/httpMethods'
 import { useApp } from '../store'
 import ApiTree from '../components/ApiTree'
 import RequestEditor from '../components/RequestEditor'
+import ApiStatusControl from '../components/ApiStatusControl'
 import ResponsePanel from '../components/ResponsePanel'
 import DesignEditor from '../components/DesignEditor'
 import CasesEditor from '../components/CasesEditor'
@@ -92,6 +94,7 @@ export default function ApisPage(): JSX.Element {
   const [creating, setCreating] = useState(false)
   const [mode, setMode] = useState<Mode>('设计')
   const [splitDir, setSplitDir] = useState<SplitDir>('vertical')
+  const [debugToolbar, setDebugToolbar] = useState<HTMLDivElement | null>(null)
   const tabScrollRef = useRef<HTMLDivElement | null>(null)
   const [tabOverflow, setTabOverflow] = useState(false)
   const [tabEdges, setTabEdges] = useState({ left: false, right: false })
@@ -418,8 +421,8 @@ export default function ApisPage(): JSX.Element {
                         {isFolder ? (
                           <FolderOutlined style={{ fontSize: 12, color: '#a58a58' }} />
                         ) : (
-                          <span className="method-text">
-                            {(draft?.method || 'GET').toUpperCase()}
+                          <span className="method-text" style={{ color: methodColor(draft?.method) }}>
+                            {methodLabel(draft?.method, true)}
                           </span>
                         )}
                         <span className="tab-name">{tab.name}</span>
@@ -573,9 +576,7 @@ export default function ApisPage(): JSX.Element {
                     ))}
                   </div>
                   <div className="api-meta">
-                    <span className="dev-state">
-                      <i /> 开发中 <DownOutlined style={{ fontSize: 9 }} />
-                    </span>
+                    <ApiStatusControl key={`${projectId}:${active.target_id}`} target={active} />
                     <span className="api-name">
                       <Input
                         value={active.name}
@@ -634,6 +635,8 @@ export default function ApisPage(): JSX.Element {
                 </div>
 
                 {mode === '调试' ? (
+                  <>
+                  <div className="api-debug-toolbar" ref={setDebugToolbar} />
                   <PanelGroup
                     key={splitDir}
                     direction={splitDir}
@@ -646,6 +649,7 @@ export default function ApisPage(): JSX.Element {
                       <RequestEditor
                         key={editorKey} draft={active}
                         mode="debug"
+                        toolbarContainer={debugToolbar}
                         onChange={(patch) => patchDraft(active.target_id, patch)}
                       />
                     </Panel>
@@ -690,6 +694,7 @@ export default function ApisPage(): JSX.Element {
                       </div>
                     </Panel>
                   </PanelGroup>
+                  </>
                 ) : mode === '设计' ? (
                   <DesignEditor
                     key={editorKey} draft={active}
@@ -1005,7 +1010,7 @@ function FolderInfo({ target }: { target: Target }): JSX.Element {
                 {item.target_type === 'folder' ? (
                   <FolderOutlined className="folder-row-icon" />
                 ) : (
-                  <span className="method-text">{(item.method || 'GET').toUpperCase()}</span>
+                  <span className="method-text" style={{ color: methodColor(item.method) }}>{methodLabel(item.method, true)}</span>
                 )}
                 <span className="folder-row-name">{item.name}</span>
                 <span className="folder-row-url">{item.url}</span>

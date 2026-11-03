@@ -418,7 +418,7 @@ function buildFieldModel(raw: string, docsInput: FieldDoc[]): FieldModel {
       parts,
       token: parts[parts.length - 1] ?? '',
       parent: parentPointer(pointer),
-      order: orderMap.get(pointer) ?? 0,
+      order: docMap.get(pointer)?.order ?? orderMap.get(pointer) ?? 0,
       present: false,
       docOnly: false,
       orphan: false,
@@ -451,7 +451,8 @@ function buildFieldModel(raw: string, docsInput: FieldDoc[]): FieldModel {
     synthetic: false,
     childMap: new Map(),
     inferred: rootKind === 'array' || docsAreRootArray ? 'array' : 'object',
-    nullable: false,
+    doc: docs.find(doc => doc.pointer === ''),
+    nullable: docs.find(doc => doc.pointer === '')?.nullable ?? false,
     mixed: false,
     type: rootKind === 'array' || docsAreRootArray ? 'array' : 'object',
     typeOverridden: false,
@@ -718,6 +719,74 @@ export function deleteValueAtPointer(root: unknown, pointer: string): boolean {
   return delete (current as Record<string, unknown>)[parts[parts.length - 1]]
 }
 
+function parseMockText(text: string, type?: JsonFieldType): unknown {
+  const trimmed = text.trim()
+  if (!trimmed) return text
+  if (type === 'string') return text
+  if (type === 'boolean') {
+    if (trimmed === 'true') return true
+    if (trimmed === 'false') return false
+    return text
+  }
+  if (type === 'integer') {
+    const value = Number(trimmed)
+    return Number.isInteger(value) ? value : text
+  }
+  if (type === 'number') {
+    const value = Number(trimmed)
+    return Number.isNaN(value) ? text : value
+  }
+  if (type === 'null') return null
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return text
+  }
+}
+
+function setMockAtParts(node: unknown, parts: string[], value: unknown): boolean {
+  if (parts.length === 0) return false
+  const [head, ...rest] = parts
+  if (Array.isArray(node)) {
+    if (head !== '*') return false
+    if (rest.length === 0 || node.length === 0) return false
+    let changed = false
+    for (const item of node) {
+      if (item !== null && typeof item === 'object' && setMockAtParts(item, rest, value)) {
+        changed = true
+      }
+    }
+    return changed
+  }
+  if (node === null || typeof node !== 'object') return false
+  const record = node as Record<string, unknown>
+  if (!Object.hasOwn(record, head)) return false
+  if (rest.length === 0) {
+    record[head] = value
+    return true
+  }
+  return setMockAtParts(record[head], rest, value)
+}
+
+/** 把字段文档里的 Mock 值写入 JSON 副本，数组通配 `*` 会应用到每个元素。 */
+export function applyFieldMocks(root: unknown, docs: FieldDoc[]): unknown {
+  if (!docs?.length) return root
+  let clone: unknown
+  try {
+    clone = JSON.parse(JSON.stringify(root))
+  } catch {
+    return root
+  }
+  let changed = false
+  for (const doc of docs) {
+    if (typeof doc.mock !== 'string' || !doc.mock.trim()) continue
+    const parts = splitPointer(doc.pointer)
+    if (parts.length === 0) continue
+    if (setMockAtParts(clone, parts, parseMockText(doc.mock, doc.type))) changed = true
+  }
+  return changed ? clone : root
+}
+
 export type ParsedValue =
   | { ok: true; value: unknown }
   | { ok: false; error: string }
@@ -777,7 +846,7 @@ export function normalizeFieldDocs(value: unknown): FieldDoc[] | null {
     } else if (typeof source.path === 'string') {
       pointer = pathToPointer(source.path)
     }
-    if (!pointer) continue
+    if (pointer === null) continue
     const doc: FieldDoc = { pointer }
     for (const key of RULE_KEYS) {
       if (Object.hasOwn(source, key)) (doc as unknown as Record<string, unknown>)[key] = source[key]
@@ -785,7 +854,10 @@ export function normalizeFieldDocs(value: unknown): FieldDoc[] | null {
     if (isJsonFieldType(source.type)) doc.type = source.type
     if (typeof source.required === 'boolean') doc.required = source.required
     if (typeof source.description === 'string') doc.description = source.description
+    if (typeof source.mock === 'string') doc.mock = source.mock
+    else if (typeof source['x-mock'] === 'string') doc.mock = source['x-mock']
     if (typeof source.doc_only === 'boolean') doc.doc_only = source.doc_only
+    if (typeof source.order === 'number' && Number.isFinite(source.order)) doc.order = source.order
     if (source.source === 'openapi' || source.source === 'manual') doc.source = source.source
     map.set(pointer, doc)
   }
@@ -798,11 +870,11 @@ export function mergeFieldDocs(
 ): FieldDoc[] {
   const map = new Map<string, FieldDoc>()
   for (const doc of existing ?? []) {
-    if (!doc?.pointer || doc.pointer === '') continue
+    if (typeof doc?.pointer !== 'string') continue
     map.set(doc.pointer, { ...doc })
   }
   for (const doc of incoming ?? []) {
-    if (!doc?.pointer || doc.pointer === '') continue
+    if (typeof doc?.pointer !== 'string') continue
     const previous = map.get(doc.pointer)
     if (!previous) {
       map.set(doc.pointer, { ...doc })
@@ -815,6 +887,7 @@ export function mergeFieldDocs(
       description,
       type: doc.type ?? previous.type,
       required: doc.required ?? previous.required,
+      mock: doc.mock ?? previous.mock,
       doc_only: doc.doc_only ?? previous.doc_only,
       source: doc.source ?? previous.source
     })
@@ -853,6 +926,13 @@ function normalizeSchemaType(schema: Record<string, unknown>): JsonFieldType | u
 /** 把 OpenAPI / JSON Schema 转成 FieldDoc[]；example 用于标记 raw 中不存在的字段。 */
 export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDoc[] {
   const byPointer = new Map<string, FieldDoc>()
+  if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
+    const source = schema as Record<string, unknown>
+    const rules = source['x-kindra-rules']
+    if (rules && typeof rules === 'object' && Object.keys(rules).length > 0) {
+      byPointer.set('', { pointer: '', source: 'openapi', ...rulesFromSchema(source) })
+    }
+  }
   const rawPaths = example === undefined ? null : collectJsonPaths(example)
   const ensure = (pointer: string): FieldDoc => {
     let doc = byPointer.get(pointer)
@@ -877,6 +957,8 @@ export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDo
       if (typeof source.description === 'string' && source.description.trim()) {
         doc.description = source.description.trim()
       }
+      if (typeof source.mock === 'string') doc.mock = source.mock
+      else if (typeof source['x-mock'] === 'string') doc.mock = source['x-mock']
       doc.doc_only = true
     }
     const source = node as Record<string, unknown>
@@ -909,7 +991,7 @@ export function fieldDocsFromSchema(schema: unknown, example?: unknown): FieldDo
   }
   walk(schema, [])
   return [...byPointer.values()].filter(
-    (doc) => doc.type || doc.required || doc.description || doc.doc_only
+    (doc) => doc.type || doc.doc_only || RULE_KEYS.some(key => doc[key] !== undefined)
   )
 }
 
@@ -920,7 +1002,7 @@ function scalarVariant(type: JsonFieldType): Record<string, unknown> {
 }
 
 function schemaForNode(node: FieldNode, requiredSet: Set<string>): Record<string, unknown> {
-  const propertyChildren = [...node.childMap.values()].filter(
+  const propertyChildren = [...node.childMap.values()].sort((a, b) => a.order - b.order).filter(
     (child) => child.token !== '*' && !child.orphan
   )
   const itemChild = node.childMap.get('*')

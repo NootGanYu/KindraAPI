@@ -61,6 +61,7 @@ interface AppState {
   syncNotice: string
   records: Record<string, SendRecord | null>
   sendingId: string | null
+  sendingRequestId: string | null
   mcpConfig: McpConfig | null
   mcpStatus: McpStatus | null
   mcpTools: McpToolInfo[]
@@ -89,7 +90,8 @@ interface AppState {
   setActive: (id: string) => void
   patchDraft: (id: string, patch: Partial<Target>) => void
   setEnv: (envId: string) => Promise<void>
-  sendActive: () => Promise<SendRecord>
+  sendActive: (targetId?: string) => Promise<SendRecord>
+  cancelSend: () => Promise<void>
   saveSettings: (next: AppSettings) => Promise<void>
   reloadMcp: () => Promise<void>
   saveMcp: (next: McpConfig) => Promise<void>
@@ -282,6 +284,7 @@ export const useApp = create<AppState>((set, get) => ({
   syncNotice: '',
   records: {},
   sendingId: null,
+  sendingRequestId: null,
   mcpConfig: null,
   mcpStatus: null,
   mcpTools: [],
@@ -334,6 +337,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   selectProject: async (projectId) => {
     const previous = get().project
+    if (get().sendingRequestId) await get().cancelSend()
     if (previous && previous.project_id !== projectId) {
       try {
         await window.api.mqtt.disconnectAll(previous.project_id)
@@ -374,7 +378,8 @@ export const useApp = create<AppState>((set, get) => ({
       saveConflict: null,
       syncNotice: '',
       records: {},
-      sendingId: null
+      sendingId: null,
+      sendingRequestId: null
     })
     await get().syncTargets()
   },
@@ -398,6 +403,7 @@ export const useApp = create<AppState>((set, get) => ({
     const project = get().project
     if (!project) return
     const environments = unwrap(await window.api.envs.list(project.project_id))
+    if (get().project?.project_id !== project.project_id) return
     set({
       environments,
       currentEnvId: environments.some((e) => e.env_id === get().currentEnvId)
@@ -684,19 +690,29 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  sendActive: async () => {
-    const { project, activeId, drafts, currentEnvId } = get()
+  sendActive: async (targetId) => {
+    const { project, drafts, currentEnvId, sendingId } = get()
+    const activeId = targetId ?? get().activeId
+    if (sendingId) throw new Error('已有请求正在发送，请稍后重试')
     if (!project || !activeId) throw new Error('没有打开接口')
     const draft = drafts[activeId]
     if (!draft) throw new Error('接口草稿不存在')
-    set({ sendingId: activeId })
+    const requestId = createId('send')
+    set({ sendingId: activeId, sendingRequestId: requestId })
     try {
-      const record = unwrap(await window.api.http.send(project.project_id, draft, currentEnvId))
-      set((state) => ({ records: { ...state.records, [activeId]: record } }))
+      const record = unwrap(await window.api.http.send(project.project_id, draft, currentEnvId, requestId))
+      set((state) => state.project?.project_id === project.project_id && state.sendingRequestId === requestId
+        ? { records: { ...state.records, [activeId]: record } } : {})
+      if (get().project?.project_id === project.project_id) void get().reloadEnvironments().catch(() => undefined)
       return record
     } finally {
-      set({ sendingId: null })
+      if (get().sendingRequestId === requestId) set({ sendingId: null, sendingRequestId: null })
     }
+  },
+
+  cancelSend: async () => {
+    const requestId = get().sendingRequestId
+    if (requestId) unwrap(await window.api.http.cancel(requestId))
   },
 
   saveSettings: async (next) => {

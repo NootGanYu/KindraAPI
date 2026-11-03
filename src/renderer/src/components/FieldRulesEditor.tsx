@@ -1,3 +1,4 @@
+import { SettingOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import { Button, Input, Modal, Select } from 'antd'
 import type { FieldRules } from '@shared/types'
@@ -8,8 +9,11 @@ interface Props {
   value: FieldRules & { type?: string }
   onChange: (value: FieldRules & { type?: string }) => void
   disabled?: boolean
+  compact?: boolean
+  fixedType?: boolean
+  fixedRequired?: boolean
 }
-export default function FieldRulesEditor({ value, onChange, disabled }: Props): JSX.Element {
+export default function FieldRulesEditor({ value, onChange, disabled, compact, fixedType, fixedRequired }: Props): JSX.Element {
   const [open, setOpen] = useState(false)
   useTargetEditLock(open)
   const [draft, setDraft] = useState(value)
@@ -40,14 +44,15 @@ export default function FieldRulesEditor({ value, onChange, disabled }: Props): 
     } catch (e) { setError((e as Error).message) }
   }
   const booleanEditor = (key: 'required' | 'nullable'): JSX.Element => <Select style={{ width: '100%' }}
+    aria-label={key === 'required' ? '字段必填' : '字段可空'} disabled={key === 'required' && fixedRequired}
     value={draft[key] === undefined ? 'unknown' : String(draft[key])}
     options={[{ value: 'unknown', label: '待补充' }, { value: 'true', label: '是' }, { value: 'false', label: '否' }]}
     onChange={v => setDraft({ ...draft, [key]: v === 'unknown' ? undefined : v === 'true' })} />
   return <>
-    <Button size="small" type="text" disabled={disabled} onClick={begin}>规则</Button>
+    <Button size="small" type="text" aria-label="字段规则" title="字段规则" icon={compact ? <SettingOutlined /> : undefined} disabled={disabled} onClick={begin}>{compact ? null : '规则'}</Button>
     <Modal title="字段说明与规则" open={open} onCancel={() => setOpen(false)} onOk={save} okText="保存" cancelText="取消">
       <div className="field-form">
-        <label>类型</label><Select value={draft.type ?? 'unknown'} options={FIELD_TYPES.map(type => ({ value: type, label: type }))} onChange={type => setDraft({ ...draft, type })} />
+        <label>类型</label><Select disabled={fixedType} value={draft.type ?? 'unknown'} options={FIELD_TYPES.map(type => ({ value: type, label: type }))} onChange={type => setDraft({ ...draft, type })} />
         <label>必填 / 必有（父对象存在时）</label>{booleanEditor('required')}
         <label>可为 null</label>{booleanEditor('nullable')}
         <label>字段含义</label><Input.TextArea value={draft.description ?? ''} onChange={e => setDraft({ ...draft, description: e.target.value })} />

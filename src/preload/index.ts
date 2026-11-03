@@ -29,7 +29,7 @@ const api = {
   },
 
   dialog: {
-    openFiles: () => invoke('dialog:open-files')
+    openFiles: (multiple = true) => invoke('dialog:open-files', multiple)
   },
 
   files: {
@@ -45,6 +45,7 @@ const api = {
     list: () => invoke('project:list'),
     create: (name: string) => invoke('project:create', name),
     save: (project: unknown) => invoke('project:save', project),
+    saveApiStatuses: (projectId: string, statuses: unknown, defaultId: string) => invoke('project:api-statuses', projectId, statuses, defaultId),
     ensureDefault: () => invoke('project:ensureDefault')
   },
 
@@ -117,8 +118,9 @@ const api = {
   },
 
   http: {
-    send: (projectId: string, target: unknown, environmentId?: string) =>
-      invoke('http:send', projectId, target, environmentId)
+    send: (projectId: string, target: unknown, environmentId?: string, requestId?: string) =>
+      invoke('http:send', projectId, target, environmentId, requestId),
+    cancel: (requestId: string) => invoke('http:cancel', requestId)
   },
 
   history: {
@@ -132,6 +134,11 @@ const api = {
     list: (projectId: string) => invoke('dictionary:list', projectId),
     suggestions: (projectId: string) => invoke('dictionary:suggestions', projectId),
     save: (projectId: string, entry: unknown) => invoke('dictionary:save', projectId, entry),
+    saveMany: (projectId: string, entries: unknown[]) => invoke('dictionary:saveMany', projectId, entries),
+    deleteMany: (projectId: string, ids: string[]) => invoke('dictionary:deleteMany', projectId, ids),
+    stage: (projectId: string, entry: unknown) => invoke('dictionary:stage', projectId, entry),
+    saveTemporary: (projectId: string, ids?: string[]) => invoke('dictionary:saveTemporary', projectId, ids),
+    apiFields: (projectId: string, ids: string[]) => invoke('dictionary:apiFields', projectId, ids),
     delete: (projectId: string, id: string) => invoke('dictionary:delete', projectId, id),
     getSettings: (projectId: string) => invoke('dictionary:getSettings', projectId),
     saveSettings: (projectId: string, settings: unknown) =>

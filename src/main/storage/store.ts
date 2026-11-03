@@ -3,8 +3,10 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { apiStatuses, defaultApiStatus } from '@shared/apiStatuses'
 import type {
   AppPaths,
+  ApiStatus,
   AppSettings,
   DataModel,
   DbConnection,
@@ -56,6 +58,7 @@ import {
 } from '@shared/factories'
 import { CUSTOM_ATTRIBUTE_TYPES } from '@shared/customAttributes'
 import { BUILTIN_DICTIONARY } from '@shared/dictionary'
+import { DICT_FIELD_TYPES } from '@shared/types'
 import {
   preserveCaseRuns,
   stableJson,
@@ -250,6 +253,34 @@ export function deleteCustomAttribute(projectId: string, attributeId: string): b
   return true
 }
 
+/** 项目状态定义与使用已删除状态的接口一起更新；不覆盖接口的其他字段。 */
+export function saveApiStatuses(projectId: string, statuses: ApiStatus[], defaultId: string): Project {
+  const project = getProject(projectId)
+  if (!project) throw new Error('项目不存在')
+  if (!Array.isArray(statuses) || !statuses.length) throw new Error('至少保留一个接口状态')
+  const ids = new Set<string>(), names = new Set<string>()
+  const normalized = statuses.map(status => {
+    const name = status.name?.trim()
+    if (!status.id || ids.has(status.id) || !name || names.has(name) || !/^#[0-9a-f]{6}$/i.test(status.color)) throw new Error('状态名称不能为空或重复，颜色必须有效')
+    ids.add(status.id); names.add(name)
+    return { id: status.id, name, color: status.color }
+  })
+  if (!ids.has(defaultId)) throw new Error('请选择有效的默认状态')
+  const removed = new Set(apiStatuses(project).filter(status => !ids.has(status.id)).map(status => status.id))
+  const affected = listTargets(projectId).filter(item => item.target_type === 'api').map(item => getTarget(projectId, item.target_id)!).filter(target => removed.has(target.mark_id || defaultApiStatus(project)))
+  const saved: Target[] = []
+  try {
+    for (const target of affected) {
+      saveTarget(projectId, { ...target, mark_id: defaultId })
+      saved.push(target)
+    }
+    return saveProject({ ...project, api_statuses: normalized, default_api_status_id: defaultId })
+  } catch (error) {
+    for (const target of saved) saveTarget(projectId, target)
+    throw error
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Targets
 // ---------------------------------------------------------------------------
@@ -308,6 +339,7 @@ export function createTargetInProject(
   const siblings = index.items.filter((i) => i.parent_id === parentId)
   const maxSort = siblings.reduce((m, i) => Math.max(m, i.sort), 0)
   const target = createTarget(projectId, parentId, type)
+  target.mark_id = defaultApiStatus(getProject(projectId))
   target.sort = maxSort + 100
   saveTarget(projectId, target)
   return target
@@ -1158,7 +1190,7 @@ export function listCustomDictionaryEntries(projectId: string): DictionaryEntry[
 }
 
 export function listDictionaryEntries(projectId: string): DictionaryEntryView[] {
-  const custom: DictionaryEntryView[] = listCustomDictionaryEntries(projectId).map((entry) => ({
+  const custom: DictionaryEntryView[] = [...listTemporaryDictionaryEntries(projectId), ...listCustomDictionaryEntries(projectId)].map((entry) => ({
     ...entry,
     source: 'custom'
   }))
@@ -1169,46 +1201,90 @@ export function listDictionaryEntries(projectId: string): DictionaryEntryView[] 
   return [...custom, ...builtin]
 }
 
-const DICT_FIELD_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array']
-
-export function saveDictionaryEntry(projectId: string, input: DictionaryEntry): DictionaryEntry {
+function normalizeDictionaryEntry(projectId: string, input: DictionaryEntry, existing?: DictionaryEntry): DictionaryEntry {
+  const valueText = (value: unknown): string => value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value)
   const key = String(input.key ?? '').trim()
   const description = String(input.description ?? '').trim()
   if (!key) throw new Error('参数名称不能为空')
-  if (!description) throw new Error('参数描述不能为空')
-  if (!DICT_FIELD_TYPES.includes(String(input.field_type))) {
+  if (!DICT_FIELD_TYPES.includes(input.field_type)) {
     throw new Error(`不支持的字段类型：${String(input.field_type)}`)
   }
-  const entries = listCustomDictionaryEntries(projectId)
   const now = new Date().toISOString()
-  const existingIndex = input.id ? entries.findIndex((entry) => entry.id === input.id) : -1
-  if (existingIndex < 0 && input.id && input.id.startsWith('builtin_')) {
+  if (input.id?.startsWith('builtin_')) {
     throw new Error('系统内置描述不能修改')
   }
-  const entry: DictionaryEntry = {
+  return {
     id: input.id && !input.id.startsWith('builtin_') ? input.id : createDictionaryEntry(projectId).id,
     project_id: projectId,
     key,
     field_type: input.field_type ?? 'string',
     description,
     remarks: String(input.remarks ?? ''),
-    default_value: String(input.default_value ?? ''),
+    default_value: input.default_value === undefined ? valueText(input.schema?.default) : String(input.default_value),
+    example_value: input.example_value === undefined ? valueText(input.schema?.example) : String(input.example_value),
+    mock: input.mock === undefined ? valueText(input.schema?.['x-mock']) : String(input.mock),
     schema: input.schema,
-    created_at: existingIndex >= 0 ? entries[existingIndex].created_at : now,
+    created_at: existing?.created_at ?? now,
     updated_at: now
   }
-  if (existingIndex >= 0) entries[existingIndex] = entry
-  else entries.push(entry)
+}
+
+/** Normalize the complete batch before writing so validation failures cannot partly import. */
+export function saveDictionaryEntries(projectId: string, input: DictionaryEntry[]): DictionaryEntry[] {
+  if (!input.length) return []
+  const entries = listCustomDictionaryEntries(projectId)
+  const pending = listTemporaryDictionaryEntries(projectId)
+  const saved = input.map(entry => normalizeDictionaryEntry(projectId, entry, [...entries, ...pending].find(item => item.id === entry.id)))
+  for (const entry of saved) {
+    const index = entries.findIndex(item => item.id === entry.id)
+    if (index >= 0) entries[index] = entry
+    else entries.push(entry)
+  }
   writeJson(descListPath(projectId), entries)
-  return entry
+  const ids = new Set(saved.map(entry => entry.id))
+  writeJson(temporaryDictionaryPath(projectId), pending.filter(entry => !ids.has(entry.id)))
+  return saved
+}
+
+export function saveDictionaryEntry(projectId: string, input: DictionaryEntry): DictionaryEntry {
+  return saveDictionaryEntries(projectId, [input])[0]
+}
+
+function temporaryDictionaryPath(projectId: string): string {
+  return path.join(projectDir(projectId), 'settings', 'desc_temporary.json')
+}
+
+function listTemporaryDictionaryEntries(projectId: string): DictionaryEntry[] {
+  return readJson<DictionaryEntry[]>(temporaryDictionaryPath(projectId), []).filter(entry => entry?.project_id === projectId).map(entry => ({ ...entry, temporary: true }))
+}
+
+export function stageDictionaryEntry(projectId: string, input: DictionaryEntry): boolean {
+  if (!input.key?.trim() || !input.description?.trim()) return false
+  const all = listDictionaryEntries(projectId)
+  if (all.some(entry => entry.key === input.key.trim() && entry.description === input.description.trim() && entry.field_type === input.field_type)) return false
+  const entry = normalizeDictionaryEntry(projectId, { ...input, id: '' })
+  const pending = listTemporaryDictionaryEntries(projectId)
+  writeJson(temporaryDictionaryPath(projectId), [...pending, { ...entry, temporary: true }])
+  return true
+}
+
+export function saveTemporaryDictionaryEntries(projectId: string, ids?: string[]): DictionaryEntry[] {
+  return saveDictionaryEntries(projectId, listTemporaryDictionaryEntries(projectId).filter(entry => !ids || ids.includes(entry.id)))
 }
 
 export function deleteDictionaryEntry(projectId: string, id: string): void {
-  if (!id || id.startsWith('builtin_')) throw new Error('系统内置描述不能删除')
+  deleteDictionaryEntries(projectId, [id])
+}
+
+export function deleteDictionaryEntries(projectId: string, ids: string[]): void {
+  if (!ids.length) return
+  if (ids.some(id => !id || id.startsWith('builtin_'))) throw new Error('系统内置描述不能删除')
   const entries = listCustomDictionaryEntries(projectId)
-  const next = entries.filter((entry) => entry.id !== id)
-  if (next.length === entries.length) throw new Error('字典条目不存在')
+  const pending = listTemporaryDictionaryEntries(projectId)
+  if (ids.some(id => ![...entries, ...pending].some(entry => entry.id === id))) throw new Error('字典条目不存在')
+  const next = entries.filter((entry) => !ids.includes(entry.id))
   writeJson(descListPath(projectId), next)
+  writeJson(temporaryDictionaryPath(projectId), pending.filter(entry => !ids.includes(entry.id)))
 }
 
 export function getDictionarySettings(projectId: string): DictionarySettings {

@@ -1,4 +1,6 @@
 import { rulesFromSchema } from '@shared/fieldRules'
+import { DICT_FIELD_TYPES } from '@shared/types'
+import { defaultApiStatus } from '@shared/apiStatuses'
 import { withTargetChanges } from '../storage/changes'
 import type {
   ApiCase,
@@ -324,7 +326,7 @@ function executeSummary(record: Awaited<ReturnType<typeof sendRequest>>): Record
 const TOOLS: ToolDefinition[] = [
   {
     name: 'upsert_api',
-    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义；同时尽量写明 type、required、nullable、enum 及枚举含义。url 必须填写完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单；写入后应继续处理 documentation.issues。',
+    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。新建接口会执行硬性文档校验：必须填写接口说明 description，url 必须是完整的 http:// 或 https:// 地址（含主机名与路径），每个已知请求参数、请求体字段和响应字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions；缺失任一项将直接拒绝写入且不保存。更新接口时，本次显式提交的字段同样必须补齐这些信息，未提交字段保持原样。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单。',
     requires_write: true, requires_execute: false,
     input_schema: schema(apiDocumentationProperties, ['project_id']),
     handler: args => writeApiDocumentation(args)
@@ -445,7 +447,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_api',
-    description: '在项目指定目录下创建空接口（根为 0）。',
+    description: '在项目指定目录下创建接口（根为 0）。执行与 upsert_api 相同的硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；传入请求/响应字段时，每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺失任一项将拒绝写入且不保存。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -455,23 +457,11 @@ const TOOLS: ToolDefinition[] = [
         name: { type: 'string', description: '接口名称' },
         method: { type: 'string', description: 'HTTP 方法，默认 GET' },
         url: { type: 'string', description: HTTP_URL_DESCRIPTION },
-        description: { type: 'string', description: '接口说明' }
+        description: { type: 'string', description: '接口说明（必填）' }
       },
-      ['project_id', 'name']
+      ['project_id', 'name', 'url', 'description']
     ),
-    handler: (args) => {
-      const projectId = projectIdOf(args)
-      const parentId = str(args, 'parent_id') || '0'
-      const target = store.createTargetInProject(projectId, parentId, 'api')
-      target.name = requiredStr(args, 'name')
-      const method = str(args, 'method').trim().toUpperCase()
-      if (method) target.method = method
-      const url = str(args, 'url')
-      if (url) target.url = url
-      const description = str(args, 'description')
-      if (description) target.description = description
-      return { api: store.saveTarget(projectId, target) }
-    }
+    handler: args => writeApiDocumentation(args, true)
   },
   {
     name: 'get_api_detail',
@@ -722,6 +712,7 @@ const TOOLS: ToolDefinition[] = [
             updated += 1
           } else {
             target = createTarget(projectId, folderId, 'api')
+            target.mark_id = defaultApiStatus(store.getProject(projectId))
             created += 1
           }
           target.name = op.summary || op.operationId || `${methodUpper} ${rawPath}`
@@ -1514,6 +1505,10 @@ const TOOLS: ToolDefinition[] = [
           description: entry.description,
           remarks: entry.remarks ?? '',
           default_value: entry.default_value ?? '',
+          example_value: entry.example_value ?? '',
+          mock: entry.mock ?? '',
+          schema: entry.schema,
+          temporary: entry.temporary ?? false,
           source: entry.source
         }))
       return { entries, total: entries.length }
@@ -1530,13 +1525,16 @@ const TOOLS: ToolDefinition[] = [
         key: { type: 'string', description: '参数名称' },
         field_type: {
           type: 'string',
-          enum: ['string', 'number', 'integer', 'boolean', 'object', 'array']
+          enum: [...DICT_FIELD_TYPES]
         },
         description: { type: 'string', description: '参数描述' },
         remarks: { type: 'string' },
-        default_value: { type: 'string' }
+        default_value: { type: 'string' },
+        example_value: { type: 'string' },
+        mock: { type: 'string' },
+        schema: { type: 'object', description: '字段约束与示例' }
       },
-      ['project_id', 'key', 'description']
+      ['project_id', 'key']
     ),
     handler: (args) => {
       const entry = store.saveDictionaryEntry(projectIdOf(args), {
@@ -1547,6 +1545,9 @@ const TOOLS: ToolDefinition[] = [
         description: str(args, 'description'),
         remarks: str(args, 'remarks'),
         default_value: str(args, 'default_value'),
+        example_value: str(args, 'example_value'),
+        mock: str(args, 'mock'),
+        schema: args.schema && typeof args.schema === 'object' && !Array.isArray(args.schema) ? args.schema as Record<string, unknown> : undefined,
         created_at: '',
         updated_at: ''
       })
@@ -1565,11 +1566,14 @@ const TOOLS: ToolDefinition[] = [
         key: { type: 'string' },
         field_type: {
           type: 'string',
-          enum: ['string', 'number', 'integer', 'boolean', 'object', 'array']
+          enum: [...DICT_FIELD_TYPES]
         },
         description: { type: 'string' },
         remarks: { type: 'string' },
-        default_value: { type: 'string' }
+        default_value: { type: 'string' },
+        example_value: { type: 'string' },
+        mock: { type: 'string' },
+        schema: { type: 'object', description: '字段约束与示例' }
       },
       ['project_id', 'id']
     ),
@@ -1578,7 +1582,7 @@ const TOOLS: ToolDefinition[] = [
       const id = requiredStr(args, 'id')
       if (id.startsWith('builtin_')) throw new Error('系统内置描述不能修改')
       const existing = store
-        .listCustomDictionaryEntries(projectId)
+        .listDictionaryEntries(projectId)
         .find((entry) => entry.id === id)
       if (!existing) throw new Error('字典条目不存在')
       const entry = store.saveDictionaryEntry(projectId, {
@@ -1594,7 +1598,10 @@ const TOOLS: ToolDefinition[] = [
         default_value:
           args.default_value !== undefined
             ? str(args, 'default_value')
-            : existing.default_value
+            : existing.default_value,
+        example_value: args.example_value !== undefined ? str(args, 'example_value') : existing.example_value,
+        mock: args.mock !== undefined ? str(args, 'mock') : existing.mock,
+        schema: args.schema && typeof args.schema === 'object' && !Array.isArray(args.schema) ? args.schema as Record<string, unknown> : existing.schema
       })
       return { entry }
     }
@@ -2348,7 +2355,7 @@ const TOOLS: ToolDefinition[] = [
           patchBody(next, body)
         }
         if (request.auth) next.request.auth = { ...next.request.auth, ...request.auth }
-        for (const key of ['pre_script', 'test', 'pre_tasks', 'post_tasks'] as const) if (request[key] !== undefined) (next.request as any)[key] = request[key]
+        for (const key of ['pre_script', 'test', 'pre_script_enabled', 'test_enabled', 'pre_tasks', 'post_tasks'] as const) if (request[key] !== undefined) (next.request as any)[key] = request[key]
       }
       if (args.response && typeof args.response === 'object') {
         for (const example of (args.response as any).example ?? []) {
@@ -2612,18 +2619,18 @@ function sshFromArgs(value: unknown): DbSshConfig {
   }
 }
 
-// Legacy entry points expose the same detailed authoring contract.
+// Legacy entry points expose the same detailed authoring contract and strict gate.
 for (const name of ['create_api', 'update_api']) {
   const tool = TOOLS.find(item => item.name === name)!
   const props = tool.input_schema.properties as Record<string, unknown>
   Object.assign(props, apiDocumentationProperties)
   props.response_example = successSchema
-  if (name === 'create_api') {
-    const legacyCreate = tool.handler
-    tool.handler = (args, config) => args.source_key || args.body || args.success_response || args.response_example || args.query || args.headers || args.paths || args.cookies || args.custom_attributes
-      ? writeApiDocumentation(args, true) : legacyCreate(args, config)
-    tool.description += '必须填写接口说明 description；URL 必须是完整的 http:// 或 https:// 地址（含主机名与路径），不要只写 /path。完整文档推荐 upsert_api，也可传入 body、success_response 和参数列表一次创建。每个已知字段都应填写 description。'
-  } else tool.description = '增量更新接口与字段文档。必须填写或保留接口说明 description，并为每个已知字段填写业务含义；URL 必须使用完整的 http:// 或 https:// 地址。未传保留，remove/unset 显式删除。字段结构同 upsert_api，写入后检查 documentation.issues。'
+  tool.handler = name === 'create_api'
+    ? args => writeApiDocumentation(args, true)
+    : args => writeApiDocumentation(args)
+  tool.description = name === 'create_api'
+    ? '创建接口，执行硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺项拒绝写入且不保存。'
+    : '增量更新接口与字段文档。本次显式提交的字段必须补齐 description、type、required、nullable、enum（有枚举需 enum_descriptions），未提交字段保留；缺项拒绝写入。URL 若提交必须是完整 http(s) 地址。字段结构同 upsert_api。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))

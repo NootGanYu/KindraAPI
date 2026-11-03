@@ -3,6 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import type {
   AppSettings,
+  ApiStatus,
   CookieJar,
   CustomAttribute,
   DataModel,
@@ -40,6 +41,7 @@ import { runFlow } from './flow/engine'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
+import { dictionaryFieldsFromTarget } from './schema/dictionary'
 import {
   getMcpStatus,
   restartMcpServer
@@ -139,6 +141,7 @@ export function registerIpc(): void {
   handle('project:list', () => store.listProjects())
   handle('project:create', (name: string) => store.createProjectWithDefaults(name))
   handle('project:save', (project: Project) => store.saveProject(project))
+  handle('project:api-statuses', (projectId: string, statuses: ApiStatus[], defaultId: string) => store.saveApiStatuses(projectId, statuses, defaultId), true)
   handle('project:ensureDefault', () => store.ensureDefaultProject())
 
   handle('target:list', (projectId: string) => store.listTargets(projectId))
@@ -164,9 +167,9 @@ export function registerIpc(): void {
     true
   )
 
-  handle('dialog:open-files', async () => {
+  handle('dialog:open-files', async (multiple = true) => {
     const picked = await dialog.showOpenDialog({
-      properties: ['openFile', 'multiSelections']
+      properties: multiple ? ['openFile', 'multiSelections'] : ['openFile']
     })
     if (picked.canceled) return []
     return picked.filePaths.map((filePath) => {
@@ -274,10 +277,23 @@ export function registerIpc(): void {
   handle('settings:get', () => store.getSettings())
   handle('settings:save', (settings: AppSettings) => store.saveSettings(settings))
 
-  handle('http:send', async (projectId: string, target: Target, environmentId?: string) => {
-    const record: SendRecord = await sendRequest(projectId, target, environmentId)
-    store.addSendRecord(projectId, record)
-    return record
+  const httpRuns = new Map<string, AbortController>()
+  handle('http:send', async (projectId: string, target: Target, environmentId?: string, requestId?: string) => {
+    if (requestId && httpRuns.has(requestId)) throw new Error('请求已在发送')
+    const controller = new AbortController()
+    if (requestId) httpRuns.set(requestId, controller)
+    try {
+      const record: SendRecord = await sendRequest(projectId, target, environmentId, { signal: controller.signal })
+      store.addSendRecord(projectId, record)
+      return record
+    } finally {
+      if (requestId) httpRuns.delete(requestId)
+    }
+  })
+  handle('http:cancel', (requestId: string) => {
+    const controller = httpRuns.get(requestId)
+    controller?.abort()
+    return Boolean(controller)
   })
 
   handle('history:list', (projectId: string): SendRecordSummary[] => store.listSendRecords(projectId))
@@ -317,6 +333,15 @@ export function registerIpc(): void {
   // Data dictionary
   handle('dictionary:list', (projectId: string) => store.listDictionaryEntries(projectId))
   handle('dictionary:suggestions', (projectId: string) => store.listDictionarySuggestions(projectId))
+  handle('dictionary:saveMany', (projectId: string, entries: DictionaryEntry[]) => store.saveDictionaryEntries(projectId, entries))
+  handle('dictionary:deleteMany', (projectId: string, ids: string[]) => { store.deleteDictionaryEntries(projectId, ids); return true })
+  handle('dictionary:stage', (projectId: string, entry: DictionaryEntry) => store.stageDictionaryEntry(projectId, entry))
+  handle('dictionary:saveTemporary', (projectId: string, ids?: string[]) => store.saveTemporaryDictionaryEntries(projectId, ids))
+  handle('dictionary:apiFields', (projectId: string, ids: string[]) => ids.flatMap(id => {
+    const target = store.getTarget(projectId, id)
+    if (!target || target.target_type !== 'api') return []
+    return dictionaryFieldsFromTarget(target)
+  }))
   handle('dictionary:save', (projectId: string, entry: DictionaryEntry) =>
     store.saveDictionaryEntry(projectId, entry)
   )

@@ -7,6 +7,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import * as store from '../src/main/storage/store'
+import { buildFieldRows, buildFieldSchema, fieldDocsFromSchema, mergeFieldDocs, normalizeFieldDocs } from '../src/shared/jsonFields'
 import { createCustomAttribute, createDocSettings } from '../src/shared/factories'
 import { startMcpServer, stopMcpServer } from '../src/main/mcp/server'
 import { startDocServer, stopDocServer } from '../src/main/docs/server'
@@ -20,6 +21,19 @@ async function freePort(): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  const rootDocs = normalizeFieldDocs([{ pointer: '', nullable: true, description: '根对象' }, { pointer: '/id', type: 'integer', required: true }])!
+  assert.equal(rootDocs[0].pointer, '')
+  const rootSchema = buildFieldSchema('{"id":1}', rootDocs).schema
+  assert.equal(rootSchema.nullable, true)
+  assert.equal(rootSchema.description, '根对象')
+  assert.deepEqual(rootSchema.required, ['id'])
+  const rootRoundTrip = fieldDocsFromSchema(rootSchema).find(doc => doc.pointer === '')
+  assert.equal(rootRoundTrip?.nullable, true)
+  assert.equal(rootRoundTrip?.description, '根对象')
+  assert.equal(mergeFieldDocs(fieldDocsFromSchema(rootSchema), rootDocs).find(doc => doc.pointer === '')?.nullable, true)
+  const orderedDocs = normalizeFieldDocs([{ pointer: '/first', order: 1 }, { pointer: '/second', order: 0 }])!
+  assert.deepEqual(buildFieldRows('{"first":1,"second":2}', orderedDocs).rows.map(row => row.name), ['second', 'first'])
+  assert.deepEqual(Object.keys(buildFieldSchema('{"first":1,"second":2}', orderedDocs).schema.properties as object), ['second', 'first'])
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-docs-'))
   app.setPath('userData', userData)
   await app.whenReady()
@@ -58,6 +72,7 @@ async function main(): Promise<void> {
     assert(initialized.result.instructions.includes('必须填写接口说明'))
     assert(initialized.result.instructions.includes('目录说明'))
     assert(initialized.result.instructions.includes('完整的 http:// 或 https:// 地址'))
+    assert(initialized.result.instructions.includes('拒绝写入'))
     const tools = await rpc('tools/list', {})
     assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.inputSchema.properties.success_response.properties.field_docs.items.properties.enum_descriptions))
     assert(tools.result.tools.some((t: any) => t.name === 'upsert_api' && t.description.includes('每个已知')))
@@ -71,13 +86,24 @@ async function main(): Promise<void> {
     const state = { path: 'data.items[].state', type: 'integer', required: true, nullable: false, description: '订单状态', enum: [0, 1, 2], enum_descriptions: ['待审核', '通过', '驳回'], default: 0, example: 1 }
     const created = await call('upsert_api', {
       source_key: 'smoke.order.detail', name: 'MCP 文档验证', method: 'GET', url: 'http://localhost/orders/detail?id=order_001',
-      query: [{ key: 'disabled', value: 'x', type: 'string', checked: false, required: false, nullable: false, description: '未启用也应显示', enum: null }],
+      description: '订单详情接口',
+      query: [
+        { key: 'id', value: 'order_001', type: 'string', checked: true, required: true, nullable: false, description: '订单标识', enum: null },
+        { key: 'disabled', value: 'x', type: 'string', checked: false, required: false, nullable: false, description: '未启用也应显示', enum: null }
+      ],
       body: { mode: 'none' },
-      success_response: { raw: { data: { items: [{ state: 1 }] } }, field_docs: [state, { path: 'data.note', type: 'string', required: false, description: '不在示例中的字段', nullable: true, enum: null }] }
+      success_response: { raw: { data: { items: [{ state: 1 }] } }, field_docs: [
+        { path: 'data', type: 'object', required: false, nullable: false, enum: null, description: '响应数据' },
+        { path: 'data.items', type: 'array', required: false, nullable: false, enum: null, description: '订单列表' },
+        { path: 'data.items[]', type: 'object', required: false, nullable: false, enum: null, description: '订单项' },
+        state,
+        { path: 'data.note', type: 'string', required: false, description: '不在示例中的字段', nullable: true, enum: null }
+      ] }
     })
     const id = created.target_id
     assert(created.created)
-    assert(created.documentation.issues.some((issue: any) => issue.path === 'query.id'))
+    assert(created.documentation.complete, JSON.stringify(created.documentation.issues))
+    assert(!created.documentation.issues.some((issue: any) => issue.path === 'query.id'))
     const update = await call('upsert_api', { source_key: 'smoke.order.detail', success_response: { field_docs: [{ path: state.path, description: '新的状态说明' }] } })
     assert.equal(update.target_id, id)
     assert(!update.created)
@@ -154,7 +180,7 @@ async function main(): Promise<void> {
         baseUrl: { current_value: 'http://api.example.test', initial_value: '', is_checked: 1 }
       }
     })
-    const probe = await call('upsert_api', { source_key: 'smoke.env.probe', name: '环境变量验证', method: 'GET', url: '{{baseUrl}}/env/probe', body: { mode: 'none' } })
+    const probe = await call('upsert_api', { source_key: 'smoke.env.probe', name: '环境变量验证', description: '验证分享环境变量解析的接口', method: 'GET', url: '{{baseUrl}}/env/probe', body: { mode: 'none' } })
     store.updateDocShare(project.project_id, share.share_id, {
       name: share.name,
       scope: share.scope,
@@ -234,14 +260,15 @@ async function main(): Promise<void> {
     await call('sync_openapi', { project_id: other.project_id, openapi })
     const imported = store.getTarget(other.project_id, store.listTargets(other.project_id).find(t => t.target_type === 'api')!.target_id)!
     assert.deepEqual(imported.response!.example![0].field_docs!.find(d => d.pointer.endsWith('/state'))!.enum_descriptions, ['待审核', '通过', '驳回'])
-    assert.equal(imported.request!.query.parameter.find(p => p.key === 'id')!.required, undefined, 'unknown required survives OpenAPI')
+    assert.equal(imported.request!.query.parameter.find(p => p.key === 'id')!.required, true, 'documented required survives OpenAPI')
+    assert.equal(imported.request!.query.parameter.find(p => p.key === 'disabled')!.required, false, 'explicit optional survives OpenAPI')
     const unknownKey = await rpc('tools/call', { name: 'upsert_api', arguments: { project_id: project.project_id, target_id: id, success_response: { field_docs: [{ path: state.path, enum_description: ['typo'] }] } } })
     assert(unknownKey.result.isError, 'unknown field metadata must not silently disappear')
-    const noSample = await call('upsert_api', { source_key: 'smoke.no-sample', name: '尚未运行', url: '/no-sample', body: { field_docs: [{ path: 'user.id', type: 'string', description: '用户标识', required: true, nullable: false, enum: null }] }, success_response: { field_docs: [{ path: 'ok', type: 'boolean', description: '成功标识', required: true, nullable: false, enum: null }] } })
+    const noSample = await call('upsert_api', { source_key: 'smoke.no-sample', name: '尚未运行', url: 'http://localhost/no-sample', description: '尚未执行过的接口', body: { field_docs: [{ path: 'user.id', type: 'string', description: '用户标识', required: true, nullable: false, enum: null }] }, success_response: { field_docs: [{ path: 'ok', type: 'boolean', description: '成功标识', required: true, nullable: false, enum: null }] } })
     const noSampleHtml = await (await fetch(`${base}/a/${noSample.target_id}`)).text()
     assert(noSampleHtml.includes('用户标识') && noSampleHtml.includes('成功标识'), 'no raw/record required')
     const model = await call('create_data_model', { name: '状态模型', schema: { type: 'object', required: ['state'], properties: { state: { type: 'integer', description: '共享状态', enum: [0, 1], 'x-enum-descriptions': ['待处理', '完成'], example: 1 } } } })
-    const linked = await call('upsert_api', { source_key: 'smoke.model', name: '引用模型', url: '/model', body: { mode: 'json', model_id: model.model.model_id }, success_response: { model_id: model.model.model_id } })
+    const linked = await call('upsert_api', { source_key: 'smoke.model', name: '引用模型', url: 'http://localhost/model', description: '引用数据模型的接口', body: { mode: 'json', model_id: model.model.model_id }, success_response: { model_id: model.model.model_id } })
     let modelHtml = await (await fetch(`${base}/a/${linked.target_id}`)).text()
     assert(modelHtml.includes('共享状态') && modelHtml.includes('待处理'))
     await call('update_data_model', { model_id: model.model.model_id, schema: { type: 'object', required: ['state'], properties: { state: { type: 'integer', description: '修改后的共享状态', enum: [0, 1], 'x-enum-descriptions': ['未完成', '已完成'], example: 1 } } } })
@@ -262,7 +289,7 @@ async function main(): Promise<void> {
     const endpoint = http.createServer((_request, response) => { response.writeHead(responseStatus, { 'content-type': 'application/json' }); response.end('{}') })
     await new Promise<void>(resolve => endpoint.listen(0, '127.0.0.1', resolve))
     try {
-      const captured = await call('upsert_api', { source_key: 'smoke.capture', name: '显式保存响应', url: `http://127.0.0.1:${(endpoint.address() as net.AddressInfo).port}/capture`, success_response: { raw: { optional: 'example' } } })
+      const captured = await call('upsert_api', { source_key: 'smoke.capture', name: '显式保存响应', url: `http://127.0.0.1:${(endpoint.address() as net.AddressInfo).port}/capture`, description: '显式保存响应示例', success_response: { raw: { optional: 'example' }, field_docs: [{ path: 'optional', type: 'string', required: false, nullable: true, enum: null, description: '可选字段' }] } })
       const legacyDefinition = store.getTarget(project.project_id, captured.target_id)!
       legacyDefinition.response!.example![0].field_docs = [{ pointer: '/optional', type: 'string', description: '旧字段说明', required: false }]
       store.saveTarget(project.project_id, legacyDefinition)
@@ -285,10 +312,11 @@ async function main(): Promise<void> {
     await assert.rejects(() => call('upsert_api', { target_id: linked.target_id, body: { model_id: null } }))
     assert.equal(JSON.stringify(store.getTarget(project.project_id, linked.target_id)), beforeDetach, 'broken nested reference cannot silently lose definitions on detach')
     assert((await (await fetch(`${base}/a/${linked.target_id}`)).text()).includes('模型定义待修复'))
-    const form = await call('upsert_api', { source_key: 'smoke.form', name: '表单', url: '/form', body: { mode: 'urlencoded', parameters: [{ key: 'state', type: 'integer', value: '1', enum: [0, 1], enum_descriptions: ['等待', '完成'], required: true, nullable: false, description: '表单状态' }] } })
+    const form = await call('upsert_api', { source_key: 'smoke.form', name: '表单', url: 'http://localhost/form', description: '表单接口', body: { mode: 'urlencoded', parameters: [{ key: 'state', type: 'integer', value: '1', enum: [0, 1], enum_descriptions: ['等待', '完成'], required: true, nullable: false, description: '表单状态' }] } })
     assert(!form.documentation.issues.some((issue: any) => issue.path.startsWith('body.')))
-    const incompleteForm = await call('upsert_api', { target_id: form.target_id, body: { parameters: [{ key: 'note', value: '' }] } })
-    assert(incompleteForm.documentation.issues.some((issue: any) => issue.path === 'body.note'))
+    const formBefore = JSON.stringify(store.getTarget(project.project_id, form.target_id))
+    await assert.rejects(() => call('upsert_api', { target_id: form.target_id, body: { parameters: [{ key: 'note', value: '' }] } }))
+    assert.equal(JSON.stringify(store.getTarget(project.project_id, form.target_id)), formBefore, 'incomplete field update must not be saved')
     const formDoc: any = await (await fetch(`${base}/download?format=openapi`)).json()
     await call('sync_openapi', { project_id: other.project_id, openapi: { ...formDoc, paths: { '/form': formDoc.paths['/form'] } } })
     const importedFormSummary = store.listTargets(other.project_id).find(t => t.url?.endsWith('/form'))!

@@ -1,10 +1,15 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
-import { Button, Input } from 'antd'
+import { useState } from 'react'
+import { CodeOutlined, DeleteOutlined, ImportOutlined, PlusOutlined, SlidersOutlined } from '@ant-design/icons'
+import { Button, Input, Select } from 'antd'
+import { useApp } from '../store'
 import type { DesignError, Target } from '@shared/types'
 import { createDesignError } from '@shared/factories'
 import RequestEditor from './RequestEditor'
 import ResponsePanel from './ResponsePanel'
 import CustomAttributeFields from './CustomAttributeFields'
+import ApiDocPreviewModal from './ApiDocPreviewModal'
+import ErrorCodeImportModal from './ErrorCodeImportModal'
+import CodeGenDialog from './CodeGenDialog'
 
 interface Props {
   draft: Target
@@ -19,7 +24,12 @@ export default function DesignEditor({
   onChange,
   onEditDescription
 }: Props): JSX.Element {
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [codeOpen, setCodeOpen] = useState(false)
+  const [errorImportOpen, setErrorImportOpen] = useState(false)
+  const currentEnvId = useApp(state => state.currentEnvId)
   const errors = draft.design?.errors ?? []
+  const folders = useApp(state => state.targets).filter(target => target.target_type === 'folder')
 
   const setErrors = (next: DesignError[]): void => {
     onChange({ design: { ...(draft.design ?? {}), errors: next } })
@@ -29,30 +39,38 @@ export default function DesignEditor({
   }
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: '0 16px 32px' }}>
-      <div className="section-title">基本信息</div>
-      <div className="design-basic-row">
-        <span>详细说明</span>
-        <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
-        <span style={{ flex: 1 }} />
-        <Button size="small" type="text" onClick={onEditDescription}>
-          编辑
-        </Button>
+    <div className="design-editor">
+      <RequestEditor draft={draft} onChange={onChange} mode="design"
+        onPreview={() => setPreviewOpen(true)} onGenerateCode={() => setCodeOpen(true)} intro={
+        <>
+          <div className="section-title">基本信息</div>
+          <div className="design-basic-row">
+            <label htmlFor="design-folder">目录</label>
+            <Select id="design-folder" aria-label="接口目录" value={draft.parent_id || '0'}
+              options={[{ value: '0', label: '根目录' }, ...folders.map(folder => ({ value: folder.target_id, label: folder.name }))]}
+              onChange={parent_id => onChange({ parent_id })} />
+            <label htmlFor="design-tags">标签</label>
+            <Select id="design-tags" aria-label="接口标签" mode="tags" value={draft.tags ?? []}
+              placeholder="添加标签" onChange={tags => onChange({ tags })} />
+          </div>
+          <div className="design-basic-row">
+            <span>详细说明</span>
+            <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
+            <span style={{ flex: 1 }} />
+            <Button size="small" type="text" onClick={onEditDescription}>编辑</Button>
+          </div>
+          <CustomAttributeFields
+            projectId={projectId}
+            value={draft.custom_attributes}
+            onChange={(custom_attributes) => onChange({ custom_attributes })}
+          />
+          <div className="section-title design-request-heading"><SlidersOutlined />设计请求参数</div>
+        </>
+      }>
+      <div className="section-title design-request-heading" style={{ marginTop: 8 }}>
+        <CodeOutlined />设计响应参数
       </div>
-
-      <CustomAttributeFields
-        projectId={projectId}
-        value={draft.custom_attributes}
-        onChange={(custom_attributes) => onChange({ custom_attributes })}
-      />
-
-      <div className="section-title">预定义请求参数</div>
-      <RequestEditor draft={draft} onChange={onChange} mode="design" />
-
-      <div className="section-title" style={{ marginTop: 8 }}>
-        预定义响应期望
-      </div>
-      <div style={{ height: 380, border: '1px solid var(--line, #e8e2d7)', borderRadius: 8, overflow: 'hidden' }}>
+      <div className="design-response">
         <ResponsePanel
           targetId={draft.target_id}
           record={null}
@@ -66,8 +84,9 @@ export default function DesignEditor({
         />
       </div>
 
-      <div className="section-title" style={{ marginTop: 20 }}>
-        错误码
+      <div className="design-error-head">
+        <div className="section-title" style={{ margin: 0 }}>错误码</div>
+        <Button size="small" icon={<ImportOutlined />} onClick={() => setErrorImportOpen(true)}>批量导入</Button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {errors.length === 0 ? (
@@ -97,6 +116,7 @@ export default function DesignEditor({
               size="small"
               type="text"
               danger
+              aria-label="删除错误码"
               icon={<DeleteOutlined />}
               onClick={() => setErrors(errors.filter((_, i) => i !== index))}
             />
@@ -112,6 +132,12 @@ export default function DesignEditor({
           </Button>
         </div>
       </div>
+      </RequestEditor>
+      <ApiDocPreviewModal open={previewOpen} target={draft} onClose={() => setPreviewOpen(false)} />
+      <CodeGenDialog open={codeOpen} projectId={projectId ?? ''} target={draft}
+        environmentId={currentEnvId} onClose={() => setCodeOpen(false)} />
+      <ErrorCodeImportModal open={errorImportOpen} existing={errors}
+        onClose={() => setErrorImportOpen(false)} onApply={setErrors} />
     </div>
   )
 }

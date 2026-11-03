@@ -1,13 +1,21 @@
 import JsonFieldTable from './JsonFieldTable'
+import { JsonView, PreviewView } from './ResponseViews'
+import DebugResponseBody from './DebugResponseBody'
+import { ActualRequest, ResponseCookies, ResponseAssertions } from './ResponseDiagnostics'
 import { fieldDocsFromSchema, mergeFieldDocs } from '@shared/jsonFields'
 import { exampleFromRecord, hasLocalEdits, useApp, useModelEpoch } from '../store'
 import { modelDocumentation } from './schemas/modelDocumentation'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { App as AntApp, Input, Modal, Select, Tag, Tooltip } from 'antd'
-import { CopyOutlined } from '@ant-design/icons'
+import { App as AntApp, Button, Dropdown, Input, Popover, Segmented, Tag, Tooltip } from 'antd'
+import { CopyOutlined, DeleteOutlined, DownOutlined, MoreOutlined, PlusCircleOutlined } from '@ant-design/icons'
 import type { ModelSummary, Param, ResponseExample, SendRecord } from '@shared/types'
+import { methodColor } from '@shared/httpMethods'
 import { createId } from '@shared/factories'
 import ModelPickerModal from './schemas/ModelPickerModal'
+import DesignParamTable from './DesignParamTable'
+import ResponseExpectationFields, { expectationDraft, expectationError, expectationValue } from './ResponseExpectationFields'
+import { useTargetEditLock } from './TargetEditScope'
+import ResponseBodyTools from './ResponseBodyTools'
 
 type ViewMode = 'pretty' | 'raw' | 'preview' | 'visual' | 'table'
 
@@ -71,11 +79,12 @@ function HeaderTable({ rows }: { rows: Array<[string, string]> }): JSX.Element {
     return <div className="muted" style={{ padding: 12, fontSize: 12 }}>（无）</div>
   }
   return (
-    <table className="simple-table">
+    <table className="response-header-table">
+      <colgroup><col style={{ width: '25%' }} /><col /></colgroup>
       <thead>
         <tr>
-          <th>名称</th>
-          <th>值</th>
+          <th>参数名</th>
+          <th>参数值</th>
         </tr>
       </thead>
       <tbody>
@@ -104,23 +113,22 @@ export default function ResponsePanel({
   const design = mode === 'design'
   const debug = mode === 'debug'
   const visibleTabs = design
-    ? ['字段说明', '响应示例']
+    ? ['Body', 'Header', '期望设置']
     : debug
       ? TABS.filter(tab => tab !== '字段说明')
       : TABS
   const modelEpoch = useModelEpoch(targetId)
   const [viewMode, setViewMode] = useState<ViewMode>(design ? 'raw' : 'pretty')
-  const [activeTab, setActiveTab] = useState(defaultTab ?? '实时响应')
+  const [activeTab, setActiveTab] = useState(design ? 'Body' : defaultTab ?? '实时响应')
+  const [designBodyView, setDesignBodyView] = useState('字段说明')
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelWarning, setModelWarning] = useState('')
   const [selectedExample, setSelectedExample] = useState<string>()
   const [expectOpen, setExpectOpen] = useState(false)
-  const [expectDraft, setExpectDraft] = useState({
-    name: '成功',
-    code: '200',
-    contentType: 'application/json'
-  })
+  const [expectDraft, setExpectDraft] = useState(() => expectationDraft())
+  const [newExpectDraft, setNewExpectDraft] = useState(() => expectationDraft())
+  useTargetEditLock(expectOpen || pickerOpen || (design && activeTab === '期望设置' && Boolean(expectationError(expectDraft))))
 
   const response = record?.response ?? null
   const ok = response && !record?.error
@@ -142,8 +150,20 @@ export default function ResponsePanel({
   }
   const example =
     (examples ?? []).find(item => item.example_id === selectedExample) ?? (examples ?? []).find((item) => item.expect?.is_default === 1) ?? (examples ?? [])[0] ?? null
+  const isJsonExample = /json/i.test(example?.expect?.content_type ?? 'application/json')
+  const contentTab = design && activeTab === 'Body' ? (isJsonExample ? designBodyView : '响应示例') : activeTab
   const latestExamples = useRef(examples)
   latestExamples.current = examples
+  const selectedExampleRef = useRef(selectedExample)
+  selectedExampleRef.current = selectedExample
+  const commitExamples = (next: ResponseExample[]): void => {
+    latestExamples.current = next
+    onChangeExamples?.(next)
+  }
+  const selectExample = (id: string | undefined): void => {
+    selectedExampleRef.current = id
+    setSelectedExample(id)
+  }
   const toRows = (params?: Param[]): Array<[string, string]> =>
     (params ?? []).map((item) => [item.key, item.value])
 
@@ -192,6 +212,7 @@ export default function ResponsePanel({
 
   const selectExampleModel = async (model: ModelSummary): Promise<void> => {
     if (!projectId) return
+    const exampleId = example?.example_id
     const documentation = await modelDocumentation(projectId, model.model_id).catch(error => { message.error(error.message); return null })
     if (!documentation) return
     const result = await window.api.models.generateExample(projectId, model.model_id)
@@ -200,45 +221,45 @@ export default function ResponsePanel({
       return
     }
     if (result.data.warnings.length > 0) message.warning(result.data.warnings[0].message)
+    const current = (latestExamples.current ?? []).find(item => item.example_id === exampleId)
+    if (exampleId && !current) return
     const nextExample: ResponseExample = {
-      ...(example ?? {
+      ...(current ?? {
         example_id: createId('ex'),
         raw_parameter: [],
         headers: [],
         cookies: []
       }),
       expect: {
-        ...(example?.expect ?? {
+        ...(current?.expect ?? {
           name: '模型示例',
           code: 200,
           content_type: 'application/json',
           is_default: 1
         }),
-        name: model.name,
-        code: example?.expect?.code ?? 200,
+        name: current?.expect?.name ?? model.name,
+        code: current?.expect?.code ?? 200,
         content_type: 'application/json',
-        is_default: 1,
+        is_default: current?.expect?.is_default ?? ((latestExamples.current?.length ?? 0) === 0 ? 1 : 0),
         model_id: model.model_id
       },
       ...documentation
     }
-    const nextList = example
-      ? (examples ?? []).map((item) =>
-          item.example_id === example.example_id ? nextExample : item
+    const nextList = current
+      ? (latestExamples.current ?? []).map((item) =>
+          item.example_id === current.example_id ? nextExample : item
         )
-      : [...(examples ?? []), nextExample]
-    onChangeExamples?.(nextList)
+      : [...(latestExamples.current ?? []), nextExample]
+    commitExamples(nextList)
     setPickerOpen(false)
   }
 
   const clearExampleModel = (): void => {
     if (!example) return
-    const nextExpect = { ...(example.expect ?? {}) }
-    delete nextExpect.model_id
-    onChangeExamples?.(
-      (examples ?? []).map((item) =>
+    commitExamples(
+      (latestExamples.current ?? []).map((item) =>
         item.example_id === example.example_id
-          ? { ...item, expect: nextExpect }
+          ? { ...item, expect: { ...item.expect, model_id: undefined } }
           : item
       )
     )
@@ -254,56 +275,105 @@ export default function ResponsePanel({
     })
   }
 
-  const changeExample = (patch: Partial<ResponseExample>): void => {
+  const changeExample = (patch: Partial<ResponseExample>, id = selectedExampleRef.current ?? example?.example_id): void => {
     if (debug) return
-    const next: ResponseExample = { ...(example ?? { example_id: createId('ex'), expect: { name: '成功', code: 200, content_type: 'application/json', is_default: 1 } }), ...patch }
-    if (patch.field_docs && next.expect) {
+    const current = (latestExamples.current ?? []).find(item => item.example_id === id)
+    if (id && !current) return
+    const next: ResponseExample = { ...(current ?? { example_id: createId('ex'), expect: { name: '成功', code: 200, content_type: 'application/json', is_default: 1 } }), ...patch }
+    if (patch.expect) next.expect = { ...current?.expect, ...patch.expect }
+    if (patch.field_docs && next.expect && !Object.hasOwn(patch.expect ?? {}, 'schema')) {
       next.expect = { ...next.expect }
       delete next.expect.schema
     }
-    onChangeExamples?.(example ? (examples ?? []).map(item => item.example_id === example.example_id ? next : item) : [...(examples ?? []), next])
-    setSelectedExample(next.example_id)
+    commitExamples(current ? (latestExamples.current ?? []).map(item => item.example_id === current.example_id ? next : item) : [...(latestExamples.current ?? []), next])
+    if (!id) selectExample(next.example_id)
   }
   const openNewExpectation = (): void => {
-    setExpectDraft({ name: '成功', code: '200', contentType: 'application/json' })
+    setNewExpectDraft(expectationDraft())
     setExpectOpen(true)
   }
 
+  useEffect(() => {
+    setExpectDraft(expectationDraft(example?.expect))
+  }, [example?.example_id, example?.expect?.name, example?.expect?.code, example?.expect?.content_type, example?.expect?.sleep])
+
   const submitExpectation = (): void => {
     if (!onChangeExamples) return
+    const error = expectationError(newExpectDraft)
+    if (error) { message.error(error); return }
     const next: ResponseExample = {
-      example_id: createId('ex'),
+      example_id: createId('ex'), raw: /json/i.test(newExpectDraft.contentType) ? '{}' : '', field_docs: [], headers: [],
       expect: {
-        name: expectDraft.name.trim() || '期望',
-        code: Number(expectDraft.code) || 200,
-        content_type: expectDraft.contentType || 'application/json',
-        is_default: 0
-      },
-      raw: '{}',
-      field_docs: []
+        ...expectationValue(newExpectDraft),
+        is_default: (latestExamples.current?.length ?? 0) === 0 ? 1 : 0
+      }
     }
-    onChangeExamples([...(examples ?? []), next])
-    setSelectedExample(next.example_id)
-    setActiveTab('字段说明')
+    commitExamples([...(latestExamples.current ?? []), next])
+    selectExample(next.example_id)
+    setActiveTab('Body')
     setExpectOpen(false)
+  }
+
+  const setDefaultExample = (): void => {
+    if (!example) return
+    commitExamples((latestExamples.current ?? []).map(item => ({ ...item,
+      expect: { ...item.expect, is_default: item.example_id === example.example_id ? 1 : 0 } })))
+  }
+
+  const deleteExample = (id = example?.example_id): void => {
+    if ((latestExamples.current?.length ?? 0) <= 1) return
+    const removed = (latestExamples.current ?? []).find(item => item.example_id === id)
+    if (!removed) return
+    modal.confirm({ title: `删除期望「${removed.expect?.name ?? '未命名'}」？`,
+      content: '该期望的响应示例与字段说明将一起删除。', okText: '删除', cancelText: '取消', okButtonProps: { danger: true },
+      onOk: () => {
+        if ((latestExamples.current?.length ?? 0) <= 1) return
+        const remaining = (latestExamples.current ?? []).filter(item => item.example_id !== id)
+        if (removed.expect?.is_default === 1 && remaining[0]) {
+          remaining[0] = { ...remaining[0], expect: { ...remaining[0].expect, is_default: 1 } }
+        }
+        commitExamples(remaining)
+        if (example?.example_id === id) selectExample(remaining.find(item => item.expect?.is_default === 1)?.example_id ?? remaining[0]?.example_id)
+      }
+    })
   }
 
   const saveRecordedExample = (replace: boolean): void => {
     if (!record?.response || !onChangeExamples) return
-    if (record.response.code < 200 || record.response.code >= 300) { message.warning('当前仅维护成功响应'); return }
     if (replace && exampleModelId) { message.warning('请先解除模型引用，再更新示例'); return }
     const captured = exampleFromRecord(record)
+    captured.expect = { ...captured.expect, is_default: replace ? (example?.expect?.is_default ?? 0) : ((examples?.length ?? 0) === 0 ? 1 : 0) }
     captured.field_docs = mergeFieldDocs(fieldDocsFromSchema(example?.expect?.schema), example?.field_docs).map(doc => ({ ...doc, doc_only: true }))
     if (replace && example) {
       const next = { ...example, ...captured, example_id: example.example_id, expect: { ...example.expect, ...captured.expect } }
-      onChangeExamples((examples ?? []).map(item => item.example_id === example.example_id ? next : item))
-      setSelectedExample(example.example_id)
-    } else { onChangeExamples([...(examples ?? []), captured]); setSelectedExample(captured.example_id) }
+      commitExamples((latestExamples.current ?? []).map(item => item.example_id === example.example_id ? next : item))
+      selectExample(example.example_id)
+    } else { commitExamples([...(latestExamples.current ?? []), captured]); selectExample(captured.example_id) }
     setActiveTab('响应示例')
   }
 
   const renderContent = (): JSX.Element => {
-    if (activeTab === '字段说明') {
+    if (design && !example) return <div className="resp-empty"><RocketIllustration /><span>暂无预定义响应期望，请点击右上角新建期望</span></div>
+    if (design && activeTab === 'Header') return <div className="resp-filled"><DesignParamTable
+      params={example?.headers ?? []} keyPlaceholder="Header 名" requiredLabel="必有"
+      onChange={headers => changeExample({ headers })} /></div>
+    if (design && activeTab === '期望设置') return <div className="resp-filled">
+      <div onBlur={event => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return
+        const error = expectationError(expectDraft)
+        if (error) { message.error(error); setExpectDraft(expectationDraft(example?.expect)) }
+      }}>
+        <ResponseExpectationFields settings value={expectDraft} onChange={next => {
+          setExpectDraft(next)
+          if (!expectationError(next)) changeExample({ expect: expectationValue(next) })
+        }} />
+        {expectationError(expectDraft) && <div className="expectation-error" role="alert">{expectationError(expectDraft)}</div>}
+      </div>
+      <div className="expectation-actions">
+        <Button size="small" disabled={example?.expect?.is_default === 1} onClick={setDefaultExample}>{example?.expect?.is_default === 1 ? '默认期望' : '设为默认'}</Button>
+      </div>
+    </div>
+    if (contentTab === '字段说明') {
       if (!example) {
         return <div className="resp-empty" style={{ paddingBottom: 0, minHeight: 180 }}>
           <RocketIllustration />
@@ -315,6 +385,9 @@ export default function ResponsePanel({
         {modelWarning && <div role="alert">{modelWarning}</div>}
         {exampleModelId && !debug && <div>字段规则继承数据模型。<button className="mini" onClick={editExampleModel}>解除并编辑</button></div>}
         <JsonFieldTable
+          key={example.example_id}
+          compact={design}
+          context="response"
           raw={example?.raw ?? ''}
           docs={mergeFieldDocs(fieldDocsFromSchema(example?.expect?.schema), example?.field_docs)}
           valuesReadOnly={Boolean(exampleModelId) || !onChangeExamples || debug}
@@ -325,9 +398,9 @@ export default function ResponsePanel({
         />
       </div>
     }
-    if (activeTab === '响应示例') {
+    if (contentTab === '响应示例') {
       const referenceBar =
-        projectId && onChangeExamples && !debug ? (
+        projectId && onChangeExamples && !debug && isJsonExample ? (
           <div className="body-model-bar" style={{ marginBottom: 8 }}>
             {exampleModelId ? (
               <>
@@ -379,50 +452,14 @@ export default function ResponsePanel({
               {modelWarning}
             </div>
           ) : null}
-          {design ? (
-            <div className="resp-expect-edit">
-              <Input
-                size="small"
-                value={example.expect?.name ?? ''}
-                placeholder="期望名称"
-                onChange={event =>
-                  changeExample({
-                    expect: { ...(example.expect ?? {}), name: event.target.value }
-                  })
-                }
-              />
-              <Input
-                size="small"
-                value={String(example.expect?.code ?? '200')}
-                placeholder="状态码"
-                onChange={event =>
-                  changeExample({
-                    expect: { ...(example.expect ?? {}), code: event.target.value }
-                  })
-                }
-              />
-              <Select
-                size="small"
-                value={example.expect?.content_type ?? 'application/json'}
-                onChange={content_type =>
-                  changeExample({ expect: { ...(example.expect ?? {}), content_type } })
-                }
-                options={[
-                  { value: 'application/json', label: 'JSON' },
-                  { value: 'text/plain', label: 'Text' },
-                  { value: 'text/html', label: 'HTML' },
-                  { value: 'application/xml', label: 'XML' }
-                ]}
-              />
-            </div>
-          ) : (
+          {design ? null : (
             <div className="resp-meta">
               <span className="method-text">{example.expect?.code ?? '200'}</span>
               <span>{example.expect?.name ?? '示例'}</span>
               <span className="muted">{example.expect?.content_type}</span>
             </div>
           )}
-          {viewMode === 'pretty' ? (
+          {debug ? <DebugResponseBody key={example.example_id} body={raw} mime={example.expect?.content_type ?? 'application/json'} filename={example.expect?.name ?? 'response'} /> : viewMode === 'pretty' ? (
             <pre className="resp-code">{pretty(raw) || '(空响应示例)'}</pre>
           ) : viewMode === 'raw' ? (
             <Input.TextArea aria-label="响应示例 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={raw} readOnly={Boolean(exampleModelId) || !onChangeExamples || debug} onChange={event => changeExample({ raw: event.target.value })} />
@@ -435,7 +472,7 @@ export default function ResponsePanel({
       )
     }
 
-    if (!record && !example) {
+    if (!record && (debug || !example)) {
       return (
         <div className="resp-empty">
           <RocketIllustration />
@@ -444,17 +481,20 @@ export default function ResponsePanel({
       )
     }
 
-    if (activeTab === '响应头') {
+    if (contentTab === '响应头') {
+      if (debug && !response) return <div className="resp-empty">本次请求没有响应</div>
       const rows = response
         ? Object.entries(response.headers ?? {})
         : toRows(example?.headers)
       return (
-        <div className="resp-filled">
+        <div className="resp-filled" key="response-headers">
           <HeaderTable rows={rows} />
         </div>
       )
     }
-    if (activeTab === 'Cookie') {
+    if (contentTab === 'Cookie') {
+      if (debug && !response) return <div className="resp-empty">本次请求没有响应</div>
+      if (debug) return <ResponseCookies cookies={response?.cookies ?? []} />
       const rows: Array<[string, string]> = response
         ? (response.cookies ?? []).map(
             (cookie): [string, string] => [
@@ -469,7 +509,8 @@ export default function ResponsePanel({
         </div>
       )
     }
-    if (activeTab === '实际请求') {
+    if (contentTab === '实际请求') {
+      if (debug && record) return <ActualRequest record={record} />
       const saved = example?.request
       const method = record ? record.request.method : (saved?.method ?? 'GET')
       const url = record ? record.request.url : (saved?.url ?? '')
@@ -480,7 +521,7 @@ export default function ResponsePanel({
       return (
         <div className="resp-filled">
           <div className="resp-meta">
-            <span className="method-text">{(method || 'GET').toUpperCase()}</span>
+            <span className="method-text" style={{ color: methodColor(method) }}>{(method || 'GET').toUpperCase()}</span>
             <span className="mono">{url}</span>
           </div>
           <div style={{ height: 8 }} />
@@ -496,7 +537,7 @@ export default function ResponsePanel({
         </div>
       )
     }
-    if (activeTab === '控制台') {
+    if (contentTab === '控制台') {
       if (!record) {
         return (
           <div className="resp-filled">
@@ -526,14 +567,14 @@ export default function ResponsePanel({
       return (
         <div className="resp-empty">
           <RocketIllustration />
-          <span>请输入url点击发送按钮获取响应结果</span>
+          <span>{loading ? '请求中…' : '请输入url点击发送按钮获取响应结果'}</span>
         </div>
       )
     }
 
     return (
-      <div className="resp-filled">
-        <div className="resp-meta">
+      <div className={`resp-filled${debug ? ' debug-response-content' : ''}`}>
+        {!debug && <div className="resp-meta">
           {response ? (
             <>
               <span className={ok ? 'status-code' : 'status-code'} style={{ color: ok ? '#2f7d4f' : '#d94a34' }}>
@@ -547,13 +588,17 @@ export default function ResponsePanel({
             <span style={{ color: '#d94a34' }}>请求失败</span>
           )}
           {record.error ? <span style={{ color: '#d94a34' }}>{record.error.message}</span> : null}
-        </div>
+        </div>}
+        {debug && record.error && <div role="status" className="debug-response-error">{record.error.message}</div>}
         {response?.body_truncated ? (
           <div className="muted" style={{ marginBottom: 6, fontSize: 11 }}>
-            响应体超过 2MB，已截断显示
+            响应体超过 2MB，仅保留前 2MB；预览和下载均使用截断内容
           </div>
         ) : null}
-        {viewMode === 'pretty' ? (
+        {debug && record ? <>
+          {response && <DebugResponseBody key={record.record_id} body={bodyText} mime={response.mime.mime} base64={response.body_base64} charset={response.charset} filename={record.target_name} truncated={response.body_truncated}
+            actions={onChangeExamples && <Dropdown trigger={['click']} menu={{ items: [{ key: 'new', label: '新增响应示例' }, { key: 'update', label: '更新当前示例（保留字段规则）', disabled: !example }], onClick: ({ key }) => saveRecordedExample(key === 'update') }}><button aria-label="保存为响应示例">保存为响应示例 <DownOutlined /></button></Dropdown>} />}
+        </> : viewMode === 'pretty' ? (
           <pre className="resp-code">{pretty(bodyText) || '(空响应体)'}</pre>
         ) : viewMode === 'raw' ? (
           <pre className="resp-code">{bodyText || '(空响应体)'}</pre>
@@ -566,20 +611,68 @@ export default function ResponsePanel({
     )
   }
 
-  return (
-    <section className="resp">
-      <div className="resp-tabs">
+  const responseTabs = <div className="resp-tabs" role="tablist" aria-label="响应参数">
         {visibleTabs.map((tab) => (
           <button
             key={tab}
+            role="tab" aria-label={tab} aria-selected={activeTab === tab}
             className={activeTab === tab ? 'active' : ''}
             onClick={() => setActiveTab(tab)}
           >
             {tab}
+            {debug && tab === '响应头' && response && <span className="request-tab-count">({Object.keys(response.headers ?? {}).length})</span>}
           </button>
         ))}
       </div>
-      {(record && activeTab === '实时响应') || (activeTab === '响应示例' && example) ? (
+
+  return (
+    <section className={`resp${design ? ' resp--design' : ''}`}>
+      {(design || ((activeTab === '响应示例' || activeTab === '字段说明') && (examples?.length ?? 0) > 0)) ? (
+        <div className="resp-expect-tabs">
+          {(examples ?? []).map(item => (
+            <div key={item.example_id} className={`resp-expect-item${item.example_id === example?.example_id ? ' active' : ''}`}>
+            <button
+              aria-pressed={item.example_id === example?.example_id}
+              className={item.example_id === example?.example_id ? 'active' : ''}
+              onClick={() => selectExample(item.example_id)}
+            >
+              {item.expect?.name ?? '成功'}
+              <span className="muted">（{item.expect?.code ?? 200}）</span>
+            </button>
+            {design && onChangeExamples && (examples?.length ?? 0) > 1 && <button className="resp-expect-delete" aria-label={`删除期望 ${item.expect?.name ?? '成功'}`} title="删除期望"
+              onClick={() => deleteExample(item.example_id)}><DeleteOutlined /></button>}
+            </div>
+          ))}
+          {design && onChangeExamples ? (
+            <Popover open={expectOpen} onOpenChange={open => { if (open) openNewExpectation(); else setExpectOpen(false) }} trigger="click" placement="topRight"
+              content={<form className="response-new-expect" onSubmit={event => { event.preventDefault(); submitExpectation() }}>
+                <ResponseExpectationFields value={newExpectDraft} onChange={setNewExpectDraft} />
+                <Button size="small" type="primary" htmlType="submit">确定</Button>
+              </form>}>
+              <button className="resp-expect-add" aria-label="新建期望"><PlusCircleOutlined /> 新建期望</button>
+            </Popover>
+          ) : null}
+        </div>
+      ) : null}
+      {debug ? <div className="resp-debug-head">{responseTabs}
+        <Dropdown trigger={['click']} menu={{ selectedKeys: [activeTab], items: visibleTabs.map(tab => ({ key: tab, label: tab })), onClick: ({ key }) => setActiveTab(key) }}>
+          <button className="editor-tab-overflow" aria-label="更多响应标签"><MoreOutlined /></button>
+        </Dropdown>
+        <div className="debug-response-status" aria-live="polite">
+          {loading ? <span>请求中…</span> : response ? <>
+            <Tooltip title={response.status}><span className={`debug-http-code${response.code >= 400 ? ' error' : ''}`}>{response.code}</span></Tooltip>
+            <Popover content={<HeaderTable rows={Object.entries(response.timings).map(([key, value]) => [key, `${value} ms`])} />} title="请求计时（自开始的偏移）"><span className="debug-response-time">{response.response_time >= 1000 ? `${(response.response_time / 1000).toFixed(3)}s` : `${response.response_time}ms`}</span></Popover>
+            <Tooltip title={response.mime.mime}><span>{formatSize(response.size)}</span></Tooltip>
+          </> : record ? <span>{record.error?.type === 'cancelled' ? '已取消' : '请求失败'}</span> : null}
+        </div>
+      </div> : responseTabs}
+      {design && activeTab === 'Body' && example && <div className="resp-toolbar design-body-toolbar">
+        <Segmented size="small" value={contentTab} onChange={value => { setDesignBodyView(String(value)); setViewMode('raw') }}
+          options={[{ value: '字段说明', label: '数据结构', disabled: !isJsonExample }, { value: '响应示例', label: '示例' }]} />
+        <ResponseBodyTools key={example.example_id} example={example} projectId={projectId} structure={contentTab === '字段说明'}
+          onChange={patch => changeExample(patch, example.example_id)} onShowExample={() => setDesignBodyView('响应示例')} />
+      </div>}
+      {!debug && ((record && activeTab === '实时响应') || (activeTab === '响应示例' && example)) ? (
         <div className="resp-toolbar">
           <button
             className={viewMode === 'pretty' ? 'on' : ''}
@@ -620,27 +713,9 @@ export default function ResponsePanel({
           </button>
         </div>
       ) : null}
-      {(activeTab === '响应示例' || activeTab === '字段说明') && (examples?.length ?? 0) > 0 ? (
-        <div className="resp-expect-tabs">
-          {(examples ?? []).map(item => (
-            <button
-              key={item.example_id}
-              className={item.example_id === example?.example_id ? 'active' : ''}
-              onClick={() => setSelectedExample(item.example_id)}
-            >
-              {item.expect?.name ?? '成功'}
-              <span className="muted">（{item.expect?.code ?? 200}）</span>
-            </button>
-          ))}
-          {design && onChangeExamples ? (
-            <button className="resp-expect-add" onClick={openNewExpectation}>
-              + 新建期望
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {record?.response && onChangeExamples && activeTab === '实时响应' && <div className="resp-toolbar"><span>保存为响应示例：</span><button onClick={() => saveRecordedExample(false)}>新增</button><button disabled={!example} onClick={() => saveRecordedExample(true)}>更新当前示例（保留字段规则）</button></div>}
+      {!debug && record?.response && onChangeExamples && activeTab === '实时响应' && <div className="resp-toolbar"><span>保存为响应示例：</span><button onClick={() => saveRecordedExample(false)}>新增</button><button disabled={!example} onClick={() => saveRecordedExample(true)}>更新当前示例（保留字段规则）</button></div>}
       {renderContent()}
+      {debug && record && activeTab === '实时响应' && <ResponseAssertions record={record} />}
 
       {projectId ? (
         <ModelPickerModal
@@ -652,381 +727,6 @@ export default function ResponsePanel({
         />
       ) : null}
 
-      <Modal
-        title="新建响应期望"
-        open={expectOpen}
-        onCancel={() => setExpectOpen(false)}
-        onOk={submitExpectation}
-        okText="确定"
-        cancelText="取消"
-      >
-        <div className="field-form">
-          <label>期望名称</label>
-          <Input
-            value={expectDraft.name}
-            placeholder="例如：成功"
-            onChange={event => setExpectDraft({ ...expectDraft, name: event.target.value })}
-          />
-          <label>状态码</label>
-          <Input
-            value={expectDraft.code}
-            placeholder="200"
-            onChange={event => setExpectDraft({ ...expectDraft, code: event.target.value })}
-          />
-          <label>内容格式</label>
-          <Select
-            value={expectDraft.contentType}
-            onChange={contentType => setExpectDraft({ ...expectDraft, contentType })}
-            options={[
-              { value: 'application/json', label: 'JSON' },
-              { value: 'text/plain', label: 'Text' },
-              { value: 'text/html', label: 'HTML' },
-              { value: 'application/xml', label: 'XML' }
-            ]}
-          />
-        </div>
-      </Modal>
     </section>
   )
-}
-
-function PreviewView({ mime, body }: { mime: string; body: string }): JSX.Element {
-  const type = mime.toLowerCase()
-  if (type.includes('html') || type.includes('svg')) {
-    return (
-      <iframe className="resp-preview-frame" sandbox="" srcDoc={body} title="响应预览" />
-    )
-  }
-  if (type.includes('markdown')) {
-    return (
-      <iframe
-        className="resp-preview-frame"
-        sandbox=""
-        srcDoc={markdownPage(markdownToHtml(body))}
-        title="Markdown 预览"
-      />
-    )
-  }
-  if (type.startsWith('image/')) {
-    return (
-      <div className="muted" style={{ fontSize: 12 }}>
-        图片响应暂不支持预览，请切换到「原生」查看。
-      </div>
-    )
-  }
-  return <pre className="resp-code">{pretty(body)}</pre>
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-function inlineMarkdown(text: string): string {
-  return escapeHtml(text)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(
-      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noreferrer">$1</a>'
-    )
-}
-
-function markdownToHtml(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
-  const out: string[] = []
-  let inCode = false
-  let code: string[] = []
-  let listType: 'ul' | 'ol' | null = null
-  const closeList = (): void => {
-    if (listType) {
-      out.push(`</${listType}>`)
-      listType = null
-    }
-  }
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    if (/^```/.test(line.trim())) {
-      if (inCode) {
-        out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`)
-        code = []
-        inCode = false
-      } else {
-        closeList()
-        inCode = true
-      }
-      continue
-    }
-    if (inCode) {
-      code.push(line)
-      continue
-    }
-    if (!line.trim()) {
-      closeList()
-      continue
-    }
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line)
-    if (heading) {
-      closeList()
-      const level = heading[1].length
-      out.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`)
-      continue
-    }
-    if (/^---+$/.test(line.trim())) {
-      closeList()
-      out.push('<hr/>')
-      continue
-    }
-    if (/^>\s?/.test(line)) {
-      closeList()
-      out.push(`<blockquote>${inlineMarkdown(line.replace(/^>\s?/, ''))}</blockquote>`)
-      continue
-    }
-    if (
-      line.includes('|') &&
-      index + 1 < lines.length &&
-      /^[\s|:-]+$/.test(lines[index + 1]) &&
-      lines[index + 1].includes('-')
-    ) {
-      closeList()
-      const cells = (row: string): string[] => {
-        const items = row.split('|').map((item) => item.trim())
-        if (items[0] === '') items.shift()
-        if (items[items.length - 1] === '') items.pop()
-        return items
-      }
-      const header = cells(line)
-      const rows: string[][] = []
-      index += 2
-      while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
-        rows.push(cells(lines[index]))
-        index += 1
-      }
-      index -= 1
-      out.push(
-        `<table><thead><tr>${header
-          .map((item) => `<th>${inlineMarkdown(item)}</th>`)
-          .join('')}</tr></thead><tbody>${rows
-          .map(
-            (row) =>
-              `<tr>${row.map((item) => `<td>${inlineMarkdown(item)}</td>`).join('')}</tr>`
-          )
-          .join('')}</tbody></table>`
-      )
-      continue
-    }
-    const unordered = /^\s*[-*+]\s+(.*)$/.exec(line)
-    if (unordered) {
-      if (listType !== 'ul') {
-        closeList()
-        out.push('<ul>')
-        listType = 'ul'
-      }
-      out.push(`<li>${inlineMarkdown(unordered[1])}</li>`)
-      continue
-    }
-    const ordered = /^\s*\d+\.\s+(.*)$/.exec(line)
-    if (ordered) {
-      if (listType !== 'ol') {
-        closeList()
-        out.push('<ol>')
-        listType = 'ol'
-      }
-      out.push(`<li>${inlineMarkdown(ordered[1])}</li>`)
-      continue
-    }
-    closeList()
-    out.push(`<p>${inlineMarkdown(line)}</p>`)
-  }
-  closeList()
-  if (inCode && code.length > 0) {
-    out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`)
-  }
-  return out.join('\n')
-}
-
-function markdownPage(html: string): string {
-  return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8" />
-<style>
-  body { margin:0; padding:22px 24px; background:#fffdf8; color:#3e3324;
-    font-family:-apple-system,"PingFang SC",sans-serif; font-size:13px; line-height:1.75; }
-  h1,h2,h3,h4,h5,h6 { color:#2c2214; margin:18px 0 8px; line-height:1.35; }
-  h1 { font-size:22px; } h2 { font-size:17px; } h3 { font-size:15px; }
-  p { margin:8px 0; }
-  code { background:#f3ead8; color:#7a5c30; padding:1px 5px; border-radius:3px;
-    font-family:ui-monospace,Menlo,monospace; font-size:12px; }
-  pre { background:#faf5ea; border:1px solid #e6dcc8; border-radius:5px; padding:12px;
-    overflow:auto; }
-  pre code { background:transparent; padding:0; color:#3d352a; }
-  blockquote { margin:10px 0; padding:8px 12px; border-left:3px solid #c8a25e;
-    background:#faf5ea; color:#6b5d48; }
-  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:12px; }
-  th { text-align:left; background:#faf5ea; color:#8e8069; padding:7px 8px;
-    border-bottom:1px solid #e6dcc8; }
-  td { padding:7px 8px; border-bottom:1px solid #f3ecdd; }
-  hr { border:none; border-top:1px solid #e6dcc8; margin:16px 0; }
-  a { color:#8a6b3b; }
-</style></head><body>${html}</body></html>`
-}
-
-function JsonView({ mode, body }: { mode: 'visual' | 'table'; body: string }): JSX.Element {
-  let value: unknown
-  try {
-    value = JSON.parse(body)
-  } catch {
-    return (
-      <div className="muted" style={{ fontSize: 12 }}>
-        响应体不是合法 JSON，无法{mode === 'visual' ? '可视化' : '转表格'}。
-      </div>
-    )
-  }
-  if (mode === 'visual') {
-    return (
-      <div className="json-tree">
-        <JsonNode name="root" value={value} depth={0} />
-      </div>
-    )
-  }
-  const rows = extractRows(value)
-  if (!rows || rows.length === 0) {
-    return (
-      <div className="muted" style={{ fontSize: 12 }}>
-        未找到可表格化的数组数据。
-      </div>
-    )
-  }
-  const columns: string[] = []
-  for (const row of rows) {
-    for (const key of Object.keys(row)) {
-      if (!columns.includes(key)) columns.push(key)
-    }
-  }
-  return (
-    <div className="resp-data-wrap">
-      <table className="resp-data-table">
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column}>{column}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
-              {columns.map((column) => (
-                <td key={column}>{cellText(row[column])}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function JsonNode({
-  name,
-  value,
-  depth
-}: {
-  name: string
-  value: unknown
-  depth: number
-}): JSX.Element {
-  const [open, setOpen] = useState(depth < 2)
-  const indent = { paddingLeft: depth * 14 }
-
-  if (value === null || typeof value !== 'object') {
-    const type = value === null ? 'null' : typeof value
-    const text =
-      value === null
-        ? 'null'
-        : typeof value === 'string'
-          ? `"${value}"`
-          : String(value)
-    return (
-      <div className="json-leaf" style={indent}>
-        <span className="json-key">{name}</span>
-        <span className="json-colon">: </span>
-        <span className={`json-val json-${type}`}>{text}</span>
-      </div>
-    )
-  }
-
-  const entries: Array<[string, unknown]> = Array.isArray(value)
-    ? value.map((item, index) => [String(index), item])
-    : Object.entries(value as Record<string, unknown>)
-  const openBracket = Array.isArray(value) ? '[' : '{'
-  const closeBracket = Array.isArray(value) ? ']' : '}'
-
-  return (
-    <div className="json-node">
-      <div
-        className="json-branch"
-        style={indent}
-        role="button"
-        tabIndex={0}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') setOpen((current) => !current)
-        }}
-      >
-        <span className="json-toggle">{open ? '▾' : '▸'}</span>
-        <span className="json-key">{name}</span>
-        <span className="json-colon">: </span>
-        <span className="json-bracket">{openBracket}</span>
-        <span className="json-count">
-          {entries.length} {Array.isArray(value) ? 'items' : 'keys'}
-        </span>
-        {open ? null : <span className="json-bracket">{closeBracket}</span>}
-      </div>
-      {open ? (
-        <>
-          {entries.map(([key, item]) => (
-            <JsonNode key={key} name={key} value={item} depth={depth + 1} />
-          ))}
-          <div className="json-branch" style={indent}>
-            <span className="json-bracket">{closeBracket}</span>
-          </div>
-        </>
-      ) : null}
-    </div>
-  )
-}
-
-function extractRows(value: unknown): Record<string, unknown>[] | null {
-  if (Array.isArray(value)) {
-    if (
-      value.length > 0 &&
-      value.every((item) => item !== null && typeof item === 'object' && !Array.isArray(item))
-    ) {
-      return value as Record<string, unknown>[]
-    }
-    return null
-  }
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    for (const key of ['records', 'list', 'items', 'rows', 'data', 'content']) {
-      const found = extractRows(record[key])
-      if (found) return found
-    }
-    for (const item of Object.values(record)) {
-      const found = extractRows(item)
-      if (found) return found
-    }
-  }
-  return null
-}
-
-function cellText(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
 }

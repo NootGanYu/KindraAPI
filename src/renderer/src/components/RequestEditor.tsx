@@ -1,5 +1,6 @@
 import { modelDocumentation } from './schemas/modelDocumentation'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   App as AntApp,
   Button,
@@ -8,33 +9,60 @@ import {
   Radio,
   Segmented,
   Select,
-  Space,
   Tag,
   Tooltip
 } from 'antd'
-import { DownOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, EyeOutlined, MoreOutlined, PaperClipOutlined, UploadOutlined } from '@ant-design/icons'
 import type {
   AuthType,
   BodyMode,
   ModelSummary,
+  RawBodyLanguage,
   RequestModel,
+  SendRecord,
   Target
 } from '@shared/types'
-import { createBody } from '@shared/factories'
+import { createBody, createParam } from '@shared/factories'
+import { withQueryParams, withoutQueryKeys } from '@shared/requestUrl'
+import { methodColor } from '@shared/httpMethods'
 import { buildExampleFromDocs } from '@shared/jsonFields'
-import { hasLocalEdits, useApp, useModelEpoch } from '../store'
-import ParamTable from './ParamTable'
+import { buildBodyExample } from '@shared/bodyImport'
+import { exampleFromRecord, hasLocalEdits, useApp, useModelEpoch } from '../store'
+import ParameterTable from './DesignParamTable'
+import InheritedRequestParams from './InheritedRequestParams'
+import RequestScriptEditor from './RequestScriptEditor'
 import JsonFieldTable from './JsonFieldTable'
+import JsonBodyInput from './JsonBodyInput'
+import { useTargetEditLock } from './TargetEditScope'
 import ModelPickerModal from './schemas/ModelPickerModal'
+import BodyPreviewModal from './BodyPreviewModal'
+import SmartImportModal from './SmartImportModal'
 
 interface Props {
   draft: Target
   onChange: (patch: Partial<Target>) => void
-  /** design 维护契约并允许发送；debug 只允许改值并发送 */
+  /** design 维护接口定义；debug 编辑调试参数并发送 */
   mode?: 'design' | 'debug'
+  intro?: ReactNode
+  children?: ReactNode
+  /** 调试模式让 URL 与发送按钮横跨请求、响应分屏。 */
+  toolbarContainer?: HTMLElement | null
+  onPreview?: () => void
+  onGenerateCode?: () => void
 }
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+const RAW_FORMATS = [
+  { value: 'application/json', label: 'JSON' },
+  { value: 'application/xml', label: 'XML' },
+  { value: 'application/javascript', label: 'JavaScript' },
+  { value: 'text/plain', label: 'Text' },
+  { value: 'text/html', label: 'HTML' }
+]
+const BODY_LANGUAGES: Record<RawBodyLanguage, string> = {
+  json: 'application/json', xml: 'application/xml', javascript: 'application/javascript',
+  text: 'text/plain', html: 'text/html'
+}
 const TABS = ['Header', 'Query', 'Path', 'Body', '认证', 'Cookie', '预执行操作', '后执行操作']
 
 interface JsonError {
@@ -95,18 +123,28 @@ function DocIllustration(): JSX.Element {
   )
 }
 
-export default function RequestEditor({ draft, onChange, mode = 'design' }: Props): JSX.Element {
+export default function RequestEditor({ draft, onChange, mode = 'design', intro, children, toolbarContainer, onPreview, onGenerateCode }: Props): JSX.Element {
   const { message, modal } = AntApp.useApp()
   const debug = mode === 'debug'
+  const [bodyPreviewOpen, setBodyPreviewOpen] = useState(false)
+  const [smartImportOpen, setSmartImportOpen] = useState(false)
   const projectId = useApp((s) => s.project?.project_id ?? '')
   const saveTarget = useApp((s) => s.saveTarget)
   const sendActive = useApp((s) => s.sendActive)
+  const cancelSend = useApp((s) => s.cancelSend)
   const sending = useApp((s) => s.sendingId === draft.target_id)
+  const requestInFlight = useApp((s) => s.sendingId !== null)
+  const actionLock = useRef(false)
+  const [acting, setActing] = useState(false)
+  const busy = acting || requestInFlight
+  const folders = useApp(s => s.targets).filter(target => target.target_type === 'folder')
   const modelEpoch = useModelEpoch(draft.target_id)
+  const [urlEditing, setUrlEditing] = useState(false)
+  const [urlText, setUrlText] = useState('')
   const [activeTab, setActiveTab] = useState('Body')
   const [saving, setSaving] = useState(false)
   const [jsonError, setJsonError] = useState<JsonError | null>(null)
-  const [bodyView, setBodyView] = useState<'raw' | 'fields'>('fields')
+  const [bodyView, setBodyView] = useState<'raw' | 'fields'>(debug ? 'raw' : 'fields')
   const [models, setModels] = useState<ModelSummary[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
 
@@ -126,11 +164,23 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
   const latestRequest = useRef(request)
   latestRequest.current = request
   const setRequest = (patch: Partial<RequestModel>): void => {
-    onChange({ request: { ...latestRequest.current, ...patch } })
+    latestRequest.current = { ...latestRequest.current, ...patch }
+    onChange({ request: latestRequest.current })
   }
 
   const setBody = (patch: Partial<RequestModel['body']>): void => {
     setRequest({ body: { ...(latestRequest.current.body ?? createBody()), ...patch } })
+  }
+
+  const setBodyFormat = (contentType: string, patch: Partial<RequestModel['body']> = {}): void => {
+    const current = latestRequest.current
+    const parameters = current.header?.parameter ?? []
+    const header = parameters.find(param => param.key.toLowerCase() === 'content-type')
+    const parameter = header ? parameters.map(param => param === header ? { ...param, value: contentType, is_checked: 1 } : param)
+      : [...parameters, createParam({ key: 'Content-Type', value: contentType, is_checked: 1 })]
+    const raw_language = (Object.keys(BODY_LANGUAGES) as RawBodyLanguage[]).find(key => BODY_LANGUAGES[key] === contentType)
+    setRequest({ header: { ...current.header, parameter }, body: { ...(current.body ?? createBody()), raw_language,
+      mode: contentType === 'application/json' ? 'json' : 'raw', ...patch } })
   }
 
   useEffect(() => {
@@ -203,13 +253,12 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
   }
 
   const formatJsonBody = (): void => {
-    const current = request.body ?? createBody()
-    if (current.mode !== 'raw' && current.mode !== 'json') return
+    const current = latestRequest.current.body ?? createBody()
+    if (current.mode !== 'json' || current.model_id) return
     const raw = current.raw ?? ''
     if (!raw.trim()) return
     try {
       const parsed = JSON.parse(raw)
-      if (parsed === null || typeof parsed !== 'object') return
       const pretty = JSON.stringify(parsed, null, 2)
       if (pretty !== raw) setBody({ raw: pretty })
     } catch {
@@ -217,28 +266,33 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     }
   }
 
-  const handleSend = async (): Promise<boolean> => {
+  const handleSend = async (): Promise<SendRecord | null> => {
     formatJsonBody()
-    const problem = validateJson(request.body?.raw ?? '')
+    const problem = latestRequest.current.body?.mode === 'json'
+      ? validateJson(latestRequest.current.body.raw ?? '') : null
     setJsonError(problem)
     if (problem) {
       focusJsonError(problem)
       message.error(`JSON 结构错误：第 ${problem.line} 行第 ${problem.column} 列`)
     }
     try {
-      const record = await sendActive()
-      if (record.status === 'passed') message.success(`请求完成 ${record.response?.code ?? ''}`)
-      else message.error(record.error?.message ?? '请求失败')
-      return record.status === 'passed'
+      const record = await sendActive(draft.target_id)
+      if (useApp.getState().project?.project_id !== projectId) return record
+      if (record.error?.type === 'cancelled') message.info('请求已取消')
+      else if (record.status === 'passed') message.success(`请求完成 ${record.response?.code ?? ''}`)
+      else if (record.error) message.error(record.error.message)
+      else message.warning('请求完成，断言未通过')
+      return record
     } catch (error) {
       message.error((error as Error).message)
-      return false
+      return null
     }
   }
 
-  const handleSave = async (notify = true): Promise<void> => {
+  const handleSave = async (notify = true): Promise<boolean> => {
     formatJsonBody()
-    const problem = validateJson(request.body?.raw ?? '')
+    const problem = latestRequest.current.body?.mode === 'json'
+      ? validateJson(latestRequest.current.body.raw ?? '') : null
     setJsonError(problem)
     if (problem) {
       focusJsonError(problem)
@@ -248,8 +302,10 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     try {
       await saveTarget(draft.target_id)
       if (notify) message.success('已保存')
+      return true
     } catch (error) {
       message.error((error as Error).message)
+      return false
     } finally {
       setSaving(false)
     }
@@ -257,6 +313,10 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
 
   const body = request.body ?? createBody()
   const bodyValue = body.mode === 'json' ? 'raw' : body.mode
+  const bodyContentType = body.mode === 'json' ? 'application/json' :
+    (request.header?.parameter.find(param => param.key.toLowerCase() === 'content-type' && param.is_checked > 0)?.value.split(';')[0]
+      ?? (body.raw_language ? BODY_LANGUAGES[body.raw_language] : 'text/plain'))
+  const bodyLanguage = (Object.keys(BODY_LANGUAGES) as RawBodyLanguage[]).find(key => BODY_LANGUAGES[key] === bodyContentType) ?? 'text'
 
   const focusJsonError = (error: JsonError): void => {
     const input = document.querySelector<HTMLTextAreaElement>('.editor-shell textarea')
@@ -267,7 +327,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
   }
 
   useEffect(() => {
-    if (body.mode !== 'raw' && body.mode !== 'json') {
+    if (body.mode !== 'json') {
       setJsonError(null)
       return
     }
@@ -279,37 +339,43 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     if (jsonError && bodyView === 'fields') setBodyView('raw')
   }, [jsonError, bodyView])
 
-  const sendMenu = {
-    items: [
-      { key: 'send', label: '发送' },
-      { key: 'sendSave', label: '发送并保存' }
-    ],
-    onClick: ({ key }: { key: string }) => {
-      if (key === 'send') void handleSend()
-      if (key === 'sendSave') {
-        void (async () => {
-          const ok = await handleSend()
-          if (ok) await handleSave(false)
-        })()
+  const runAction = async (action: 'send' | 'save' | 'sendSave'): Promise<void> => {
+    if (actionLock.current || useApp.getState().sendingId) return
+    actionLock.current = true
+    setActing(true)
+    try {
+      if (action === 'save') await handleSave()
+      if (action === 'send') await handleSend()
+      if (action === 'sendSave') {
+        const record = await handleSend()
+        const current = useApp.getState().drafts[draft.target_id]
+        if (!record?.response || !current || useApp.getState().project?.project_id !== projectId) return
+        const examples = current.response?.example ?? []
+        const captured = exampleFromRecord(record)
+        captured.expect = { ...captured.expect, is_default: examples.length === 0 ? 1 : 0 }
+        useApp.getState().patchDraft(draft.target_id, { response: { ...current.response, example: [...examples, captured] } })
+        if (await handleSave(false)) message.success('响应已保存为示例')
       }
+    } finally {
+      actionLock.current = false
+      setActing(false)
     }
   }
 
+  const sendMenu = {
+    items: [
+      { key: 'sendSave', label: '发送并保存响应', disabled: busy }
+    ],
+    onClick: ({ key }: { key: string }) => void runAction(key as 'send' | 'sendSave')
+  }
+
   const saveMenu = {
-    items: debug
-      ? [
-          { key: 'save', label: '保存' },
-          { key: 'saveSend', label: '保存并发送' }
-        ]
-      : [{ key: 'save', label: '保存' }],
+    selectedKeys: [draft.parent_id || '0'],
+    items: [{ key: '0', label: '根目录' }, ...folders.map(folder => ({ key: folder.target_id, label: folder.name }))],
     onClick: ({ key }: { key: string }) => {
-      if (key === 'save') void handleSave()
-      if (key === 'saveSend') {
-        void (async () => {
-          const ok = await handleSend()
-          if (ok) await handleSave(false)
-        })()
-      }
+      if (busy) return
+      onChange({ parent_id: key })
+      void runAction('save')
     }
   }
 
@@ -320,9 +386,6 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
           <div className="editor-empty">
             <DocIllustration />
             <span>当前请求未包含 Body</span>
-          </div>
-          <div className="fake-scroll">
-            <span />
           </div>
         </div>
       )
@@ -353,7 +416,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
                   </>
                 )}
               </>
-            ) : debug ? (
+            ) : debug && body.mode === 'json' ? (
               <>
                 <button
                   className="mini"
@@ -365,18 +428,17 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
                     })
                   }
                 >
-                  基于数据结构生成
+                  从设计请求参数生成
                 </button>
-                <span className="muted">按设计结构补全字段，已有值保留</span>
               </>
-            ) : (
+            ) : !debug && body.mode === 'json' ? (
               <>
                 <button className="mini" onClick={() => setPickerOpen(true)} disabled={!projectId}>
                   引用模型
                 </button>
                 <span className="muted">也可直接手写 JSON</span>
               </>
-            )}
+            ) : null}
             {jsonError ? (
               <div
                 className="json-error inline"
@@ -397,37 +459,56 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
                     value={bodyView}
                     onChange={(value) => setBodyView(value as 'raw' | 'fields')}
                     options={[
-                      { label: '示例', value: 'raw' },
-                      { label: '数据结构', value: 'fields' }
+                      { label: '数据结构', value: 'fields' },
+                      { label: '示例', value: 'raw' }
                     ]}
                   />
                 ) : null}
               </>
             )}
+            {debug && (
+              <div className="debug-body-toolbar">
+                {body.mode === 'json' && (
+                  <button disabled={Boolean(bodyModel)} onClick={formatJsonBody}>美化</button>
+                )}
+                <button onClick={async () => {
+                  const result = await window.api.app.copyText(body.raw ?? '')
+                  result.ok ? message.success('请求体已复制') : message.error(result.error)
+                }}>复制</button>
+              </div>
+            )}
+            {!debug && <div className="debug-body-toolbar">
+              <button disabled={Boolean(bodyModel)} onClick={() => setBodyView('raw')}>Raw编辑</button>
+              <button onClick={() => setBodyPreviewOpen(true)}>预览</button>
+              <button disabled={!onGenerateCode} onClick={onGenerateCode}>生成代码</button>
+              <button disabled={Boolean(bodyModel)} onClick={() => setSmartImportOpen(true)}>智能导入</button>
+            </div>}
           </div>
           {fieldView ? (
             <JsonFieldTable
+              compact={!debug}
               raw={body.raw ?? ''}
               docs={body.field_docs ?? []}
               valuesReadOnly={Boolean(bodyModel)}
               mode={mode}
-              title={debug ? '字段值' : '数据结构'}
+              title="数据结构"
               onChangeRaw={(raw) => setBody({ raw })}
               onChangeDocs={(field_docs) => setBody({ field_docs })}
             />
           ) : (
             <div className="editor-shell fill">
-              <Input.TextArea
-                className="editor-input"
+              <JsonBodyInput
+                highlight={body.mode === 'json'}
+                aria-label="请求 Body"
                 value={body.raw ?? ''}
                 readOnly={Boolean(bodyModel)}
                 onChange={(event) => setBody({ raw: event.target.value })}
                 onBlur={() => {
                   if (bodyModel) return
                   formatJsonBody()
-                  const problem = validateJson(request.body?.raw ?? '')
+                  const problem = latestRequest.current.body?.mode === 'json'
+      ? validateJson(latestRequest.current.body.raw ?? '') : null
                   setJsonError(problem)
-                  if (problem) setTimeout(() => focusJsonError(problem), 0)
                 }}
                 placeholder={body.mode === 'json' ? '{ "key": "value" }' : '请求体'}
                 spellCheck={false}
@@ -439,7 +520,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     }
     if (body.mode === 'urlencoded') {
       return (
-        <ParamTable
+        <ParameterTable
           title="表单参数（urlencoded）"
           params={body.urlencoded ?? []}
           mode={mode}
@@ -449,7 +530,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     }
     if (body.mode === 'formdata') {
       return (
-        <ParamTable
+        <ParameterTable
           title="表单参数（form-data）"
           params={body.formdata ?? []}
           mode={mode}
@@ -459,74 +540,85 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
         />
       )
     }
-    return (
-      <div className="editor-shell fill" style={{ padding: 12 }}>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <span className="muted" style={{ fontSize: 11 }}>
-            二进制文件绝对路径
-          </span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Input
-              value={body.binary?.file_path ?? ''}
-              onChange={(event) =>
-                setBody({ binary: { ...(body.binary ?? {}), file_path: event.target.value } })
-              }
-              placeholder="/path/to/file"
-            />
-            <Button
-              onClick={() => {
-                void window.api.dialog.openFiles().then((result) => {
-                  if (!result.ok) {
-                    message.error(result.error)
-                    return
-                  }
-                  const file = result.data[0]
-                  if (!file) return
-                  setBody({
-                    binary: {
-                      ...(body.binary ?? {}),
-                      file_path: file.path,
-                      file_name: file.name
-                    }
-                  })
-                })
-              }}
-            >
-              选择文件
-            </Button>
-          </div>
-          {body.binary?.file_name ? (
-            <span className="muted" style={{ fontSize: 11 }}>
-              {body.binary.file_name}
-            </span>
-          ) : null}
-        </Space>
-      </div>
-    )
+    return <div className="binary-upload" onDragOver={event => event.preventDefault()} onDrop={event => {
+      event.preventDefault()
+      const file = event.dataTransfer.files[0]
+      if (!file) return
+      const file_path = window.api.files.getPathForFile(file)
+      if (file_path) setBody({ binary: { file_path, file_name: file.name } })
+    }}>
+      <button aria-label="上传文件" className={`binary-upload-trigger${body.binary?.file_path ? ' has-file' : ''}`} onClick={async () => {
+        try {
+          const result = await window.api.dialog.openFiles(false)
+          if (!result.ok) { message.error(result.error); return }
+          const file = result.data[0]
+          if (file) setBody({ binary: { file_path: file.path, file_name: file.name } })
+        } catch (error) { message.error((error as Error).message) }
+      }}><UploadOutlined />上传文件</button>
+      {body.binary?.file_path && <div className="binary-file-row"><PaperClipOutlined /><span title={body.binary.file_path}>{body.binary.file_name || body.binary.file_path.split(/[\\/]/).pop()}</span>
+        <Tooltip title="删除文件"><button aria-label="移除文件" onClick={() => setBody({ binary: {} })}><DeleteOutlined /></button></Tooltip></div>}
+    </div>
+  }
+
+  const displayedUrl = withQueryParams(draft.url ?? '', request.query?.parameter ?? [], request.query?.omit_empty_equals)
+  useTargetEditLock(urlEditing && urlText !== displayedUrl)
+  const updateQuery = (parameter: RequestModel['query']['parameter'], omit = request.query?.omit_empty_equals): void => {
+    parameter = [...(request.query?.parameter ?? []).filter(param => param.inherited_override && !parameter.some(item => item.param_id === param.param_id)), ...parameter]
+    const url = withQueryParams(withoutQueryKeys(draft.url ?? '', (request.query?.parameter ?? []).map(param => param.key)), parameter, omit)
+    latestRequest.current = { ...latestRequest.current, query: { ...request.query, parameter, omit_empty_equals: omit } }
+    onChange({ url, request: latestRequest.current })
+  }
+  const commitUrl = (url: string): void => {
+    const names = [...url.split('?')[0].matchAll(/(?<!\{)\{([^{}]+)\}(?!\})/g)].map(match => match[1])
+    const existing = latestRequest.current.restful?.parameter ?? []
+    const parameter = [...existing, ...[...new Set(names)].filter(key => !existing.some(param => param.key === key)).map(key => createParam({ key }))]
+    const queryText = url.split('#')[0].split('?').slice(1).join('?')
+    const previous = latestRequest.current.query?.parameter ?? []
+    const remaining = previous.slice()
+    const parsed = [...new URLSearchParams(queryText)].filter(([key]) => key).map(([key, value]) => {
+      const index = remaining.findIndex(param => param.key === key && (param.is_checked > 0 || (param.is_system ?? 0) > 0))
+      const param = index < 0 ? createParam({ key }) : remaining.splice(index, 1)[0]
+      return { ...param, value, is_checked: 1, is_system: -1 }
+    })
+    const unchanged = url === withQueryParams(draft.url ?? '', previous, latestRequest.current.query?.omit_empty_equals)
+    const query = unchanged ? previous : [...parsed, ...remaining.filter(param => param.is_checked < 0 && (param.is_system ?? 0) <= 0)]
+    latestRequest.current = { ...latestRequest.current, restful: { parameter }, query: { ...latestRequest.current.query, parameter: query } }
+    onChange({ url, request: latestRequest.current })
+    setUrlEditing(false)
+  }
+
+  const tabCount = (tab: string): number => {
+    const fields = tab === 'Header' ? request.header?.parameter : tab === 'Query' ? request.query?.parameter : tab === 'Path' ? request.restful?.parameter : undefined
+    if (fields) return fields.filter(param => param.key.trim() && !param.inherited_override).length
+    if (tab === 'Body') return body.mode === 'none' ? 0 : body.mode === 'formdata' ? (body.formdata ?? []).filter(param => param.key.trim()).length : body.mode === 'urlencoded' ? (body.urlencoded ?? []).filter(param => param.key.trim()).length : 1
+    return 0
   }
 
   const renderContent = (): JSX.Element | null => {
     if (activeTab === 'Body') {
+      const changeMode = (value: string): void => {
+        if (value === 'msgpack') return
+        const nextMode = (value === 'raw' ? (body.mode === 'raw' ? 'raw' : 'json') : value) as BodyMode
+        const next = { ...(latestRequest.current.body ?? createBody()), mode: nextMode }
+        if (nextMode !== 'raw' && nextMode !== 'json') delete next.model_id
+        setRequest({ body: next })
+      }
       return (
-        <div className={`req-body${jsonError ? ' has-json-error' : ''}`}>
+        <div className={`req-body req-body--${body.mode}${jsonError ? ' has-json-error' : ''}`}>
           <div className="bodytypes">
             <Radio.Group
               value={bodyValue}
-              onChange={(event) => {
-                const value = String(event.target.value)
-                if (value === 'msgpack') {
-                  message.info('msgpack 将在后续里程碑支持')
-                  return
-                }
-                const nextMode = (value === 'raw' ? 'json' : value) as BodyMode
-                const current = request.body ?? createBody()
-                const next = { ...current, mode: nextMode }
-                if (nextMode !== 'raw' && nextMode !== 'json') delete next.model_id
-                setRequest({ body: next })
-              }}
+              onChange={event => changeMode(String(event.target.value))}
               options={BODY_OPTIONS}
             />
+            {debug && <Select className="debug-body-mode-select" aria-label="Body 类型" variant="borderless" value={bodyValue} options={BODY_OPTIONS} onChange={changeMode} />}
+            {(body.mode === 'json' || body.mode === 'raw') && <Select
+              className="raw-format" aria-label="请求体格式" size="small" disabled={Boolean(bodyModel)}
+              value={bodyContentType}
+              options={RAW_FORMATS}
+              onChange={contentType => setBodyFormat(contentType)} />}
           </div>
+          {!debug && body.mode === 'none' && <Button size="small" onClick={() => setSmartImportOpen(true)}>智能导入</Button>}
           {renderBody()}
         </div>
       )
@@ -534,11 +626,12 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     if (activeTab === 'Header') {
       return (
         <div className="req-body">
-          <ParamTable
+          <InheritedRequestParams draft={draft} location="header" onChange={parameter => setRequest({ header: { ...request.header, parameter } })} />
+          <ParameterTable
             title="公共参数（Header）"
-            params={request.header?.parameter ?? []}
+            params={(request.header?.parameter ?? []).filter(param => !param.inherited_override)}
             mode={mode}
-            onChange={(parameter) => setRequest({ header: { parameter } })}
+            onChange={parameter => setRequest({ header: { parameter: [...(request.header?.parameter ?? []).filter(param => param.inherited_override), ...parameter] } })}
             keyPlaceholder="Header 名"
           />
         </div>
@@ -547,11 +640,13 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     if (activeTab === 'Query') {
       return (
         <div className="req-body">
-          <ParamTable
+          <InheritedRequestParams draft={draft} location="query" onChange={parameter => setRequest({ query: { ...request.query, parameter } })} />
+          <ParameterTable
             title="查询参数（Query）"
-            params={request.query?.parameter ?? []}
+            params={(request.query?.parameter ?? []).filter(param => !param.inherited_override)}
             mode={mode}
-            onChange={(parameter) => setRequest({ query: { parameter } })}
+            onChange={updateQuery}
+            omitEmptyEquals={request.query?.omit_empty_equals} onChangeEmptyEquals={(value: boolean) => updateQuery(request.query?.parameter ?? [], value)}
             keyPlaceholder="参数名"
           />
         </div>
@@ -560,11 +655,13 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     if (activeTab === 'Path') {
       return (
         <div className="req-body">
-          <ParamTable
+          <InheritedRequestParams draft={draft} location="restful" onChange={parameter => setRequest({ restful: { ...request.restful, parameter } })} />
+          <ParameterTable
+            path
             title="路径参数（Path）"
-            params={request.restful?.parameter ?? []}
+            params={(request.restful?.parameter ?? []).filter(param => !param.inherited_override)}
             mode={mode}
-            onChange={(parameter) => setRequest({ restful: { parameter } })}
+            onChange={(parameter) => setRequest({ restful: { parameter: [...(request.restful?.parameter ?? []).filter(param => param.inherited_override), ...parameter] } })}
             keyPlaceholder="路径变量（不含 {}）"
           />
         </div>
@@ -573,7 +670,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
     if (activeTab === 'Cookie') {
       return (
         <div className="req-body">
-          <ParamTable
+          <ParameterTable
             title="Cookie 参数"
             params={request.cookie?.parameter ?? []}
             mode={mode}
@@ -590,43 +687,15 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
         </div>
       )
     }
-    if (activeTab === '预执行操作') {
-      return (
-        <div className="req-body">
-          <div className="editor-shell fill">
-            <div className="script-pane">
-              <Input.TextArea
-                value={request.pre_script ?? ''}
-                onChange={(event) => setRequest({ pre_script: event.target.value })}
-                autoSize={{ minRows: 12 }}
-                className="mono"
-                placeholder="// 预执行脚本"
-              />
-            </div>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <div className="req-body">
-        <div className="editor-shell fill">
-          <div className="script-pane">
-            <Input.TextArea
-              value={request.test ?? ''}
-              onChange={(event) => setRequest({ test: event.target.value })}
-              autoSize={{ minRows: 12 }}
-              className="mono"
-              placeholder="// 后执行脚本"
-            />
-          </div>
-        </div>
-      </div>
-    )
+    const pre = activeTab === '预执行操作'
+    return <div className="req-body"><RequestScriptEditor key={pre ? 'pre' : 'post'} stage={pre ? 'pre' : 'post'}
+      value={pre ? request.pre_script ?? '' : request.test ?? ''}
+      enabled={pre ? request.pre_script_enabled : request.test_enabled}
+      onChange={(value, enabled) => setRequest(pre ? { pre_script: value, pre_script_enabled: enabled } : { test: value, test_enabled: enabled })} />
+    </div>
   }
 
-  return (
-    <div className="request-pane">
-      <div className="url-row">
+  const urlBar = <div className="url-row">
         <div className="url-capsule">
           <div className="method-select">
             <Dropdown
@@ -636,7 +705,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
                 onClick: ({ key }) => onChange({ method: key })
               }}
             >
-              <button className="method-btn">
+              <button className="method-btn" style={{ color: methodColor(draft.method) }} aria-label="请求方式">
                 <span>{(draft.method || 'GET').toUpperCase()}</span>
                 <DownOutlined style={{ fontSize: 9 }} />
               </button>
@@ -645,11 +714,15 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
           <div className="url-input">
             <Input
               variant="borderless"
-              value={draft.url ?? ''}
-              onChange={(event) => onChange({ url: event.target.value })}
-              placeholder="请输入URL或粘贴cURL文本"
-              onPressEnter={() => {
-                if (!debug) void handleSend()
+              value={urlEditing ? urlText : displayedUrl}
+              onFocus={() => { setUrlText(displayedUrl); setUrlEditing(true) }}
+              onChange={event => { setUrlEditing(true); setUrlText(event.target.value) }}
+              onBlur={event => commitUrl(event.target.value)}
+              placeholder="请输入请求 URL"
+              aria-label="请求 URL"
+              onPressEnter={event => {
+                commitUrl(event.currentTarget.value)
+                if (debug) void runAction('send')
               }}
             />
           </div>
@@ -670,42 +743,67 @@ export default function RequestEditor({ draft, onChange, mode = 'design' }: Prop
 
         {debug ? (
           <div className="send-group">
-            <button className="send-btn" onClick={() => void handleSend()} disabled={sending}>
+            <button className="send-btn" onClick={() => void runAction('send')} disabled={busy}>
               {sending ? '发送中…' : '发送'}
             </button>
-            <Dropdown menu={sendMenu} trigger={['click']}>
-              <button className="send-caret">
+            {sending && <button className="cancel-send-btn" onClick={() => void cancelSend().catch(error => message.error(error.message))}>取消发送</button>}
+            <Dropdown menu={sendMenu} trigger={['click']} disabled={busy}>
+              <button className="send-caret" aria-label="发送选项" disabled={busy}>
                 <DownOutlined style={{ fontSize: 9 }} />
               </button>
             </Dropdown>
           </div>
         ) : null}
 
+        {!debug && onPreview && <Button size="small" icon={<EyeOutlined />} onClick={onPreview}>预览</Button>}
         <div className="save-group">
-          <button className="save-btn" onClick={() => void handleSave()} disabled={saving}>
-            保存
+          <button className="save-btn" onClick={() => void runAction('save')} disabled={busy}>
+            {saving ? '保存中…' : '保存'}
           </button>
-          <Dropdown menu={saveMenu} trigger={['click']}>
-            <button className="save-caret">
+          {debug && <Dropdown menu={saveMenu} trigger={['click']} disabled={busy}>
+            <button className="save-caret" aria-label="保存到目录" disabled={busy}>
               <DownOutlined style={{ fontSize: 9 }} />
             </button>
-          </Dropdown>
+          </Dropdown>}
         </div>
       </div>
 
-      <div className="req-tabs">
-        {TABS.map((tab) => (
+  return (
+    <div className={`request-pane request-pane--${mode}`}>
+      {toolbarContainer ? createPortal(urlBar, toolbarContainer) : urlBar}
+
+      {intro}
+      <div className={`request-tab-bar${debug ? ' is-debug' : ''}`}>
+      <div className="req-tabs" role="tablist" aria-label="请求参数">
+        {(debug ? TABS : TABS.slice(0, 5)).map((tab) => (
           <button
             key={tab}
+            role="tab"
+            aria-label={tab}
+            aria-selected={activeTab === tab}
             className={activeTab === tab ? 'active' : ''}
             onClick={() => setActiveTab(tab)}
           >
-            {tab}
+            {tab}{tabCount(tab) > 0 && <span className="request-tab-count">({tabCount(tab)})</span>}
           </button>
         ))}
       </div>
+      {debug && <Dropdown trigger={['click']} menu={{ selectedKeys: [activeTab], items: TABS.map(tab => ({ key: tab, label: tab })), onClick: ({ key }) => setActiveTab(key) }}>
+        <button className="editor-tab-overflow" aria-label="更多请求标签"><MoreOutlined /></button>
+      </Dropdown>}
+      </div>
 
       {renderContent()}
+      {children}
+      <BodyPreviewModal open={bodyPreviewOpen}
+        raw={bodyLanguage === 'json' ? buildBodyExample(body.raw ?? '', body.field_docs ?? []).text : body.raw ?? ''}
+        language={bodyLanguage} onClose={() => setBodyPreviewOpen(false)} />
+      <SmartImportModal open={smartImportOpen} existingDocs={body.field_docs ?? []}
+        onClose={() => setSmartImportOpen(false)} onApply={({ raw, fieldDocs }) => {
+          setBodyFormat('application/json', { raw, field_docs: fieldDocs })
+          setBodyView('fields')
+          setJsonError(validateJson(raw))
+        }} />
 
       <ModelPickerModal
         open={pickerOpen}
@@ -729,89 +827,21 @@ function AuthEditor({
     onChange({ auth: { ...auth, ...patch } })
   }
 
-  return (
-    <div style={{ maxWidth: 640 }}>
-      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-        <div>
-          <div className="muted" style={{ marginBottom: 4 }}>
-            认证类型
-          </div>
-          <Select
-            value={auth.type}
-            style={{ width: 240 }}
-            onChange={(type) => updateAuth({ type })}
-            options={[
-              { value: 'inherit', label: '继承父级' },
-              { value: 'noauth', label: '无需认证' },
-              { value: 'bearer', label: 'Bearer Token' },
-              { value: 'basic', label: 'Basic Auth' },
-              { value: 'kv', label: 'API Key' }
-            ]}
-          />
-        </div>
-
-        {auth.type === 'bearer' ? (
-          <div>
-            <div className="muted" style={{ marginBottom: 4 }}>
-              Token
-            </div>
-            <Input
-              value={auth.bearer?.key ?? ''}
-              onChange={(event) => updateAuth({ bearer: { key: event.target.value } })}
-              placeholder="Bearer token"
-            />
-          </div>
-        ) : null}
-
-        {auth.type === 'basic' ? (
-          <Space>
-            <Input
-              value={auth.basic?.username ?? ''}
-              onChange={(event) =>
-                updateAuth({ basic: { ...(auth.basic ?? {}), username: event.target.value } })
-              }
-              placeholder="用户名"
-            />
-            <Input.Password
-              value={auth.basic?.password ?? ''}
-              onChange={(event) =>
-                updateAuth({ basic: { ...(auth.basic ?? {}), password: event.target.value } })
-              }
-              placeholder="密码"
-            />
-          </Space>
-        ) : null}
-
-        {auth.type === 'kv' ? (
-          <Space>
-            <Input
-              value={auth.kv?.key ?? ''}
-              onChange={(event) =>
-                updateAuth({ kv: { ...(auth.kv ?? { in: 'header' }), key: event.target.value } })
-              }
-              placeholder="Key"
-            />
-            <Input
-              value={auth.kv?.value ?? ''}
-              onChange={(event) =>
-                updateAuth({ kv: { ...(auth.kv ?? { in: 'header' }), value: event.target.value } })
-              }
-              placeholder="Value"
-            />
-            <Select
-              value={auth.kv?.in ?? 'header'}
-              style={{ width: 110 }}
-              onChange={(value) =>
-                updateAuth({ kv: { ...(auth.kv ?? { key: '', value: '' }), in: value } })
-              }
-              options={[
-                { value: 'header', label: 'Header' },
-                { value: 'query', label: 'Query' }
-              ]}
-            />
-          </Space>
-        ) : null}
-      </Space>
-    </div>
-  )
+  const field = (label: string, input: JSX.Element): JSX.Element => <div className="request-auth-row"><label>{label}</label>{input}</div>
+  return <div className="request-auth-form">
+    {field('类型', <Select aria-label="认证类型" value={auth.type} onChange={type => updateAuth({ type })}
+      options={[{ value: 'inherit', label: '继承父级' }, { value: 'noauth', label: '无需认证' },
+        { value: 'bearer', label: 'Bearer Token' }, { value: 'basic', label: 'Basic auth' }, { value: 'kv', label: '私密键值对' }]} />)}
+    {auth.type === 'bearer' && field('Token', <Input aria-label="Token" placeholder="Bearer token" value={auth.bearer?.key ?? ''} onChange={event => updateAuth({ bearer: { key: event.target.value } })} />)}
+    {auth.type === 'basic' && <>
+      {field('Username', <Input placeholder="用户名" value={auth.basic?.username ?? ''} onChange={event => updateAuth({ basic: { ...auth.basic, username: event.target.value } })} />)}
+      {field('Password', <Input.Password placeholder="密码" value={auth.basic?.password ?? ''} onChange={event => updateAuth({ basic: { ...auth.basic, password: event.target.value } })} />)}
+    </>}
+    {auth.type === 'kv' && <>
+      {field('Key', <Input placeholder="Key" value={auth.kv?.key ?? ''} onChange={event => updateAuth({ kv: { ...auth.kv, key: event.target.value } })} />)}
+      {field('Value', <Input placeholder="Value" value={auth.kv?.value ?? ''} onChange={event => updateAuth({ kv: { ...auth.kv, value: event.target.value } })} />)}
+      {field('添加位置', <Select aria-label="认证添加位置" value={auth.kv?.in ?? 'header'} options={[{ value: 'header', label: 'Header' }, { value: 'query', label: 'Query' }]}
+        onChange={value => updateAuth({ kv: { ...auth.kv, in: value } })} />)}
+    </>}
+  </div>
 }

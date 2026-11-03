@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, App as AntApp, Button, Input, Tag, Tooltip } from 'antd'
+import { Alert, App as AntApp, Button, Dropdown, Input, Tag, Tooltip } from 'antd'
 import {
   CodeOutlined,
   DeleteOutlined,
+  DownOutlined,
   EyeOutlined,
   ImportOutlined,
   SaveOutlined,
@@ -53,10 +54,10 @@ export default function ModelEditor({
   }, [model.model_id])
 
   useEffect(() => {
-    const dirty = JSON.stringify(draft) !== initialRef.current
+    const dirty = JSON.stringify(draft) !== initialRef.current || (mode === 'raw' && rawText !== prettyJson(draft.data.schema))
     onDirtyChange(dirty)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft])
+  }, [draft, mode, rawText])
 
   const isFolder = draft.model_type === 'folder'
   const modelOptions = useMemo(
@@ -81,40 +82,51 @@ export default function ModelEditor({
     setPreview(result.data)
   }
 
-  const applyRaw = (): boolean => {
+  const parseRaw = (): DataModel['data']['schema'] | null => {
     let parsed: unknown
     try {
       parsed = JSON.parse(rawText)
     } catch (error) {
       setRawError(`JSON 解析失败：${(error as Error).message}`)
-      return false
+      return null
     }
     const problem = validateSchema(parsed)
     if (problem) {
       setRawError(problem)
-      return false
+      return null
     }
     setRawError('')
-    patchData({ schema: parsed as DataModel['data']['schema'] })
+    return parsed as DataModel['data']['schema']
+  }
+
+  const applyRaw = (): boolean => {
+    const schema = parseRaw()
+    if (!schema) return false
+    patchData({ schema })
     return true
   }
 
   const switchMode = (next: Mode): void => {
     if (next === mode) return
-    if (mode === 'raw' && !applyRaw()) return
+    const currentSchema = mode === 'raw' ? parseRaw() : draft.data.schema
+    if (!currentSchema) return
+    if (mode === 'raw') patchData({ schema: currentSchema })
     if (next === 'raw') setRawText(prettyJson(draft.data.schema))
-    if (next === 'preview') void refreshPreview()
+    if (next === 'preview') void refreshPreview(currentSchema)
     setMode(next)
   }
 
   const save = async (): Promise<void> => {
+    if (saving) return
+    const schema = mode === 'raw' ? parseRaw() : draft.data.schema
+    if (!schema) return
     const name = draft.name.trim()
     if (!name) {
       message.error('请输入模型名称')
       return
     }
     if (!isFolder) {
-      const problem = validateSchema(draft.data.schema)
+      const problem = validateSchema(schema)
       if (problem) {
         message.error(problem)
         setMode('raw')
@@ -127,7 +139,7 @@ export default function ModelEditor({
           item.name === name
       )
       if (duplicate) message.warning('已存在同名模型，请确认是否符合预期')
-      const generated = await window.api.models.generateFromSchema(projectId, draft.data.schema)
+      const generated = await window.api.models.generateFromSchema(projectId, schema)
       if (generated.ok && generated.data.warnings.length > 0) {
         message.warning(generated.data.warnings[0].message)
       }
@@ -136,12 +148,14 @@ export default function ModelEditor({
     try {
       const result = await window.api.models.save(projectId, {
         ...draft,
+        data: { ...draft.data, schema },
         name,
         updated_by: '本地'
       })
       if (!result.ok) throw new Error(result.error)
       initialRef.current = JSON.stringify(result.data)
       setDraft(cloneSchema(result.data))
+      setRawText(prettyJson(result.data.data.schema))
       onDirtyChange(false)
       onSaved(result.data)
       message.success('已保存')
@@ -268,9 +282,7 @@ export default function ModelEditor({
         <Button danger icon={<DeleteOutlined />} onClick={() => void remove()}>
           删除
         </Button>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>
-          保存
-        </Button>
+        <Dropdown.Button type="primary" icon={<DownOutlined />} loading={saving} onClick={() => void save()} menu={{ selectable: true, selectedKeys: [draft.parent_id], items: [{ key: '0', label: '根目录' }, ...models.filter(item => item.model_type === 'folder').map(item => ({ key: item.model_id, label: item.name }))], onClick: ({ key }) => patch({ parent_id: key }) }}>保存</Dropdown.Button>
       </div>
 
       <div className="model-toolbar">

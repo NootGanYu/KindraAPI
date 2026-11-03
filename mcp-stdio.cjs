@@ -135,13 +135,15 @@ async function handle(message) {
       serverInfo: { name: 'KindraAPI', version: '1.0.0' },
       instructions:
         'KindraAPI 本地 MCP。写操作与执行操作需要在桌面端「配置 → MCP」中显式开启。\n\n' +
-        '文档要求（所有 Agent 必须遵守）：\n' +
-        '1. 创建或更新接口时，必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义 description；优先使用 upsert_api 一次提交完整文档。\n' +
-        '2. 创建目录时必须填写目录说明 description；补充已有目录或接口说明时，可使用 move_target 的 description。\n' +
-        '3. 字段应尽量明确 type、required、nullable、enum 及 enum_descriptions。不要根据字段名或示例值猜测业务含义；无法确定时保留未知并向用户说明待补充。\n' +
-        '4. 写入后检查返回的 documentation.complete 与 documentation.issues，补齐能从现有信息确定的项；仍有未知项时在最终回复中逐项列出。\n' +
-        '5. 创建或更新数据模型时，同样填写模型说明与每个 schema 字段的 description。\n' +
-        '6. 接口 URL 必须填写完整的 http:// 或 https:// 地址，包含主机名与路径，不要只写 /path。项目使用环境前缀时可写 {{baseUrl}}/path，但必须确保 baseUrl 会解析为完整地址。'
+        '文档要求（所有 Agent 必须遵守，服务端会硬性校验）：\n' +
+        '1. 新建接口必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义 description；优先使用 upsert_api 一次提交完整文档。\n' +
+        '2. 每个已知字段还必须明确 type、required、nullable 和 enum（无限制时显式传 null）；有枚举时必须提供与枚举逐项对应的 enum_descriptions。缺少 description、type、required、nullable、enum 中任一项，服务端会拒绝写入且不保存。\n' +
+        '3. 创建目录时必须填写目录说明 description；补充已有目录或接口说明时，可使用 move_target 的 description。\n' +
+        '4. 不要根据字段名或示例值猜测业务含义；无法确定时先向用户确认，再写入。\n' +
+        '5. 更新接口时，本次显式提交的字段同样必须补齐上述信息；未提交的字段保持原样。\n' +
+        '6. 创建或更新数据模型时，同样填写模型说明与每个 schema 字段的 description。\n' +
+        '7. 接口 URL 必须填写完整的 http:// 或 https:// 地址，包含主机名与路径，不要只写 /path。项目使用环境前缀时可写 {{baseUrl}}/path，但必须确保 baseUrl 会解析为完整地址。\n' +
+        '8. 写入成功后检查返回的 documentation，仍有缺项时在最终回复中逐项列出。'
     })
     return
   }

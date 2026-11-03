@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   App as AntApp,
@@ -57,6 +57,7 @@ export default function DatabasePanel({
   const [activeTab, setActiveTab] = useState('regular')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult>(null)
+  const keyFile = useRef<HTMLInputElement>(null)
 
   const [importOpen, setImportOpen] = useState(false)
   const [importConnection, setImportConnection] = useState<DbConnection | null>(null)
@@ -99,7 +100,7 @@ export default function DatabasePanel({
 
   const openCreate = (): void => {
     setEditing(null)
-    setDraft(createDbConnection(projectId))
+    setDraft(createDbConnection(projectId, { name: '' }))
     setActiveTab('regular')
     setTestResult(null)
     setOpen(true)
@@ -383,8 +384,9 @@ export default function DatabasePanel({
                 label: '常规',
                 children: (
                   <div>
-                    <Form.Item label="数据库地址" required>
+                    <Form.Item label="IP/Host" required>
                       <Input
+                        aria-label="IP/Host"
                         value={draft.config.default.host}
                         onChange={(event) => patchDefault({ host: event.target.value })}
                         placeholder="127.0.0.1"
@@ -429,27 +431,32 @@ export default function DatabasePanel({
                 label: 'SSH',
                 children: (
                   <div>
-                    <Alert
+                    {draft.ssh.enable === 1 && <Alert
                       type="warning"
                       showIcon
                       style={{ marginBottom: 10 }}
                       message="SSH 隧道后续支持"
-                      description="本轮只保存 SSH 配置，测试连接与导入仍走直连，不会建立隧道。"
-                    />
-                    <Form.Item label="启用 SSH">
+                      description="可以保存 SSH 配置；当前版本尚不能建立隧道，请关闭 SSH 后测试连接或读取表结构。"
+                    />}
+                    <Form.Item label="使用SSH隧道">
                       <Switch
+                        aria-label="使用SSH隧道"
                         checked={draft.ssh.enable === 1}
                         onChange={(checked) => patchSsh({ enable: checked ? 1 : -1 })}
                       />
                     </Form.Item>
                     <Form.Item label="Host">
                       <Input
+                        aria-label="SSH Host"
+                        disabled={draft.ssh.enable !== 1}
                         value={draft.ssh.host}
                         onChange={(event) => patchSsh({ host: event.target.value })}
                       />
                     </Form.Item>
                     <Form.Item label="Port">
                       <InputNumber
+                        aria-label="SSH 端口"
+                        disabled={draft.ssh.enable !== 1}
                         min={1}
                         max={65535}
                         style={{ width: '100%' }}
@@ -460,41 +467,45 @@ export default function DatabasePanel({
                     </Form.Item>
                     <Form.Item label="用户名">
                       <Input
+                        aria-label="SSH 用户名"
+                        disabled={draft.ssh.enable !== 1}
                         value={draft.ssh.username}
                         onChange={(event) => patchSsh({ username: event.target.value })}
                       />
                     </Form.Item>
-                    <Form.Item label="密码">
-                      <Input.Password
-                        value={draft.ssh.password}
-                        onChange={(event) => patchSsh({ password: event.target.value })}
-                      />
-                    </Form.Item>
-                    <Form.Item label="认证方式">
+                    <Form.Item label="验证方法">
                       <Select
+                        aria-label="SSH 验证方法"
+                        disabled={draft.ssh.enable !== 1}
                         value={draft.ssh.auth_type}
                         onChange={(value: 1 | 2 | 3) => patchSsh({ auth_type: value })}
                         options={[
                           { value: 1, label: '密码' },
-                          { value: 2, label: '私钥' },
-                          { value: 3, label: '密码 + 私钥' }
+                          { value: 2, label: '公钥' },
+                          { value: 3, label: '密码与公钥' }
                         ]}
                       />
                     </Form.Item>
-                    <Form.Item label="私钥">
-                      <Input.TextArea
-                        rows={2}
-                        value={draft.ssh.private_key}
-                        onChange={(event) => patchSsh({ private_key: event.target.value })}
-                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                      />
+                    {draft.ssh.auth_type !== 2 && <Form.Item label="SSH密码"><Input.Password aria-label="SSH密码" disabled={draft.ssh.enable !== 1} value={draft.ssh.password} onChange={event => patchSsh({ password: event.target.value })} /></Form.Item>}
+                    {draft.ssh.auth_type !== 1 && <><Form.Item label="私钥">
+                      <input ref={keyFile} type="file" aria-label="私钥文件" style={{ display: 'none' }} onChange={async event => {
+                        const file = event.target.files?.[0]
+                        event.target.value = ''
+                        if (!file) return
+                        if (file.size > 1024 * 1024) { message.error('私钥文件不能超过 1 MB'); return }
+                        try { patchSsh({ private_key: await file.text() }) } catch { message.error('读取私钥文件失败') }
+                      }} />
+                      <Button disabled={draft.ssh.enable !== 1} onClick={() => keyFile.current?.click()}>{draft.ssh.private_key ? '重新选择私钥' : '选择私钥文件'}</Button>
+                      {draft.ssh.private_key && <Button type="text" aria-label="清除私钥" disabled={draft.ssh.enable !== 1} onClick={() => patchSsh({ private_key: '' })}>清除</Button>}
                     </Form.Item>
                     <Form.Item label="Passphrase">
                       <Input.Password
+                        aria-label="私钥口令"
+                        disabled={draft.ssh.enable !== 1}
                         value={draft.ssh.passphrase}
                         onChange={(event) => patchSsh({ passphrase: event.target.value })}
                       />
-                    </Form.Item>
+                    </Form.Item></>}
                   </div>
                 )
               }
