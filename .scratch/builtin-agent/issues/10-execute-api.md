@@ -4,7 +4,7 @@
 
 **Blocked by:** [07 首次接口草稿修改与候选](07-api-draft-candidate.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 
