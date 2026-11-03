@@ -24,6 +24,7 @@ import * as store from '../storage/store'
 import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
 import { redactEvidence } from './evidence'
 import { FlowDependencies } from './dependencies'
+import { FlowRefreshController, definitionRevision } from './refresh'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
@@ -622,6 +623,7 @@ async function runRequestEvent(
 
     return result(event, status, startedAt, {
       detail,
+      definition_revision: runtime.definitions.has(event.event_id) ? definitionRevision(runtime.definitions.get(event.event_id)!) : undefined,
       request: {
         method: record.request.method,
         url: record.request.url,
@@ -834,7 +836,7 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void> } = {}
+  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -860,6 +862,28 @@ export async function runFlow(
     }
   }
   capture(flow.events)
+  const byId = new Map<string, FlowEvent>()
+  const indexEvents = (events: FlowEvent[]): void => { for (const event of events) { byId.set(event.event_id, event); indexEvents(event.children ?? []) } }
+  indexEvents(flow.events)
+  const remaining = (): Array<{ event: FlowEvent; count: number }> => {
+    const pending = new Map<string, { event: FlowEvent; count: number }>()
+    const add = (events: FlowEvent[], count = 1): void => { for (const event of events) {
+      if (!event.enabled || count < 1) continue
+      if (event.type === 'api') pending.set(event.event_id, { event, count: count + (pending.get(event.event_id)?.count ?? 0) })
+      add(event.children ?? [], count * (event.type === 'loop' ? Math.min(Math.max(event.loop_count ?? 1, 1), MAX_LOOP) : 1))
+    } }
+    if (!runtime.frames.length) add(flow.events)
+    runtime.frames.forEach((frame, index) => {
+      const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
+      const events = parent?.children ?? flow.events
+      // Ancestors point at the active child; the deepest frame has already advanced past the completed step.
+      add(events.slice(frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)))
+      if (parent?.type === 'loop') add(events, Math.min(Math.max(parent.loop_count ?? 1, 1), MAX_LOOP) - (frame.iteration ?? 0) - 1)
+    })
+    return [...pending.values()]
+  }
+  options.onControl?.(new FlowRefreshController(projectId,env,runtime.definitions,remaining,applyRequestInput,
+    ()=>({...runtime.globalValues,...runtime.envValues,...runtime.localValues}),flow.events,()=>runtime.cursor.after_instance_id))
   const snapshot: FlowExecutionSnapshot = {
     flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
     captured_at: Date.now(),
