@@ -21,13 +21,20 @@ export class FlowDependencies {
     visit(events)
   }
 
-  blockedReason(event: FlowEvent, previous: FlowEventResult[]): string | undefined {
+  blockedReason(event: FlowEvent, previous: FlowEventResult[], iterationPath: FlowEventResult['iteration_path']): string | undefined {
     if (!event.enabled) return
     const group = this.membership.get(event.event_id)
     if (group && this.failedGroups.has(group)) return '同一逻辑步骤已有失败或依赖阻塞，不能继续执行'
     if (event.depends_on === undefined) {
-      // Later members inherit the successful entry into their logical step.
-      if (group && previous.some(item => this.membership.get(item.event_id) === group)) return
+      // Only adjacent members of this execution instance inherit group admission.
+      if (group) {
+        for (let index = previous.length - 1; index >= 0; index--) {
+          const preceding = previous[index]
+          if (this.membership.get(preceding.event_id) !== group ||
+            JSON.stringify(preceding.iteration_path) !== JSON.stringify(iterationPath)) break
+          if (preceding.status === 'passed') return
+        }
+      }
       if (previous.some(item => item.status === 'failed' || item.status === 'blocked')) return '前序步骤失败或被阻塞；未声明独立依赖，按保守顺序阻塞'
       return
     }

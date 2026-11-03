@@ -407,7 +407,7 @@ export async function sendRequest(
   projectId: string,
   target: Target,
   environmentId?: string,
-  options: { requireResolvedVariables?: boolean; onRequestStart?: () => void; signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
+  options: { requireResolvedVariables?: boolean; onRequestStart?: (auth: unknown) => void; signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
 ): Promise<SendRecord> {
   const settings = options.settings ?? store.getSettings()
   const { env, globals } = options.scopes ? { env: null, globals: { vars: {} } } : loadScopes(projectId, environmentId)
@@ -561,7 +561,7 @@ export async function sendRequest(
               }
             }
             requestRef = request
-            options.onRequestStart?.()
+            options.onRequestStart?.((request as { auth?: { toJSON(): unknown } }).auth?.toJSON())
             activeRequests.set(controls.httpRequestId, controls)
             if (options.signal?.aborted) controls.abort()
           },

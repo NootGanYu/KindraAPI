@@ -57,7 +57,8 @@
     "test:flow-scope-ui": "node scripts/flow-scope-ui.cjs",
     "test:flow-revocation": "esbuild scripts/flow-revocation-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-revocation-smoke.cjs && electron node_modules/.tmp/flow-revocation-smoke.cjs",
     "test:flow-prerequisites": "esbuild scripts/flow-prerequisites-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-prerequisites-smoke.cjs && electron node_modules/.tmp/flow-prerequisites-smoke.cjs",
-    "test:flow-file-review-ui": "node scripts/flow-file-review-ui.cjs"
+    "test:flow-file-review-ui": "node scripts/flow-file-review-ui.cjs",
+    "test:flow-review-regressions": "esbuild scripts/flow-review-regressions.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=scripts/.flow-review-regressions.cjs && electron scripts/.flow-review-regressions.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

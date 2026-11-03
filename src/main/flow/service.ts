@@ -4,6 +4,7 @@ import type { FlowRun } from '@shared/types'
 import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { runFlow } from './engine'
+import { selectFlowEnvironment } from './environment'
 import { redactEvidence } from './evidence'
 import type { FlowRefreshController } from './refresh'
 import type { FlowRefreshPreview } from '@shared/types'
@@ -18,7 +19,7 @@ interface ActiveRun {
 }
 const activeRuns = new Map<string, ActiveRun>()
 const keyOf = (projectId: string, flowId: string): string => JSON.stringify([projectId, flowId])
-const copy = (run: FlowRun): FlowRun => JSON.parse(JSON.stringify(redactEvidence(run))) as FlowRun
+const copy = (run: FlowRun): FlowRun => JSON.parse(JSON.stringify(redactEvidence(run, [], 'run'))) as FlowRun
 
 /** Allocates identity and the flow lock before any request can be dispatched. */
 export function startFlowRun(
@@ -45,9 +46,7 @@ export function startFlowRun(
   if (!flow) throw new Error('流程不存在')
   const key = keyOf(projectId, flowId)
   if (activeRuns.has(key)) throw new Error('此流程已有活动运行，请先查看当前 Run')
-  const environments = store.listEnvironments(projectId)
-  const preferred = environmentId || flow.env_id || store.getSettings().environment_id
-  const env = environments.find(item => item.env_id === preferred) ?? environments[0]
+  const env = selectFlowEnvironment(projectId, flow, environmentId)
   const run: FlowRun = {
     run_id: createId('run'), project_id: projectId, flow_id: flowId, flow_name: flow.name,
     env_id: env?.env_id ?? '', started_at: Date.now(), finished_at: 0, elapsed_ms: 0,

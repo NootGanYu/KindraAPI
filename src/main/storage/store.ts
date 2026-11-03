@@ -1084,7 +1084,7 @@ export function readFlowRuns(projectId: string): FlowRun[] {
     if (!fs.existsSync(dir)) continue
     for (const file of fs.readdirSync(dir).filter(file => file.endsWith('.json'))) {
       const run = readJson<FlowRun | null>(path.join(dir, file), null)
-      if (run?.project_id === projectId) runs.set(run.run_id, redactEvidence(run))
+      if (run?.project_id === projectId) runs.set(run.run_id, redactEvidence(run, [], 'run'))
     }
   }
   return [...runs.values()]
@@ -1112,12 +1112,12 @@ export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
 
 export function getFlowRun(projectId: string, runId: string): FlowRun | null {
   return redactEvidence(readJson<FlowRun | null>(runPath(projectId, runId), null)
-    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null))
+    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null), [], 'run')
 }
 
 export function saveFlowRun(projectId: string, run: FlowRun): FlowRun {
   if (run.project_id !== projectId) throw new Error('项目不匹配')
-  const evidence = redactEvidence(run)
+  const evidence = redactEvidence(run, [], 'run')
   writeJson(runPath(projectId, run.run_id), evidence)
   return evidence
 }

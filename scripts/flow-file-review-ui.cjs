@@ -53,7 +53,7 @@ async function main() {
     await page.getByRole('button', { name: '采用剩余引用更新', exact: true }).click()
     await page.getByLabel('快照版本切换').waitFor()
     assert.equal(hits.length, 1)
-    await page.getByRole('button', { name: '继续已审阅快照', exact: true }).click()
+    await page.getByRole('button', { name: /继续已审阅快照/ }).click()
     const deadline = Date.now() + 10000
     while (true) {
       const result = await page.evaluate(async f => window.api.flows.getRun(f.pid, f.run.run_id), fixture)
