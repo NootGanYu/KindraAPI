@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 共享 UI 与 MCP 运行入口
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] start_flow_run 接受 project_id、flow_id、environment_id、request_id，立即返回 run_id 和真实状态。
 - [ ] 同项目同 request_id 且输入相同返回原 Run；输入不同拒绝，不重复发请求。

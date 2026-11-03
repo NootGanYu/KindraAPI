@@ -187,6 +187,8 @@ const api = {
     delete: (projectId: string, flowId: string) => invoke('flow:delete', projectId, flowId),
     run: (projectId: string, flowId: string, environmentId?: string) =>
       invoke('flow:run', projectId, flowId, environmentId),
+    startRun: (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
+      invoke('flow:run:start', projectId, flowId, environmentId, requestId),
     runs: (projectId: string, limit?: number) => invoke('flow:runs', projectId, limit),
     getRun: (projectId: string, runId: string) => invoke('flow:run:get', projectId, runId)
   },

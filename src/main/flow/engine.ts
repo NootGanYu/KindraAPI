@@ -760,7 +760,8 @@ async function runEvents(
 export async function runFlow(
   projectId: string,
   flow: Flow,
-  environmentId?: string
+  environmentId?: string,
+  options: { runId?: string; startedAt?: number } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
@@ -768,12 +769,12 @@ export async function runFlow(
   const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
   const globals = store.getGlobalVars(projectId)
   const runtime = new FlowRuntime(projectId, env, globals)
-  const startedAt = Date.now()
+  const startedAt = options.startedAt ?? Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
   runtime.persist()
   const finishedAt = Date.now()
   const run: FlowRun = {
-    run_id: createId('run'),
+    run_id: options.runId ?? createId('run'),
     project_id: projectId,
     flow_id: flow.flow_id,
     flow_name: flow.name,

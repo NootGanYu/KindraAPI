@@ -1,14 +1,91 @@
 import type { FlowRun } from '@shared/types'
+import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { runFlow } from './engine'
 
-/** UI 和 MCP 共用已保存流程入口；调用方仍各自负责身份与权限检查。 */
-export async function runSavedFlow(
+interface ActiveRun {
+  run: FlowRun
+  completion?: Promise<FlowRun>
+}
+const activeRuns = new Map<string, ActiveRun>()
+const keyOf = (projectId: string, flowId: string): string => JSON.stringify([projectId, flowId])
+const copy = (run: FlowRun): FlowRun => JSON.parse(JSON.stringify(run)) as FlowRun
+
+/** Allocates identity and the flow lock before any request can be dispatched. */
+export function startFlowRun(
   projectId: string,
   flowId: string,
-  environmentId?: string
-): Promise<FlowRun> {
+  environmentId: string | undefined,
+  requestId: string,
+  source: 'ui' | 'mcp' = 'ui'
+): FlowRun {
+  if (!requestId.trim()) throw new Error('request_id 不能为空')
+  const previous = store.readFlowRuns(projectId).find(run => run.request_id === requestId)
+  if (previous) {
+    if (previous.flow_id !== flowId || previous.request_environment_id !== (environmentId ?? '')) {
+      throw new Error('request_id 已用于不同的运行输入')
+    }
+    return getFlowRun(projectId, previous.run_id)!
+  }
   const flow = store.getFlow(projectId, flowId)
   if (!flow) throw new Error('流程不存在')
-  return runFlow(projectId, flow, environmentId)
+  const key = keyOf(projectId, flowId)
+  if (activeRuns.has(key)) throw new Error('此流程已有活动运行，请先查看当前 Run')
+  const environments = store.listEnvironments(projectId)
+  const preferred = environmentId || flow.env_id || store.getSettings().environment_id
+  const env = environments.find(item => item.env_id === preferred) ?? environments[0]
+  const run: FlowRun = {
+    run_id: createId('run'), project_id: projectId, flow_id: flowId, flow_name: flow.name,
+    env_id: env?.env_id ?? '', started_at: Date.now(), finished_at: 0, elapsed_ms: 0,
+    status: 'running', events: [], variables: {}, console: [], request_id: requestId,
+    request_environment_id: environmentId ?? '', source
+  }
+  store.saveFlowRun(projectId, run)
+  const active: ActiveRun = { run }
+  activeRuns.set(key, active)
+  active.completion = runFlow(projectId, flow, environmentId, { runId: run.run_id, startedAt: run.started_at })
+    .then(result => {
+      active.run = { ...run, ...result }
+      store.saveFlowRun(projectId, active.run)
+      return active.run
+    }, error => {
+      const finishedAt = Date.now()
+      active.run = { ...run, status: 'failed', error: (error as Error).message, finished_at: finishedAt, elapsed_ms: finishedAt - run.started_at }
+      store.saveFlowRun(projectId, active.run)
+      return active.run
+    })
+    .finally(() => activeRuns.delete(key))
+  // The caller receives a detached record, never the live execution state.
+  return copy(run)
+}
+
+export function getFlowRun(projectId: string, runId: string): FlowRun | null {
+  for (const active of activeRuns.values()) {
+    if (active.run.project_id === projectId && active.run.run_id === runId) return copy(active.run)
+  }
+  return store.getFlowRun(projectId, runId)
+}
+
+/** The compatibility wait is bounded independently of the lifetime of the Run. */
+export async function waitForFlowRun(projectId: string, runId: string, timeoutMs = 20_000): Promise<FlowRun> {
+  const run = getFlowRun(projectId, runId)
+  if (!run) throw new Error('运行记录不存在')
+  const active = activeRuns.get(keyOf(projectId, run.flow_id))
+  if (!active || active.run.run_id !== runId || !active.completion) return run
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return copy(await Promise.race([
+      active.completion,
+      new Promise<FlowRun>(resolve => { timer = setTimeout(() => resolve(active.run), timeoutMs) })
+    ]))
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** UI and MCP share this saved-flow entry, while retaining their own authorization. */
+export async function runSavedFlow(projectId: string, flowId: string, environmentId?: string): Promise<FlowRun> {
+  const run = startFlowRun(projectId, flowId, environmentId, createId('request'))
+  const active = activeRuns.get(keyOf(projectId, flowId))
+  return copy(await (active?.completion ?? Promise.resolve(run)))
 }

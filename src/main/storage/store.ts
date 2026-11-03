@@ -993,6 +993,10 @@ function flowsDir(projectId: string): string {
 }
 
 function runsDir(projectId: string): string {
+  return path.join(localProjectDir(projectId), 'executions', 'runs')
+}
+
+function legacyRunsDir(projectId: string): string {
   return path.join(projectDir(projectId), 'executions', 'runs')
 }
 
@@ -1042,14 +1046,21 @@ function countResults(
   }
 }
 
+/** Local evidence first; existing project reports remain readable without migration. */
+export function readFlowRuns(projectId: string): FlowRun[] {
+  const runs = new Map<string, FlowRun>()
+  for (const dir of [legacyRunsDir(projectId), runsDir(projectId)]) {
+    if (!fs.existsSync(dir)) continue
+    for (const file of fs.readdirSync(dir).filter(file => file.endsWith('.json'))) {
+      const run = readJson<FlowRun | null>(path.join(dir, file), null)
+      if (run?.project_id === projectId) runs.set(run.run_id, run)
+    }
+  }
+  return [...runs.values()]
+}
+
 export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
-  const dir = runsDir(projectId)
-  if (!fs.existsSync(dir)) return []
-  return fs
-    .readdirSync(dir)
-    .filter((file) => file.endsWith('.json'))
-    .map((file) => readJson<FlowRun | null>(path.join(dir, file), null))
-    .filter((run): run is FlowRun => Boolean(run))
+  return readFlowRuns(projectId)
     .sort((a, b) => b.started_at - a.started_at)
     .slice(0, Math.max(1, limit))
     .map((run) => {
@@ -1070,6 +1081,7 @@ export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
 
 export function getFlowRun(projectId: string, runId: string): FlowRun | null {
   return readJson<FlowRun | null>(runPath(projectId, runId), null)
+    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null)
 }
 
 export function saveFlowRun(projectId: string, run: FlowRun): FlowRun {
@@ -1080,6 +1092,7 @@ export function saveFlowRun(projectId: string, run: FlowRun): FlowRun {
 
 export function clearFlowRuns(projectId: string): void {
   fs.rmSync(runsDir(projectId), { recursive: true, force: true })
+  fs.rmSync(legacyRunsDir(projectId), { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------

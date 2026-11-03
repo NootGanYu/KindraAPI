@@ -37,7 +37,7 @@ import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
-import { runSavedFlow } from './flow/service'
+import { runSavedFlow, startFlowRun, getFlowRun } from './flow/service'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
@@ -323,9 +323,12 @@ export function registerIpc(): void {
   handle('flow:run', (projectId: string, flowId: string, environmentId?: string) =>
     runSavedFlow(projectId, flowId, environmentId)
   )
+  handle('flow:run:start', (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
+    startFlowRun(projectId, flowId, environmentId, requestId, 'ui')
+  )
   handle('flow:runs', (projectId: string, limit?: number) => store.listFlowRuns(projectId, limit))
   handle('flow:run:get', (projectId: string, runId: string) =>
-    store.getFlowRun(projectId, runId)
+    getFlowRun(projectId, runId)
   )
 
   // Data dictionary
