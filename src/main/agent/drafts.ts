@@ -153,7 +153,9 @@ export function restoreCandidate(pid: string, id: string): AgentCandidate {
   if (!saved.target) throw new Error('接口已删除，无法恢复到草稿')
   if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后恢复候选')
   // A restored snapshot is still a proposal against today's draft, never a formal save.
-  const source = candidate.application ? { ...candidate, base: candidate.application.before, proposal: candidate.application.after } : candidate
+  const source = candidate.status === 'conflict' && candidate.merge?.operation === 'restore'
+    ? { ...candidate, base: candidate.merge.base!, proposal: candidate.merge.proposal! }
+    : candidate.application ? { ...candidate, base: candidate.application.before, proposal: candidate.application.after } : candidate
   const merge = buildMerge(source, draft.target, saved.revision)
   merge.operation = 'restore'
   return applyMergedCandidate(candidate, draft.target, merge)
