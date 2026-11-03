@@ -1,3 +1,5 @@
+import { draftCommands, stashAgentDrafts } from './drafts'
+import { activePlanCount } from './plans'
 import { projectRedactor } from './redaction'
 import { planCommands, shutdownPlans } from './plans'
 import fs from 'node:fs'
@@ -118,4 +120,4 @@ function cancelMessage(projectId: string, id: string): boolean {
 }
 export function shutdownAgent(): void { shutdownPlans(); for (const controller of active.values()) controller.abort() }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: () => { shutdownAgent(); stashAgentDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

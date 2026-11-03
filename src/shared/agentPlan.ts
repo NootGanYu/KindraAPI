@@ -12,7 +12,8 @@ export interface ReadPlanInput {
 }
 export interface AgentPlanStep {
   step_id: string
-  operation: 'read_api'
+  operation: 'read_api' | 'propose_api_change'
+  changes?: unknown
   target_name?: string
   source?: 'draft' | 'saved'
   dependencies_explicit?: boolean

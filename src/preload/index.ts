@@ -18,6 +18,16 @@ const subscribe = (
 
 const api = {
   agent: {
+    saveManualDraftOnQuit: (projectId: string, target: unknown, revision: string) => invoke('agent:saveManualDraftOnQuit', projectId, target, revision),
+    getDraft: (projectId: string, targetId: string) => invoke('agent:getDraft', projectId, targetId),
+    syncEditorDraft: (projectId: string, target: unknown) => invoke('agent:syncEditorDraft', projectId, target),
+    listAgentDrafts: (projectId: string) => invoke('agent:listAgentDrafts', projectId),
+    listCandidates: (projectId: string, targetId?: string) => invoke('agent:listCandidates', projectId, targetId),
+    applyCandidate: (projectId: string, candidateId: string) => invoke('agent:applyCandidate', projectId, candidateId),
+    onDraftChanged: (callback: (event: unknown) => void) => subscribe('agent:draft-changed', callback),
+    getActivity: () => invoke('agent:getActivity'),
+    prepareQuit: () => invoke('agent:prepareQuit'),
+    proposeEditPlan: (projectId: string, input: unknown) => invoke('agent:proposeEditPlan', projectId, input),
     proposeReadPlan: (projectId: string, input: unknown) => invoke('agent:proposeReadPlan', projectId, input),
     getPlan: (projectId: string, id: string) => invoke('agent:getPlan', projectId, id),
     listPlans: (projectId: string) => invoke('agent:listPlans', projectId),

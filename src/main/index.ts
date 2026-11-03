@@ -1,4 +1,4 @@
-import { shutdownAgent } from './agent/service'
+import { shutdownAgent, agentCommands } from './agent/service'
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -158,6 +158,7 @@ function createWindow(): void {
 
   ipcMain.removeHandler('app:confirm-close')
   ipcMain.handle('app:confirm-close', () => {
+    agentCommands.prepareQuit()
     allowClose = true
     app.quit()
     return { ok: true, data: true }
