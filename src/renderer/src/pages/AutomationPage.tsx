@@ -89,12 +89,16 @@ function countRun(events: FlowEventResult[]): { passed: number; failed: number; 
     for (const item of list) {
       if (item.status === 'passed') acc.passed += 1
       else if (item.status === 'failed') acc.failed += 1
-      else acc.skipped += 1
+      else if (item.status === 'skipped') acc.skipped += 1
       if (item.children?.length) walk(item.children)
     }
   }
   walk(events)
   return acc
+}
+
+function runStatusLabel(status: string): string {
+  return ({ running: '运行中', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知' } as Record<string, string>)[status] ?? status
 }
 
 export default function AutomationPage(): JSX.Element {
@@ -113,6 +117,8 @@ export default function AutomationPage(): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [starting, setStarting] = useState(false)
   const running = starting || run?.status === 'running'
+  const projectSelection = useRef(project?.project_id)
+  projectSelection.current = project?.project_id
   const selection = useRef('')
   selection.current = `${project?.project_id ?? ''}/${flow?.flow_id ?? ''}`
 
@@ -121,15 +127,19 @@ export default function AutomationPage(): JSX.Element {
     [targets]
   )
 
-  const reloadRuns = async (flowId: string): Promise<void> => {
-    if (!project) return
+  const reloadRuns = async (flowId: string): Promise<FlowRunSummary[]> => {
+    if (!project) return []
     const result = await window.api.flows.runs(project.project_id, 50)
-    if (result.ok) setRuns(result.data.filter((item) => item.flow_id === flowId))
+    if (projectSelection.current !== project.project_id) return []
+    const matching = result.ok ? result.data.filter((item) => item.flow_id === flowId) : []
+    setRuns(matching)
+    return matching
   }
 
   const loadFlow = async (flowId: string): Promise<void> => {
     if (!project) return
     const result = await window.api.flows.get(project.project_id, flowId)
+    if (projectSelection.current !== project.project_id) return
     if (!result.ok || !result.data) {
       message.error(result.ok ? '流程不存在' : result.error)
       return
@@ -138,12 +148,17 @@ export default function AutomationPage(): JSX.Element {
     setDirty(false)
     setRun(null)
     setEnvId(result.data.env_id || currentEnvId || environments[0]?.env_id || '')
-    await reloadRuns(flowId)
+    const history = await reloadRuns(flowId)
+    if (history[0]) {
+      const latest = await window.api.flows.getRun(project.project_id, history[0].run_id)
+      if (projectSelection.current === project.project_id && latest.ok) setRun(latest.data)
+    }
   }
 
   const reloadFlows = async (preferredId?: string): Promise<void> => {
     if (!project) return
     const result = await window.api.flows.list(project.project_id)
+    if (projectSelection.current !== project.project_id) return
     if (!result.ok) {
       message.error(result.error)
       return
@@ -433,19 +448,24 @@ export default function AutomationPage(): JSX.Element {
       <aside className="automation-panel">
         <div className="automation-panel-head">
           <span>运行结果</span>
+          {run ? <Tooltip title={run.snapshot?.flow_revision ?? '旧记录未记录快照版本'}>
+            <Tag>运行版本：{run.snapshot?.flow_revision.slice(0, 8) ?? '旧记录'}</Tag>
+          </Tooltip> : null}
           {run ? (
             <Tag color={run.status === 'running' ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
-              {run.status === 'running' ? '运行中' : run.status === 'passed' ? '通过' : '失败'}
+              {runStatusLabel(run.status)}
             </Tag>
           ) : null}
         </div>
         <div className="automation-scroll">
-          {running ? (
+          {starting && !run ? (
             <div style={{ padding: 30, textAlign: 'center' }}>
               <Spin tip="运行中…" />
             </div>
           ) : run ? (
             <>
+              {run.status === 'running' ? <div style={{ padding: 12 }}><Spin size="small" /> 正在运行，已完成结果持续保存</div> : null}
+              {run.error ? <div className="run-error">{run.error}</div> : null}
               <div className="run-summary">
                 <div>
                   <b>{run.elapsed_ms}</b>
@@ -518,7 +538,7 @@ export default function AutomationPage(): JSX.Element {
                   onClick={() => void openRun(item.run_id)}
                 >
                   <span className={item.status === 'running' ? 'run-status' : item.status === 'passed' ? 'run-status passed' : 'run-status failed'}>
-                    {item.status === 'running' ? '运行中' : item.status === 'passed' ? '通过' : '失败'}
+                    {runStatusLabel(item.status)}
                   </span>
                   <span className="run-history-time">
                     {new Date(item.started_at).toLocaleString()}
@@ -813,7 +833,7 @@ function ResultRows({
             ) : null}
             <span className="muted">{event.elapsed_ms}ms</span>
             <span className={`run-status ${event.status}`}>
-              {event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : '跳过'}
+              {event.status === 'running' ? '运行中' : event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : '跳过'}
             </span>
           </div>
           {event.detail ? <div className="run-detail">{event.detail}</div> : null}

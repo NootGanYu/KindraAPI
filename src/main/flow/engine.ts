@@ -1,4 +1,6 @@
 import vm from 'node:vm'
+import crypto from 'node:crypto'
+import { FlowFileChangedError } from '../request/files'
 import type {
   AssertionResult,
   ConsoleEntry,
@@ -7,6 +9,7 @@ import type {
   FlowAssertion,
   FlowEvent,
   FlowEventResult,
+  FlowExecutionSnapshot,
   FlowRequestInput,
   FlowResponseSnapshot,
   FlowRun,
@@ -17,7 +20,7 @@ import type {
 } from '@shared/types'
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
-import { sendRequest } from '../request/executor'
+import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
 import { redactEvidence } from './evidence'
 
 const MAX_LOOP = 50
@@ -140,8 +143,9 @@ class FlowRuntime {
   onProgress?: () => void
   requestInFlight = false
   remoteUnknown = false
-  private envDirty = false
-  private globalsDirty = false
+  readonly definitions = new Map<string, RequestExecutionDefinition>()
+  readonly settings = store.getSettings()
+  fileReviewRequired = false
 
   constructor(projectId: string, env: Environment | null, globals: GlobalVars) {
     this.projectId = projectId
@@ -167,12 +171,10 @@ class FlowRuntime {
 
   setEnv(key: string, value: string): void {
     this.envValues[key] = value
-    this.envDirty = true
   }
 
   setGlobal(key: string, value: string): void {
     this.globalValues[key] = value
-    this.globalsDirty = true
   }
 
   setLocal(key: string, value: string): void {
@@ -195,41 +197,6 @@ class FlowRuntime {
         }
       })
     })
-  }
-
-  persist(): void {
-    if (this.env && this.envDirty) {
-      for (const [key, value] of Object.entries(this.envValues)) {
-        const existing = this.env.env_var_list[key]
-        if (existing) {
-          existing.current_value = value
-          existing.is_checked = existing.is_checked > 0 ? existing.is_checked : 1
-        } else {
-          this.env.env_var_list[key] = {
-            current_value: value,
-            initial_value: '',
-            description: '',
-            is_checked: 1
-          }
-        }
-      }
-      store.saveEnvironment(this.projectId, this.env)
-      this.envDirty = false
-    }
-    if (this.globalsDirty) {
-      for (const [key, value] of Object.entries(this.globalValues)) {
-        const existing = this.globals.vars[key]
-        if (existing) existing.current_value = value
-        else
-          this.globals.vars[key] = {
-            current_value: value,
-            initial_value: '',
-            description: ''
-          }
-      }
-      store.saveGlobalVars(this.projectId, this.globals)
-      this.globalsDirty = false
-    }
   }
 }
 
@@ -594,20 +561,23 @@ async function runRequestEvent(
   let target: Target | null = null
   if (event.type === 'api') {
     if (!event.target_id) return result(event, 'failed', startedAt, { error: '未选择接口' })
-    target = store.getTarget(projectId, event.target_id)
+    target = runtime.definitions.get(event.event_id)?.target ?? null
     if (!target) return result(event, 'failed', startedAt, { error: '接口不存在或已删除' })
   } else {
     target = inlineTarget(projectId, event)
   }
 
   const prepared = applyRequestInput(target, event.input)
-  runtime.persist()
   try {
     runtime.requestInFlight = true
     runtime.onProgress?.()
-    const record = await sendRequest(projectId, prepared, flow.env_id || undefined)
+    const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
+      definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
+      scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
+    })
+    if (record.error?.type === 'file-changed') runtime.fileReviewRequired = true
     runtime.requestInFlight = false
-    if (record.error && !record.response) runtime.remoteUnknown = true
+    if (record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
     store.addSendRecord(projectId, redactEvidence(record, [runtime.envValues, runtime.globalValues, runtime.localValues]))
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
@@ -641,6 +611,7 @@ async function runRequestEvent(
       error: record.error?.message
     })
   } catch (error) {
+    if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -666,7 +637,6 @@ async function runEvent(
 
     if (event.type === 'script') {
       const scriptResult = runScript(runtime, event.script ?? '')
-      runtime.persist()
       const failed = Boolean(scriptResult.error) || scriptResult.assertions.some((a) => !a.passed)
       const passedCount = scriptResult.assertions.filter((a) => a.passed).length
       const detail = scriptResult.error
@@ -751,6 +721,7 @@ async function runEvent(
 
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
+    if (error instanceof FlowFileChangedError) runtime.fileReviewRequired = true
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -764,6 +735,11 @@ async function runEvents(
   iteration?: number
 ): Promise<FlowEventResult[]> {
   for (const event of events) {
+    if (runtime.fileReviewRequired) {
+      results.push(...skipped([event], '外部文件变更，需审查后重新运行'))
+      runtime.onProgress?.()
+      continue
+    }
     const current = result(event, 'running', Date.now(), { iteration })
     results.push(current)
     runtime.resultStack.push(current)
@@ -779,14 +755,40 @@ export async function runFlow(
   projectId: string,
   flow: Flow,
   environmentId?: string,
-  options: { runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void } = {}
+  options: { runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void } = {}
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
   const preferredEnvId = environmentId || flow.env_id || settings.environment_id
   const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
   const globals = store.getGlobalVars(projectId)
+  flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
+  const capture = (events: FlowEvent[]): void => {
+    for (const event of events) {
+      const target = event.type === 'api' && event.target_id
+        ? store.getTarget(projectId, event.target_id)
+        : event.type === 'request' ? inlineTarget(projectId, event) : null
+      if (target) {
+        runtime.definitions.set(event.event_id,
+          captureRequestDefinition(projectId, applyRequestInput(target, event.input), env))
+      }
+      capture(event.children ?? [])
+    }
+  }
+  capture(flow.events)
+  const snapshot: FlowExecutionSnapshot = {
+    flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
+    captured_at: Date.now(),
+    environment_id: env?.env_id ?? '',
+    requests: [...runtime.definitions].map(([event_id, definition]) => ({
+      event_id,
+      target_id: definition.target.target_id,
+      files: definition.files,
+      revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex')
+    }))
+  }
+  options.onSnapshot?.(snapshot)
   const startedAt = options.startedAt ?? Date.now()
   const runId = options.runId ?? createId('run')
   runtime.onProgress = () => options.onProgress?.({
@@ -797,9 +799,9 @@ export async function runFlow(
     remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined
   })
   const events = await runEvents(projectId, flow.events, runtime, flow)
-  runtime.persist()
   const finishedAt = Date.now()
   const run: FlowRun = {
+    snapshot,
     run_id: runId,
     project_id: projectId,
     flow_id: flow.flow_id,
@@ -815,7 +817,7 @@ export async function runFlow(
     events,
     console: runtime.consoleEntries
   }
-  store.saveFlowRun(projectId, run)
+  if (!options.onProgress) store.saveFlowRun(projectId, run)
   return redactEvidence(run)
 }
 

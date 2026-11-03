@@ -45,10 +45,17 @@ export function startFlowRun(
   store.saveFlowRun(projectId, run)
   const active: ActiveRun = { run }
   activeRuns.set(key, active)
-  active.completion = runFlow(projectId, flow, environmentId, { runId: run.run_id, startedAt: run.started_at, onProgress: partial => {
-    active.run = { ...run, ...copy(partial) }
-    store.saveFlowRun(projectId, active.run)
-  } })
+  active.completion = runFlow(projectId, flow, environmentId, {
+    runId: run.run_id, startedAt: run.started_at,
+    onProgress: partial => {
+      active.run = { ...run, ...copy(partial) }
+      store.saveFlowRun(projectId, active.run)
+    },
+    onSnapshot: snapshot => {
+      run.snapshot = snapshot
+      store.saveFlowRun(projectId, run)
+    }
+  })
     .then(result => {
       active.run = { ...run, ...result }
       store.saveFlowRun(projectId, active.run)

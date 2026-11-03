@@ -1070,7 +1070,7 @@ function countResults(
   for (const event of events) {
     if (event.status === 'passed') acc.passed += 1
     else if (event.status === 'failed') acc.failed += 1
-    else acc.skipped += 1
+    else if (event.status === 'skipped') acc.skipped += 1
     if (event.children?.length) countResults(event.children, acc)
   }
 }

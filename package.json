@@ -39,6 +39,7 @@
     "test:review-regressions": "node scripts/review-regressions.cjs",
     "test:model-actions": "node scripts/model-editor-actions-smoke.cjs",
     "test:dictionary-data": "esbuild scripts/dictionary-import-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/dictionary-import-smoke.cjs && electron node_modules/.tmp/dictionary-import-smoke.cjs",
+    "test:flow-snapshot": "esbuild scripts/flow-snapshot-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-snapshot-smoke.cjs && electron node_modules/.tmp/flow-snapshot-smoke.cjs",
     "test:flow-async": "esbuild scripts/flow-async-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-async-smoke.cjs && electron node_modules/.tmp/flow-async-smoke.cjs",
     "test:flow-definitions": "esbuild scripts/flow-definition-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-definition-smoke.cjs && electron node_modules/.tmp/flow-definition-smoke.cjs",
     "test:flow-progress": "esbuild scripts/flow-progress-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=scripts/.flow-progress-smoke.cjs && electron scripts/.flow-progress-smoke.cjs"
