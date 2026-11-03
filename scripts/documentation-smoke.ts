@@ -328,13 +328,28 @@ async function main(): Promise<void> {
     const executeHtml = await executeResponse.text()
     assert.equal(executeResponse.status, 200)
     assert(executeHtml.includes('debug-ok'), 'share proxy executes the allowed interface')
+    const jsonExecute = await fetch(
+      `http://127.0.0.1:${docPort}/share/${debugShare.share_id}/execute`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json'
+        },
+        body: executeBody
+      }
+    )
+    const jsonData: any = await jsonExecute.json()
+    assert.equal(jsonData.ok, true)
+    assert(String(jsonData.body).includes('debug-ok'), 'json execute response')
     const debugPage = await (
       await fetch(
         `http://127.0.0.1:${docPort}/share/${debugShare.share_id}/a/${debugTarget.target_id}`
       )
     ).text()
     assert(
-      debugPage.includes('在线调试') &&
+      debugPage.includes('data-debug-form') &&
+        debugPage.includes('/share-assets/debug.js') &&
         debugPage.includes(`/share/${debugShare.share_id}/execute`),
       'debug form is rendered when enabled'
     )

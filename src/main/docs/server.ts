@@ -22,6 +22,7 @@ import { sendRequest } from '../request/executor'
 import { descriptionToHtml, htmlToText } from '@shared/richText'
 import { buildFieldRows, buildFieldSchema, typeLabel, type JsonFieldRow } from '@shared/jsonFields'
 import { createZip } from './zip'
+import { DEBUG_SCRIPT } from './debug-client'
 import { generateModelExample, type ExampleWarning } from '../schema/example'
 
 const DOC_HOST = '0.0.0.0'
@@ -181,6 +182,11 @@ export async function shutdownDocs(): Promise<void> {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(body))
+}
+
 function sendText(res: http.ServerResponse, code: number, body: string): void {
   res.statusCode = code
   res.setHeader('Content-Type', 'text/plain; charset=utf-8')
@@ -215,7 +221,7 @@ function setSecurityHeaders(res: http.ServerResponse): void {
   res.setHeader('Referrer-Policy', 'no-referrer')
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; style-src 'unsafe-inline'; img-src data: http: https:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data: http: https:; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
   )
   res.setHeader('Cache-Control', 'no-store')
 }
@@ -412,14 +418,34 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
 .api-attrs{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0 0;font-size:12.5px;color:var(--text)}
 .api-attr b{color:var(--muted);font-weight:500;margin-right:6px}
-.try-block{border:1px solid var(--line);border-radius:8px;background:var(--soft);padding:14px 16px}
-.try-form{display:flex;flex-direction:column;gap:12px;margin-top:10px}
-.try-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
-.try-fields label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
-.try-fields label.wide{grid-column:1/-1}
-.try-fields input,.try-fields textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:4px;padding:6px 8px;font:12px/1.5 var(--mono,ui-monospace,Menlo,monospace);background:#fff;color:var(--text)}
-.try-form button{align-self:flex-start;border:0;border-radius:5px;background:#2f8f62;color:#fff;padding:8px 20px;font-size:13px;cursor:pointer}
-.try-note{color:var(--muted);font-size:12px;margin:10px 0 0}
+.try-toggle{margin-left:auto;border:1px solid var(--line);background:#fff;color:var(--text);padding:4px 12px;border-radius:5px;font-size:12px;cursor:pointer}
+.try-toggle.on{background:#8a6b3b;border-color:#8a6b3b;color:#fff}
+.value-edit{display:none;width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--line);border-radius:4px;font:13px var(--mono,ui-monospace,Menlo,monospace)}
+.editing .value-view{display:none}
+.editing .value-edit{display:block}
+.body-edit{display:none;width:100%;min-height:140px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:4px;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace);resize:vertical;box-sizing:border-box}
+.editing .body-view{display:none}
+.editing .body-edit{display:block}
+.try-actions{display:none;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.editing .try-actions{display:flex}
+.try-send{border:0;border-radius:5px;background:#2f8f62;color:#fff;padding:8px 20px;font-size:13px;cursor:pointer}
+.try-send:disabled{opacity:.6;cursor:default}
+.try-hint{color:var(--muted);font-size:12px}
+.try-response{margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
+.try-response[hidden]{display:none}
+.try-response-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.try-code{font:600 12px ui-monospace,Menlo,monospace;padding:2px 8px;border-radius:4px;background:#f1e8d7;color:#8a6b3b}
+.try-code.ok{background:#e3f3ea;color:#2f8f62}
+.try-code.error{background:#fbe8e5;color:#c9463a}
+.try-meta{color:var(--muted);font-size:12px}
+.try-headers{font-size:12px;margin:0 0 10px}
+.try-headers summary{cursor:pointer;color:var(--muted)}
+.try-headers td{border-bottom:1px solid var(--line);padding:4px 6px;word-break:break-all}
+.try-body{background:#faf9f6;border:1px solid var(--line);border-radius:4px;padding:12px;max-height:520px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace);margin:0}
+.json-k{color:#b51b1b}
+.json-s{color:#0451a5}
+.json-n{color:#00875a}
+.json-l{color:#7951a5}
 .try-result{max-width:960px;margin:0 auto;padding:24px 0}
 .try-result-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .try-result-head a{margin-left:auto;color:#2f6bb0}
@@ -570,10 +596,29 @@ function renderParamTable(params: Param[], showValue = true): string {
   return renderDocumentationTable(['参数名', '类型', ...(showValue ? ['值'] : []), ...RULE_HEADINGS], params.map(p => [p.key, p.field_type || '待补充', ...(showValue ? [p.field_type === 'file' ? fileNameOf(p.value) : p.value] : []), ...ruleCells(p)]))
 }
 
-function renderParamGroup(title: string, params: Param[]): string {
+function renderEditableParamTable(params: Param[], prefix: string): string {
+  const headings = ['参数名', '类型', '值', ...RULE_HEADINGS]
+  const rows = params.map((param) => {
+    const value = param.field_type === 'file' ? fileNameOf(param.value) : param.value
+    return (
+      `<tr><td>${escapeHtml(param.key)}</td><td>${escapeHtml(param.field_type || '待补充')}</td>` +
+      `<td><span class="value-view">${escapeHtml(value)}</span>` +
+      `<input class="value-edit" type="text" name="${escapeHtml(`${prefix}:${param.key}`)}" value="${escapeHtml(value)}" autocomplete="off"></td>` +
+      ruleCells(param)
+        .map((cell) => `<td>${escapeHtml(cell).replace(/\n/g, '<br>')}</td>`)
+        .join('') +
+      '</tr>'
+    )
+  })
+  return `<div style="overflow-x:auto"><table><thead><tr>${headings
+    .map((heading) => `<th>${escapeHtml(heading)}</th>`)
+    .join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
+}
+
+function renderParamGroup(title: string, params: Param[], prefix?: string): string {
   const list = activeParams(params)
   if (list.length === 0) return ''
-  return `<h4>${escapeHtml(title)}</h4>${renderParamTable(list)}`
+  return `<h4>${escapeHtml(title)}</h4>${prefix ? renderEditableParamTable(list, prefix) : renderParamTable(list)}`
 }
 
 function renderFieldDocsTable(rows: JsonFieldRow[], title = '请求体字段说明'): string {
@@ -663,7 +708,8 @@ ${renderFieldDocsTable(buildFieldRows(raw, example.field_docs ?? []).exportedRow
 function renderBody(
   target: Target,
   settings: DocSettings,
-  warnings: ExampleWarning[] = []
+  warnings: ExampleWarning[] = [],
+  editablePrefix?: string
 ): string {
   if (!settings.show_request || !settings.show_body) return ''
   const body = target.request?.body
@@ -674,9 +720,8 @@ function renderBody(
   if (mode === 'urlencoded' || mode === 'formdata') {
     const params = activeParams(mode === 'formdata' ? body.formdata : body.urlencoded)
     if (params.length === 0) return ''
-    return `<h4>${mode === 'formdata' ? 'form-data' : 'x-www-form-urlencoded'}</h4>${renderParamTable(
-      params
-    )}`
+    const title = mode === 'formdata' ? 'form-data' : 'x-www-form-urlencoded'
+    return `<h4>${title}</h4>${editablePrefix ? renderEditableParamTable(params, 'b') : renderParamTable(params)}`
   }
   if (mode === 'binary') {
     if (!body.binary?.file_name) return ''
@@ -690,7 +735,11 @@ function renderBody(
   const fieldTable = renderFieldDocsTable(fieldRows)
   const warningBlock = renderWarning(warnings, raw ?? '')
   if (!raw && !fieldTable) return warningBlock
-  const prettyBody = raw ? `<h4>请求体</h4><pre>${escapeHtml(pretty(raw))}</pre>` : ''
+  const prettyBody = raw
+    ? editablePrefix
+      ? `<h4>请求体</h4><pre class="body-view">${escapeHtml(pretty(raw))}</pre><textarea class="body-edit" name="body" spellcheck="false">${escapeHtml(pretty(raw))}</textarea>`
+      : `<h4>请求体</h4><pre>${escapeHtml(pretty(raw))}</pre>`
+    : ''
   return `${warningBlock}${prettyBody}${fieldTable}`
 }
 
@@ -790,49 +839,6 @@ function customAttributeRows(
   return rows
 }
 
-/** 在线分享的调试表单；只提交文档中已声明的参数，目标地址不可修改。 */
-function renderDebugForm(target: Target, shareId: string): string {
-  const request = target.request
-  if (!request) return ''
-  const fields: string[] = []
-  const add = (label: string, prefix: string, params?: Param[]): void => {
-    for (const param of activeParams(params ?? [])) {
-      if (!param.key) continue
-      fields.push(
-        `<label><span>${escapeHtml(label)} · ${escapeHtml(param.key)}</span>` +
-          `<input name="${prefix}:${escapeHtml(param.key)}" value="${escapeHtml(param.value ?? '')}" autocomplete="off"></label>`
-      )
-    }
-  }
-  add('Query', 'q', request.query?.parameter)
-  add('Path', 'p', request.restful?.parameter)
-  add('Header', 'h', request.header?.parameter)
-  add('Cookie', 'c', request.cookie?.parameter)
-  const body = request.body
-  if (body && (body.mode === 'json' || body.mode === 'raw')) {
-    fields.push(
-      `<label class="wide"><span>Body</span><textarea name="body" rows="6" spellcheck="false">${escapeHtml(body.raw ?? '')}</textarea></label>`
-    )
-  } else if (body && (body.mode === 'urlencoded' || body.mode === 'formdata')) {
-    for (const param of body[body.mode] ?? []) {
-      if (!param.key) continue
-      fields.push(
-        `<label><span>Body · ${escapeHtml(param.key)}</span><input name="b:${escapeHtml(param.key)}" value="${escapeHtml(param.value ?? '')}" autocomplete="off"></label>`
-      )
-    }
-  }
-  if (!fields.length) return ''
-  return `<div class="api-block try-block">
-<h3>在线调试</h3>
-<form method="post" action="/share/${escapeHtml(shareId)}/execute" class="try-form">
-<input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">
-<div class="try-fields">${fields.join('')}</div>
-<button type="submit">发送请求</button>
-</form>
-<p class="try-note">请求由分享者本机代理发出，仅限本分享内的接口。</p>
-</div>`
-}
-
 function renderApi(
   target: Target,
   settings: DocSettings,
@@ -856,8 +862,7 @@ function renderApi(
         )
         .join('')}</div>`
     : ''
-  const debugBlock =
-    shareId && settings.allow_debug ? renderDebugForm(target, shareId) : ''
+  const debug = Boolean(shareId && settings.allow_debug)
   const method = methodClass(target.method)
   const label = methodText(target.method)
   const request = target.request
@@ -865,22 +870,32 @@ function renderApi(
 
   const paramBlock = settings.show_request
     ? [
-        renderParamGroup('Path 参数', request?.restful?.parameter ?? []),
-        renderParamGroup('Query 参数', request?.query?.parameter ?? []),
-        renderParamGroup('Header 参数', request?.header?.parameter ?? []),
-        renderParamGroup('Cookie 参数', request?.cookie?.parameter ?? [])
+        renderParamGroup('Path 参数', request?.restful?.parameter ?? [], debug ? 'p' : undefined),
+        renderParamGroup('Query 参数', request?.query?.parameter ?? [], debug ? 'q' : undefined),
+        renderParamGroup('Header 参数', request?.header?.parameter ?? [], debug ? 'h' : undefined),
+        renderParamGroup('Cookie 参数', request?.cookie?.parameter ?? [], debug ? 'c' : undefined)
       ].join('')
     : ''
 
   const bodyBlock = renderBody(
     target,
     settings,
-    warnings?.requestBodies.get(target.target_id) ?? []
+    warnings?.requestBodies.get(target.target_id) ?? [],
+    debug ? 'body' : undefined
   )
-  const requestSection =
+  const debugActions = debug
+    ? `<div class="try-actions"><button type="submit" class="try-send">发送请求</button><span class="try-hint">请求由分享者本机代理发出，仅限本分享内的接口。</span></div>`
+    : ''
+  const requestDetails =
     paramBlock || bodyBlock
-      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}</div>`
-      : ''
+      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}${debugActions}</div>`
+      : debug
+        ? `<div class="api-block"><h3>在线调试</h3><pre>${escapeHtml(requestExample)}</pre>${debugActions}</div>`
+        : ''
+  const requestSection =
+    debug && shareId
+      ? `<form class="try-form" method="post" action="/share/${escapeHtml(shareId)}/execute" data-debug-form><input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">${requestDetails}<noscript><style>.value-view{display:none}.value-edit{display:block}.try-actions{display:flex}</style></noscript></form><div class="try-response" hidden></div>`
+      : requestDetails
 
   const responseSection = settings.show_response
     ? `<div class="api-block"><h3>响应示例</h3>
@@ -917,6 +932,7 @@ ${
 <div class="api-head">
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${heading}</h2>
+${debug ? '<button type="button" class="try-toggle" data-debug-toggle>调试</button>' : ''}
 </div>
 ${attributeBlock}
 ${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
@@ -924,7 +940,7 @@ ${target.description ? `<div class="api-desc">${descriptionToHtml(target.descrip
     target.url || '（未设置 URL）'
   )}</div>
 ${modelWarnings.length ? `<div class="api-block"><h3>模型定义待修复</h3><p>以下引用暂时无法解析，相关字段可能不完整：</p>${modelWarnings.map(warning => `<p>${escapeHtml(warning.message)}</p>`).join('')}</div>` : ''}
-${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}${debugBlock}
+${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}
 </section>`
 }
 
@@ -1240,7 +1256,11 @@ function renderShareShell(
   <main class="doc-main">${main}</main>
 </div>
 <footer class="doc-footer">由 KindraAPI 生成 · ${escapeHtml(formatTime(view.lastUpdated))}</footer>`
-  return pageShell(title, body)
+  const debugScript =
+    !ctx.offline && ctx.share.settings.allow_debug
+      ? '<script src="/share-assets/debug.js"></script>'
+      : ''
+  return pageShell(title, `${body}${debugScript}`)
 }
 
 function folderCounts(view: ShareView, folderId: string): string {
@@ -2528,33 +2548,49 @@ function renderExecuteResultPage(share: DocShare, target: Target, record: SendRe
   )
 }
 
+function executeFailure(
+  res: http.ServerResponse,
+  json: boolean,
+  code: number,
+  title: string,
+  message: string
+): void {
+  if (json) sendJson(res, code, { ok: false, error: message })
+  else sendHtml(res, code, renderMessagePage(title, message, code))
+}
+
+function clipResponseBody(body: string): string {
+  return body.length > 200_000 ? `${body.slice(0, 200_000)}\n…（响应过大，已截断）` : body
+}
+
 async function handleExecute(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   share: DocShare
 ): Promise<void> {
+  const json = String(req.headers.accept ?? '').includes('application/json')
   if (!share.settings.allow_debug) {
-    sendHtml(res, 404, renderMessagePage('调试未开启', '分享者未开放在线调试。', 404))
+    executeFailure(res, json, 404, '调试未开启', '分享者未开放在线调试。')
     return
   }
   if (shareExpired(share)) {
-    sendHtml(res, 410, renderMessagePage('文档已过期', '该分享已超过有效期。', 410))
+    executeFailure(res, json, 410, '文档已过期', '该分享已超过有效期。')
     return
   }
   if (!isValidSession(req, share)) {
-    sendHtml(res, 401, renderPasswordPage(share))
+    executeFailure(res, json, 401, '需要密码', '请先输入访问密码。')
     return
   }
   const ip = clientIp(req)
   if (!executeAllowed(ip)) {
-    sendHtml(res, 429, renderMessagePage('请求过于频繁', '请稍后再试。', 429))
+    executeFailure(res, json, 429, '请求过于频繁', '请稍后再试。')
     return
   }
   let form: URLSearchParams
   try {
     form = new URLSearchParams(await readBody(req))
   } catch {
-    sendHtml(res, 413, renderMessagePage('请求过大', '请减少参数或请求体后重试。', 413))
+    executeFailure(res, json, 413, '请求过大', '请减少参数或请求体后重试。')
     return
   }
   const targetId = form.get('target_id') ?? ''
@@ -2565,19 +2601,19 @@ async function handleExecute(
       )
     : undefined
   if (!scoped) {
-    sendHtml(res, 404, renderMessagePage('接口不存在', '该接口不在分享范围内。', 404))
+    executeFailure(res, json, 404, '接口不存在', '该接口不在分享范围内。')
     return
   }
   const stored = store.getTarget(share.project_id, targetId)
   if (!stored || stored.target_type !== 'api') {
-    sendHtml(res, 404, renderMessagePage('接口不存在', '该接口可能已被删除。', 404))
+    executeFailure(res, json, 404, '接口不存在', '该接口可能已被删除。')
     return
   }
   let prepared: Target
   try {
     prepared = applyShareForm(resolveDocumentedTarget(stored), form)
   } catch (error) {
-    sendHtml(res, 400, renderMessagePage('参数无效', (error as Error).message, 400))
+    executeFailure(res, json, 400, '参数无效', (error as Error).message)
     return
   }
   // 分享代理不执行接口脚本，避免访问者触发分享者机器上的脚本副作用。
@@ -2602,9 +2638,28 @@ async function handleExecute(
       share.settings.env_id || undefined,
       { signal: controller.signal }
     )
-    sendHtml(res, 200, renderExecuteResultPage(share, prepared, record))
+    if (json) {
+      const response = record.response
+      sendJson(res, 200, {
+        ok: true,
+        status: response
+          ? {
+              code: response.code,
+              text: response.status,
+              time: response.response_time,
+              mime: response.mime?.mime ?? '',
+              size: response.size
+            }
+          : null,
+        headers: response?.headers ?? {},
+        body: clipResponseBody(record.error ? record.error.message : response?.body ?? ''),
+        error: record.error?.message ?? null
+      })
+    } else {
+      sendHtml(res, 200, renderExecuteResultPage(share, prepared, record))
+    }
   } catch (error) {
-    sendHtml(res, 500, renderMessagePage('请求失败', (error as Error).message, 500))
+    executeFailure(res, json, 502, '请求失败', (error as Error).message)
   } finally {
     clearTimeout(timer)
   }
@@ -2684,6 +2739,19 @@ async function handleRequest(
 
   if (url.pathname === '/health') {
     sendText(res, 200, 'ok')
+    return
+  }
+
+  if (url.pathname === '/share-assets/debug.js') {
+    if (req.method !== 'GET') {
+      sendText(res, 405, 'Method Not Allowed')
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript; charset=utf-8',
+      'Cache-Control': 'no-store'
+    })
+    res.end(DEBUG_SCRIPT)
     return
   }
 
