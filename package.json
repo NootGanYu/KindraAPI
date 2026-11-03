@@ -50,7 +50,9 @@
     "test:flow-refresh-ui": "node scripts/flow-refresh-ui.cjs",
     "test:flow-cancel": "esbuild scripts/flow-cancel-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-cancel-smoke.cjs && electron node_modules/.tmp/flow-cancel-smoke.cjs",
     "test:flow-cancel-ui": "node scripts/flow-cancel-ui.cjs",
-    "test:flow-loop-resume": "esbuild scripts/flow-loop-resume-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-loop-resume-smoke.cjs && electron node_modules/.tmp/flow-loop-resume-smoke.cjs"
+    "test:flow-loop-resume": "esbuild scripts/flow-loop-resume-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-loop-resume-smoke.cjs && electron node_modules/.tmp/flow-loop-resume-smoke.cjs",
+    "test:flow-scope": "esbuild scripts/flow-scope-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-scope-smoke.cjs && electron node_modules/.tmp/flow-scope-smoke.cjs",
+    "test:flow-scope-ui": "node scripts/flow-scope-ui.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
