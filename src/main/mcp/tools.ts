@@ -155,10 +155,10 @@ function schema(
 }
 
 const S = {
-  project: { type: 'string', description: '项目 ID' },
-  target: { type: 'string', description: '接口 target_id' },
+  project: { type: 'string', description: '项目 ID。MCP 客户端配置了 KINDRA_DEFAULT_PROJECT_ID 时可省略，由桥自动补全' },
+  target: { type: 'string', description: '接口 target_id，用 list_apis 获取，不要凭记忆填写' },
   flow: { type: 'string', description: '流程 flow_id' },
-  environment: { type: 'string', description: '环境 env_id' },
+  environment: { type: 'string', description: '环境 env_id；配置了 KINDRA_DEFAULT_ENVIRONMENT_ID 时可省略' },
   confirm: { type: 'boolean', description: '删除类操作必须显式传 true' }
 }
 
@@ -326,14 +326,18 @@ function executeSummary(record: Awaited<ReturnType<typeof sendRequest>>): Record
 const TOOLS: ToolDefinition[] = [
   {
     name: 'upsert_api',
-    description: '编码 Agent 首选：一次创建或增量更新完整接口文档。新建接口会执行硬性文档校验：必须填写接口说明 description，url 必须是完整的 http:// 或 https:// 地址（含主机名与路径），每个已知请求参数、请求体字段和响应字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions；缺失任一项将直接拒绝写入且不保存。更新接口时，本次显式提交的字段同样必须补齐这些信息，未提交字段保持原样。target_id 或稳定 source_key 定位。省略保留，remove/unset 显式删除。无需执行接口，返回完整实体及逐字段待补充清单。',
+    description:
+      '编码 Agent 首选：一次提交完整接口文档（新建或增量更新）。接口交付统一写入 Kindra，不使用 Apifox 等外部工具。' +
+      '硬性文档校验：新建必须填写接口说明 description 与完整 http(s) URL（含主机名和路径），每个已知请求参数、请求体字段和响应字段必须写明 description、type、required、nullable、enum，有枚举时必须提供逐项对应的 enum_descriptions；缺失任一项直接拒绝写入且不保存。更新时仅校验本次显式提交的字段，未提交字段保持原样。' +
+      '交付约定：headers 至少包含 Authorization: Bearer <token>；JSON 接口再加 Content-Type: application/json 与 Accept: application/json（上传用 multipart/form-data，下载用 Accept: application/octet-stream）。显式写 Authorization 时把 auth.type 设为 none，不要只配 auth。请求示例每个字段都要真实可执行，禁止留空、{} 或 "xxx" 占位；Long 类型 ID 用字符串。响应示例必须来自 execute_api + save_response=true 的实测结果，不能手写。' +
+      'target_id 或稳定 source_key（推荐 Controller.method）定位；省略保留，remove/unset 显式删除。返回 documentation.complete 与逐字段待补充清单，仍有缺项需在最终回复中列出。',
     requires_write: true, requires_execute: false,
     input_schema: schema(apiDocumentationProperties, ['project_id']),
     handler: args => writeApiDocumentation(args)
   },
   {
     name: 'list_projects',
-    description: '列出已在 MCP 授权列表中的项目。',
+    description: '列出已在 MCP 授权列表中的项目。开始前先用它确认项目；不要操作未授权项目。',
     requires_write: false,
     requires_execute: false,
     input_schema: schema({}),
@@ -383,7 +387,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'list_apis',
-    description: '列出项目中的接口与目录，可按父目录或关键字过滤。',
+    description: '列出项目中的接口与目录，可按父目录或关键字过滤。根目录 parent_id=0。新建或导入前必须用它确认 folder_id / target_id，不要凭记忆填写；目录不存在时先用 create_folder 创建。',
     requires_write: false,
     requires_execute: false,
     input_schema: schema({
@@ -421,7 +425,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_folder',
-    description: '在项目中创建目录，可指定父目录（根为 0）。Agent 必须填写目录说明 description，说明该目录组织哪些接口或业务模块。',
+    description: '在项目中创建目录，可指定父目录（根为 0）。必须填写目录说明 description，说明该目录组织哪些接口或业务模块。创建后立即记录返回的 target_id，供 sync_openapi 的 folder_id、create_api/upsert_api 的 parent_id 使用。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -465,7 +469,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'get_api_detail',
-    description: '获取单个接口的完整实体。',
+    description: '获取单个接口的完整实体（说明、Header、参数、请求示例、响应示例）。交付前用它回读核对三项是否齐全；documentation.complete=false 时 issues 列出缺失字段说明，必须补齐后再交付。',
     requires_write: false,
     requires_execute: false,
     input_schema: schema({ project_id: S.project, target_id: S.target }, ['project_id', 'target_id']),
@@ -590,7 +594,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'move_target',
-    description: '移动接口或目录到指定父目录，可同时重命名或补充说明。用于维护目录说明时，必须传入有业务含义的 description。',
+    description: '移动接口或目录到指定父目录，可同时重命名或补充说明。用于维护目录说明时，必须传入有业务含义的 description。修改接口说明优先使用 update_api_design 或 upsert_api。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -645,7 +649,12 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'sync_openapi',
-    description: '从 OpenAPI 3 / Swagger 2 文档导入接口到项目。',
+    description:
+      '从 OpenAPI 3 / Swagger 2 文档导入接口到项目。' +
+      '一次只导入 1 个 path：整份多接口文档过大时 MCP 参数会被截断并报 JSON 解析错误。' +
+      '新增接口用 api_cover_mode=skip（默认），更新已有接口用 cover。' +
+      '注意：导入（尤其 cover）会重置或覆盖 Header、Query、Body 的值和响应示例，导入后必须用 update_api/upsert_api 重新回填，并用 execute_api(save_response=true) 重新保存真实响应。' +
+      'paths 中写相对路径，host_path + base_path 负责前缀；返回的 sync_items 包含 target_id 与 action，务必记录。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -803,7 +812,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'delete_apis',
-    description: '删除接口或目录（目录会级联删除子项）。必须传 confirm: true。',
+    description: '删除接口或目录（目录会级联删除子项）。必须传 confirm: true。删除前用 list_apis 确认 target_id 与影响范围；删除重建后 target_id 会变化，需重新记录。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -827,7 +836,13 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'execute_api',
-    description: '执行单个接口并返回执行摘要。input 只能覆盖接口已定义的参数。',
+    description:
+      '通过 Kindra 真实执行单个接口，返回执行摘要（不含响应体）；完整请求与响应用 get_execution_result(run_id) 读取。' +
+      '本地联调与交付验收一律通过本工具执行；curl/脚本只用于服务器连通性、日志与线程排查，不能作为交付证据。' +
+      'input 只能覆盖接口已定义的 query/path/headers/cookies/body；数值参数也用字符串传入。' +
+      'save_response=true 会仅在 HTTP 2xx 时把本次真实响应保存为接口的响应示例；成功场景才用它。' +
+      'HTTP 200 不代表业务成功：必须用 get_execution_result 检查响应体 code（成功通常为 0，也可能为 200）、message、data。负向/越权/重复操作测试一律 save_response=false，避免覆盖成功示例。' +
+      '切换 token 或账号测试后立即恢复 Header，保证示例与 Header 属于同一账号、同一环境。',
     requires_write: false,
     requires_execute: true,
     input_schema: schema(
@@ -962,7 +977,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'get_execution_result',
-    description: '按 run_id 获取完整执行记录（流程或单接口）。',
+    description: '按 run_id 获取完整执行记录（流程或单接口），包含真实请求、响应体、headers 与耗时。用于核对 status_code 与业务 code/message/data；execute_api 返回的 status 不能替代这一步。',
     requires_write: false,
     requires_execute: false,
     input_schema: schema({ project_id: S.project, run_id: { type: 'string' } }, [
@@ -2276,7 +2291,7 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'get_api_design',
-    description: '读取接口设计与契约：说明、错误码表、请求与响应定义。',
+    description: '读取接口设计与契约：说明、错误码表、请求与响应定义。修改后用 upsert_api 或 update_api_design 写回。',
     requires_write: false,
     requires_execute: false,
     input_schema: schema({ project_id: S.project, target_id: S.target }, [
@@ -2297,7 +2312,10 @@ const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'update_api_design',
-    description: '更新接口设计：说明、错误码表、请求或响应定义（需要 allow_write）。',
+    description:
+      '更新接口设计：说明、错误码表、请求或响应定义（需要写入权限）。' +
+      '修改接口说明优先用本工具或 upsert_api；说明至少包含用途、调用方式、参数含义、状态口径与错误码，不要只写“查询列表”。' +
+      'request/response 传入即整组替换；errors 传空数组表示清空。本工具不改 Header 值与响应示例的快照。',
     requires_write: true,
     requires_execute: false,
     input_schema: schema(
@@ -2629,8 +2647,8 @@ for (const name of ['create_api', 'update_api']) {
     ? args => writeApiDocumentation(args, true)
     : args => writeApiDocumentation(args)
   tool.description = name === 'create_api'
-    ? '创建接口，执行硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺项拒绝写入且不保存。'
-    : '增量更新接口与字段文档。本次显式提交的字段必须补齐 description、type、required、nullable、enum（有枚举需 enum_descriptions），未提交字段保留；缺项拒绝写入。URL 若提交必须是完整 http(s) 地址。字段结构同 upsert_api。'
+    ? '创建接口（推荐优先用 upsert_api 一次提交完整文档）。执行硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺项拒绝写入且不保存。创建后仍需 execute_api(save_response=true) 保存真实响应示例。'
+    : '增量更新已有接口的 Header/Query/Path/Body 与响应示例，只改传入字段。headers/query/paths/cookies 是整组覆盖，要保留的项必须一起传。修改接口说明请用 update_api_design 或 upsert_api，不要依赖本工具。本次显式提交的字段必须补齐 description、type、required、nullable、enum（有枚举需 enum_descriptions），未提交字段保留；缺项拒绝写入。URL 若提交必须是完整 http(s) 地址。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))

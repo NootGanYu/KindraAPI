@@ -38,21 +38,21 @@ const properties = {
   remove: { type: 'boolean', description: 'true 显式删除字段定义及子字段' },
   unset: { type: 'array', items: { type: 'string', enum: RULE_KEYS }, description: '显式清除指定规则，恢复待补充' }
 }
-export const fieldDocsSchema = { type: 'array', description: '字段说明清单。Agent 应为每个已知字段提交 description；按路径增量合并，省略保留，remove 显式删除。无需 raw 中存在。', items: {
+export const fieldDocsSchema = { type: 'array', description: '字段说明清单。每个已知字段必须同时提供 description、type、required、nullable、enum（无限制时 enum 显式传 null）；有枚举时必须提供逐项对应的 enum_descriptions。不允许根据字段名或示例值猜测业务含义。按路径增量合并，省略保留，remove 显式删除；无需 raw 中存在。', items: {
   type: 'object', properties: { ...properties, path: { type: 'string', description: '如 data.items[].id' }, pointer: { type: 'string', description: '或 JSON Pointer，如 /data/items/*/id' } }, additionalProperties: false
 } }
-export const paramsSchema = { type: 'array', description: '参数清单。Agent 应为每个已知参数提交 description；按 key 增量合并，未提交参数保留，remove:true 删除', items: {
-  type: 'object', properties: { ...properties, key: { type: 'string' }, value: { type: 'string' }, checked: { type: 'boolean' }, field_type: { type: 'string', enum: [...FIELD_TYPES, 'file'] } }, required: ['key'], additionalProperties: false
+export const paramsSchema = { type: 'array', description: '参数清单（headers/query/paths/cookies 通用）。每个已知参数都要有 description 与真实可执行的 value；按 key 增量合并，未提交参数保留，remove:true 删除。headers/query 传入时是整组覆盖，要保留的项必须一起传。Header 至少 Authorization、Content-Type、Accept（JSON 接口）；Long 类型 ID 用字符串，禁止留空或 {} 占位。', items: {
+  type: 'object', properties: { ...properties, key: { type: 'string' }, value: { type: 'string', description: '参数示例值，必须是真实可执行的取值，禁止留空或占位；数字也建议用字符串' }, checked: { type: 'boolean' }, field_type: { type: 'string', enum: [...FIELD_TYPES, 'file'] } }, required: ['key'], additionalProperties: false
 } }
 export const bodySchema = { type: 'object', properties: {
   mode: { type: 'string', enum: ['none', 'raw', 'json', 'urlencoded', 'formdata', 'binary'] }, raw: { type: 'string' },
   field_docs: fieldDocsSchema, parameters: paramsSchema,
   model_id: { type: ['string', 'null'], description: '引用模型；null 解除引用并保留完整定义' }
 }, additionalProperties: false }
-export const successSchema = { type: 'object', properties: {
+export const successSchema = { type: 'object', description: '成功响应示例。raw 必须来自 execute_api + save_response=true 的实测结果，不能手写或沿用旧响应；结构变化后必须重新执行保存。', properties: {
   example_id: { type: 'string', description: '可选，精确更新已有成功示例；省略使用默认成功响应' },
   name: { type: 'string' }, code: { type: ['number', 'string'], description: '成功响应 HTTP 状态码，默认 200' },
-  content_type: { type: 'string' }, raw: { description: '可选响应示例；对象或 JSON 字符串' },
+  content_type: { type: 'string' }, raw: { description: '响应示例；对象或 JSON 字符串。必须是实测响应' },
   field_docs: fieldDocsSchema, model_id: { type: ['string', 'null'] }
 }, additionalProperties: false }
 export const customAttributesSchema = {
@@ -215,11 +215,11 @@ export const apiDocumentationProperties = {
   source_key: { type: 'string', description: '项目内稳定且唯一的代码标识，如 OrderController.detail；重复调用更新同一接口。新建必需。' },
   name: { type: 'string' }, method: { type: 'string' },
   url: { type: 'string', description: HTTP_URL_DESCRIPTION },
-  description: { type: 'string', description: '接口说明。新建接口时必须填写；更新时省略保留原值' },
-  parent_id: { type: 'string' },
+  description: { type: 'string', description: '接口说明。新建时必须填写：用途、调用方式、参数业务含义、状态口径、错误码与串联关系；不要只写“查询列表”。更新时省略保留原值' },
+  parent_id: { type: 'string', description: '目标目录 target_id，根目录为 0；用 list_apis 确认，不要凭记忆填写' },
   headers: paramsSchema, query: paramsSchema, paths: paramsSchema, cookies: paramsSchema,
   body: bodySchema, success_response: successSchema,
-  auth: { type: 'object', description: '认证配置；省略保留' },
+  auth: { type: 'object', description: '认证配置；省略保留。若 Header 已显式写 Authorization，设为 { type: "none" } 避免重复' },
   custom_attributes: customAttributesSchema
 }
 
