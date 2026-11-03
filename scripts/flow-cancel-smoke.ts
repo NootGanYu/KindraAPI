@@ -146,6 +146,17 @@ async function main(): Promise<void> {
     assert.equal(preCancel.data.remote_outcome,undefined)
     assert(!hits.includes('/never-prescript'))
     console.log('PASS cancellation before dispatch is known and prevents async pre-script from sending later')
+    const nested=createFlow(projectId,'取消嵌套循环')
+    nested.events=[createFlowEvent('loop',{loop_count:3,children:[createFlowEvent('loop',{loop_count:2,children:[createFlowEvent('wait',{wait_ms:60000}),createFlowEvent('request',{url:`${origin}/nested-never`})]})]})]
+    store.saveFlow(projectId,nested)
+    const nestedStart=await invoke<FlowRun>('flow:run:start',projectId,nested.flow_id,'','nested-cancel')
+    assert(nestedStart.ok)
+    const nestedCancel=await invoke<FlowRun>('flow:run:cancel',projectId,nestedStart.data.run_id)
+    assert(nestedCancel.ok && nestedCancel.data.status==='cancelled')
+    assert.equal(nestedCancel.data.events[0].status,'cancelled')
+    assert.equal(nestedCancel.data.events[0].children?.[0].children?.[0].status,'cancelled')
+    assert(!hits.includes('/nested-never'))
+    console.log('PASS nested loop cancellation unwinds stack without dispatching future iterations')
     const beforeRestart=hits.length
     execFileSync(process.execPath,[process.argv[1]],{env:{...process.env,CANCEL_RESTART_DIR:dir,CANCEL_PROJECT:projectId,CANCEL_RUN:networkId},timeout:10000,stdio:'pipe'})
     assert.equal(hits.length,beforeRestart)
