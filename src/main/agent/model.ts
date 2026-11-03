@@ -5,6 +5,7 @@ export type ModelConnection = AgentConnection & { api_key: string }
 export interface ModelToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
 export interface ModelMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; tool_calls?: ModelToolCall[] }
 export interface ModelTool { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }
+export interface ModelOptions { signal?: AbortSignal; stream?: boolean; onText?: (text: string) => void; probeTools?: boolean; tools?: ModelTool[]; toolChoice?: 'auto' | 'required' | 'none' }
 export interface ModelReply { text: string; toolCalls: Array<{ id: string; name: string; arguments: string }> }
 export function redactKey(text: string, key: string): string {
   return key ? text.split(key).join('[已隐藏]') : text
@@ -23,9 +24,9 @@ export function redactStreamingKey(text: string, key: string): string {
 export async function chatCompletion(
   config: ModelConnection,
   messages: ModelMessage[],
-  options: { signal?: AbortSignal; onText?: (text: string) => void; probeTools?: boolean; tools?: ModelTool[]; toolChoice?: 'auto' | 'required' | 'none' } = {}
+  options: ModelOptions = {}
 ): Promise<ModelReply> {
-  const body: Record<string, unknown> = { model: config.model, messages, stream: !!options.onText }
+  const body: Record<string, unknown> = { model: config.model, messages, stream: options.stream ?? !!options.onText }
   if (options.tools) { body.tools = options.tools; body.tool_choice = options.toolChoice ?? 'auto' }
   if (options.probeTools) {
     body.tools = [{ type: 'function', function: { name: 'kindra_capability_probe', description: 'Return the supplied token to confirm function calling. No side effects.', parameters: { type: 'object', properties: { token: { type: 'string', enum: ['kindra-probe'] } }, required: ['token'], additionalProperties: false } } }]
@@ -53,6 +54,7 @@ export async function chatCompletion(
   if (!response.body) throw new Error('模型返回空响应流')
   const reader = response.body.getReader(), decoder = new TextDecoder()
   let buffer = '', text = '', completed = false
+  const toolCalls = new Map<number, ModelReply['toolCalls'][number]>()
   try {
     while (!completed) {
       const chunk = await reader.read()
@@ -67,13 +69,21 @@ export async function chatCompletion(
         let value: any
         try { value = JSON.parse(data) } catch { throw new Error('模型返回无效事件数据') }
         if (value.error) throw new Error('模型响应流失败')
+        for (const call of value.choices?.[0]?.delta?.tool_calls ?? []) {
+          if (!Number.isInteger(call.index) || call.index < 0) throw new Error('模型返回无效工具调用索引')
+          const current = toolCalls.get(call.index) ?? { id: '', name: '', arguments: '' }
+          if (typeof call.id === 'string') current.id += call.id
+          if (typeof call.function?.name === 'string') current.name += call.function.name
+          if (typeof call.function?.arguments === 'string') current.arguments += call.function.arguments
+          toolCalls.set(call.index, current)
+        }
         const delta = value.choices?.[0]?.delta?.content
         if (typeof delta === 'string') { text += delta; options.onText?.(text) }
       }
       if (chunk.done) break
     }
     if (!completed) throw new Error('模型响应流中断，可手动发起新消息')
-    return { text, toolCalls: [] }
+    return { text, toolCalls: [...toolCalls].sort(([a], [b]) => a - b).map(([, call]) => call) }
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
 }
 

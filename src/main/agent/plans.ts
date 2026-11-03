@@ -8,7 +8,7 @@ import type { AgentPlan, AgentPlanEvent, AgentPlanStep, ReadPlanInput } from '@s
 import type { Target } from '@shared/types'
 import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal, connectionSnapshot } from './store'
-import { chatCompletion, type ModelConnection, type ModelMessage, type ModelTool } from './model'
+import { completeModel, type ModelConnection, type ModelMessage, type ModelTool } from './model'
 
 interface PlannedCall { id: string; name: string; arguments: string }
 interface PlanContext {
@@ -19,7 +19,7 @@ interface PlanContext {
   calls: Map<string, PlannedCall>
   messages: ModelMessage[]
   controller: AbortController
-  redact: <T>(value: T) => T
+  redact: ReturnType<typeof projectRedactor>
 }
 const contexts = new Map<string, PlanContext>()
 const listeners = new Set<(event: AgentPlanEvent) => void>()
@@ -91,7 +91,7 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
   const environment = input.environmentId ? store.listEnvironments(projectId).find(item => item.env_id === input.environmentId) : null
   if (input.environmentId && !environment) throw new Error('环境不存在')
   const model = await connectionSnapshot(input.connectionId, projectId)
-  if (model.capability !== 'tools' || model.protocol !== 'chat-completions') throw new Error('当前连接尚不支持已检测的只读工具计划，请先测试连接')
+  if (model.capability !== 'tools') throw new Error('当前连接尚不支持已检测的只读工具计划，请先测试连接')
   const redact = projectRedactor(projectId, [model.api_key], [...targets.values()])
   const selection = targetIds.map(targetId => ({ target_id: targetId, name: redact(targets.get(targetId)!.name), source: drafts[targetId] ? 'draft' as const : 'saved' as const }))
   const plan: AgentPlan = {
@@ -108,7 +108,7 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
   const context: PlanContext = { mode, revisions, model, targets, calls: new Map(), messages, controller: new AbortController(), redact }
   contexts.set(plan.plan_id, context); savePlan(plan)
   try {
-    const response = await chatCompletion(model, messages, { tools: [mode === 'edit' ? editTool : readTool], toolChoice: 'required', signal: context.controller.signal })
+    const response = await completeModel(model, messages, { tools: [mode === 'edit' ? editTool : readTool], toolChoice: 'required', stream: true, signal: context.controller.signal })
     if (!response.toolCalls.length || response.toolCalls.length > 32) throw new Error('模型必须提出 1 至 32 个明确的只读步骤，需重新生成计划')
     const callIds = new Set<string>()
     for (const call of response.toolCalls) {
@@ -187,7 +187,7 @@ async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
       { role: 'assistant', content: '', tool_calls: [...context.calls.values()].map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) },
       ...plan.steps.map(step => ({ role: 'tool' as const, tool_call_id: context.calls.get(step.step_id)!.id, content: JSON.stringify(step.status === 'succeeded' ? step.result : { status: step.status, error: step.error }) }))
     ]
-    const reply = await chatCompletion(context.model, messages, { signal: context.controller.signal })
+    const reply = await completeModel(context.model, messages, { signal: context.controller.signal, onText: text => { plan.explanation = context.redact.stream(text); savePlan(plan) } })
     if (reply.toolCalls.length) throw new Error('模型要求额外操作，超出本轮只读授权，请重新确认计划')
     plan.explanation = context.redact(reply.text)
     plan.status = plan.steps.every(step => step.status === 'succeeded') ? 'completed' : 'paused'
