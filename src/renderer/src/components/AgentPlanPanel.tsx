@@ -18,7 +18,7 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
   const [goal, setGoal] = useState('解释当前接口')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const capable = connection?.capability === 'tools' && connection.protocol === 'chat-completions'
+  const capable = connection?.capability === 'tools'
   useEffect(() => {
     let mounted = true
     const off = window.api.agent.onPlanChanged(event => {
@@ -57,7 +57,7 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
     <Drawer title="项目只读计划" width={760} open={open} onClose={() => setOpen(false)}>
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         <Typography.Text>选择接口并描述目标。批准前只向模型发送目标和对象编号；批准后发送所选接口的脱敏内容，优先使用当前草稿。</Typography.Text>
-        {!capable && <Alert type="info" message="请先选择已检测工具能力的 Chat Completions 连接；当前仍可使用文本对话。" />}
+        {!capable && <Alert type="info" message="请先选择已检测工具能力的连接；Chat Completions 和 Responses 均可使用只读计划。" />}
         {error && <Alert type="error" message={error} closable onClose={() => setError('')} />}
         <Input aria-label="计划目标" value={goal} onChange={event => setGoal(event.target.value)} maxLength={10000} />
         <Select mode="multiple" aria-label="计划接口" placeholder="选择一个或多个接口" style={{ width: '100%' }} value={targetIds} onChange={setTargetIds} options={targets.map(target => ({ value: target.target_id, label: `${target.method} ${target.name}` }))} />

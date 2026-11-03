@@ -1,3 +1,5 @@
+import { decodeModelRequest, respondModel } from './agent-model-fixture'
+const protocol = process.argv.includes('--responses') ? 'responses' : 'chat-completions'
 import { app } from 'electron'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -20,15 +22,15 @@ async function main(): Promise<void> {
   const inputs: any[] = []
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk
-    const body = JSON.parse(raw); inputs.push(body)
+    const body = decodeModelRequest(req, JSON.parse(raw), protocol); inputs.push(body)
     const probe = body.tools?.[0]?.function.name === 'kindra_capability_probe'
     const message = probe ? { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] }
       : body.tools ? { tool_calls: calls } : { content: body.messages.some((m: any) => m.role === 'tool') ? '按已批准步骤完成读取汇总。' : 'OK' }
-    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
+    respondModel(res, protocol, body.stream, message)
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
-    const connection = await agentCommands.createConnection({ name: '多步骤模型', base_url: `http://127.0.0.1:${(server.address() as any).port}/v1`, model: 'steps', protocol: 'chat-completions' })
+    const connection = await agentCommands.createConnection({ name: '多步骤模型', base_url: `http://127.0.0.1:${(server.address() as any).port}/v1`, model: 'steps', protocol })
     agentCommands.setProjectConnection(pid, connection.connection_id); await agentCommands.testConnection(connection.connection_id)
     const draft = structuredClone(targets[1]); draft.description = '订单未保存草稿'
     const plan = await agentCommands.proposeReadPlan(pid, { goal: '按顺序解释三个接口', targetId: targets[0].target_id, targetIds: targets.map(t => t.target_id), drafts: { [draft.target_id]: draft } })

@@ -1,4 +1,4 @@
-import type { ModelConnection, ModelMessage, ModelReply } from './model'
+import type { ModelConnection, ModelMessage, ModelReply, ModelOptions } from './model'
 
 type ResponseOutput = { type: string; call_id?: string; id?: string; content?: Array<{ type: string; text?: string; refusal?: string }>; name?: string; arguments?: string }
 type ResponsePayload = { status?: string; error?: unknown; output?: ResponseOutput[] }
@@ -9,16 +9,30 @@ function completedReply(value: ResponsePayload): ModelReply {
   if (value.status === 'incomplete') throw new Error('模型回复未完成，请检查输出限制后手动继续')
   if (value.status !== 'completed' || !Array.isArray(value.output)) throw new Error('模型服务未返回完整的 Responses 消息')
   const text = value.output.filter(item => item.type === 'message').flatMap(item => item.content ?? []).map(part => part.type === 'output_text' ? part.text ?? '' : part.type === 'refusal' ? part.refusal ?? '' : '').join('')
-  return { text, toolCalls: value.output.filter(item => item.type === 'function_call').map(item => ({ id: item.call_id ?? item.id ?? '', name: item.name ?? '', arguments: item.arguments ?? '' })) }
+  return { text, toolCalls: value.output.filter(item => item.type === 'function_call').map(item => ({ id: item.call_id ?? '', name: item.name ?? '', arguments: item.arguments ?? '' })) }
 }
 
 /** Responses uses semantic SSE events and a response.completed terminal event. */
 export async function responsesCompletion(
   config: ModelConnection,
   messages: ModelMessage[],
-  options: { signal?: AbortSignal; onText?: (text: string) => void; probeTools?: boolean } = {}
+  options: ModelOptions = {}
 ): Promise<ModelReply> {
-  const body: Record<string, unknown> = { model: config.model, input: messages, stream: !!options.onText, store: false }
+  const input: Record<string, unknown>[] = []
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      if (!message.tool_call_id) throw new Error('工具结果缺少调用编号')
+      input.push({ type: 'function_call_output', call_id: message.tool_call_id, output: message.content })
+    } else {
+      if (message.content || !message.tool_calls?.length) input.push({ role: message.role, content: message.content })
+      for (const call of message.tool_calls ?? []) input.push({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments })
+    }
+  }
+  const body: Record<string, unknown> = { model: config.model, input, stream: options.stream ?? !!options.onText, store: false }
+  if (options.tools) {
+    body.tools = options.tools.map(tool => ({ type: 'function', ...tool.function, strict: false }))
+    body.tool_choice = options.toolChoice ?? 'auto'
+  }
   if (options.probeTools) {
     body.tools = [{ type: 'function', name: 'kindra_capability_probe', description: 'Return the supplied token to confirm function calling. No side effects.', parameters: { type: 'object', properties: { token: { type: 'string', enum: ['kindra-probe'] } }, required: ['token'], additionalProperties: false }, strict: true }]
     body.tool_choice = { type: 'function', name: 'kindra_capability_probe' }
