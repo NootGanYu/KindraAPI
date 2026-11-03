@@ -1038,6 +1038,7 @@ export function getFlow(projectId: string, flowId: string): Flow | null {
 }
 
 export function saveFlow(projectId: string, flow: Flow): Flow {
+  assertAgentConflictsResolved(getPaths().localRoot, projectId, flow.flow_id, 'flow')
   if (flow.project_id !== projectId) throw new Error('项目不匹配')
   flow.updated_at = new Date().toISOString()
   writeJson(flowPath(projectId, flow.flow_id), flow)

@@ -1,0 +1,154 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import type { Flow, FlowEvent } from '@shared/types'
+import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
+import type { AgentConflictChoice } from '@shared/agentDraft'
+import { flowDefinition, flowSignature } from '@shared/flowSync'
+import * as store from '../storage/store'
+import { agentRoot, readLocal, writeLocal } from './store'
+import { nextCandidateNumber } from './candidateSequence'
+import { mergeDefinitions } from './merge'
+const listeners = new Set<(event: AgentFlowDraftEvent) => void>()
+export function onFlowDraftEvent(listener: (event: AgentFlowDraftEvent) => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
+function emit(event: AgentFlowDraftEvent): void { for (const listener of listeners) listener(structuredClone(event)) }
+function directory(pid: string, folder: string): string {
+  if (!/^[\w-]{1,100}$/.test(pid) || !store.getProject(pid)) throw new Error('项目不存在')
+  return path.join(agentRoot(), 'projects', pid, folder)
+}
+function file(pid: string, folder: string, id: string): string {
+  if (!/^[\w-]{1,100}$/.test(id)) throw new Error('Flow 编号无效')
+  return path.join(directory(pid, folder), `${id}.json`)
+}
+export function getFlowDraft(pid: string, id: string): AgentFlowDraft {
+  const draft = readLocal<AgentFlowDraft | null>(file(pid, 'flow-drafts', id), null)
+  if (draft) return structuredClone(draft)
+  const flow = store.getFlow(pid, id)
+  if (!flow) throw new Error('Flow 不存在')
+  return { project_id: pid, flow_id: id, flow, base_revision: flowSignature(flow), agent_owned: false, updated_at: new Date().toISOString() }
+}
+export function listAgentFlowDrafts(pid: string): AgentFlowDraft[] {
+  const dir = directory(pid, 'flow-drafts')
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => getFlowDraft(pid, n.slice(0, -5))).filter(d => d.agent_owned) : []
+}
+function persist(draft: AgentFlowDraft): void {
+  draft.updated_at = new Date().toISOString()
+  writeLocal(file(draft.project_id, 'flow-drafts', draft.flow_id), draft)
+}
+export function syncFlowEditorDraft(pid: string, flow: Flow): AgentFlowDraft {
+  if (flow.project_id !== pid) throw new Error('草稿不属于所选项目')
+  validateFlowPatch({ name: flow.name, description: flow.description, env_id: flow.env_id, events: flow.events })
+  const draft = getFlowDraft(pid, flow.flow_id)
+  draft.flow = structuredClone(flow)
+  const saved = store.getFlow(pid, flow.flow_id)
+  if (saved && flowSignature(saved) === flowSignature(flow) && !listFlowCandidates(pid, flow.flow_id).some(c => c.status === 'conflict')) {
+    draft.agent_owned = false; draft.base_revision = flowSignature(saved)
+  }
+  persist(draft)
+  return draft
+}
+export function listFlowCandidates(pid: string, flowId?: string): AgentFlowCandidate[] {
+  const dir = directory(pid, 'flow-candidates')
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => readCandidate(pid, n.slice(0, -5))).filter(c => !flowId || c.flow_id === flowId).sort((a,b) => Number(b.number.slice(1)) - Number(a.number.slice(1))) : []
+}
+function readCandidate(pid: string, id: string): AgentFlowCandidate {
+  const candidate = readLocal<AgentFlowCandidate | null>(file(pid, 'flow-candidates', id), null)
+  if (!candidate) throw new Error('Flow 候选不存在')
+  return { ...candidate, ...readLocal(file(pid, 'flow-candidate-reviews', id), {}) }
+}
+function review(candidate: AgentFlowCandidate, status: AgentFlowCandidate['status'], error?: string, merge = candidate.merge, application = candidate.application): AgentFlowCandidate {
+  writeLocal(file(candidate.project_id, 'flow-candidate-reviews', candidate.candidate_id), { flow_id: candidate.flow_id, status, error, merge, application })
+  emit({ project_id: candidate.project_id, flow_id: candidate.flow_id })
+  return { ...candidate, status, error, merge, application }
+}
+export function validateFlowPatch(patch: unknown): asserts patch is Partial<Flow> {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length || Object.keys(patch).some(k => !['name','description','env_id','events'].includes(k))) throw new Error('Flow 提案字段无效')
+  const p = patch as Record<string, unknown>
+  for (const key of ['name','description','env_id']) if (key in p && typeof p[key] !== 'string') throw new Error('Flow 文本字段无效')
+  if (/\[已隐藏\]|\[REDACTED\]/i.test(JSON.stringify(patch))) throw new Error('提案包含脱敏占位符')
+  const ids = new Set<string>()
+  const walk = (events: unknown, depth = 0): void => {
+    if (!Array.isArray(events) || depth > 32) throw new Error('Flow 事件列表无效')
+    for (const event of events as FlowEvent[]) {
+      if (!event || typeof event !== 'object' || typeof event.event_id !== 'string' || !/^[\w-]{1,100}$/.test(event.event_id) || ids.has(event.event_id)) throw new Error('Flow 事件稳定 ID 缺失或重复')
+      ids.add(event.event_id)
+      if (!['api','request','script','assert','if','wait','begin','loop'].includes(event.type) || typeof event.name !== 'string' || typeof event.enabled !== 'boolean') throw new Error('Flow 事件字段无效')
+      for (const key of Object.keys(event)) if (!['event_id','type','name','enabled','target_id','input','method','url','headers','body','script','assertions','condition','wait_ms','loop_count','children'].includes(key)) throw new Error('Flow 事件包含未知字段')
+      for (const key of ['target_id','method','url','body','script','condition'] as const) if (event[key] !== undefined && typeof event[key] !== 'string') throw new Error('Flow 事件文本字段无效')
+      for (const key of ['wait_ms','loop_count'] as const) if (event[key] !== undefined && (!Number.isFinite(event[key]) || event[key]! < 0)) throw new Error('Flow 事件数值字段无效')
+      if (event.headers !== undefined && (!Array.isArray(event.headers) || event.headers.some(h => !h || typeof h.key !== 'string' || typeof h.value !== 'string'))) throw new Error('Flow 请求头无效')
+      if (event.input !== undefined) {
+        if (!event.input || typeof event.input !== 'object' || Array.isArray(event.input)) throw new Error('Flow 请求输入无效')
+        for (const [key, value] of Object.entries(event.input)) {
+          if (key === 'body') { if (typeof value !== 'string') throw new Error('Flow 请求体无效'); continue }
+          if (!['query','path','headers','cookies'].includes(key) || !value || typeof value !== 'object' || Array.isArray(value) || Object.entries(value).some(([name, entry]) => ['__proto__','constructor','prototype'].includes(name) || typeof entry !== 'string')) throw new Error('Flow 请求参数无效')
+        }
+      }
+      if (event.assertions !== undefined) {
+        const assertionIds = new Set<string>()
+        if (!Array.isArray(event.assertions)) throw new Error('Flow 断言列表无效')
+        for (const assertion of event.assertions) {
+          if (!assertion || typeof assertion.assert_id !== 'string' || !assertion.assert_id || assertionIds.has(assertion.assert_id) || !['status','json','time','bodyContains'].includes(assertion.type)) throw new Error('Flow 断言无效')
+          assertionIds.add(assertion.assert_id)
+          if (Object.keys(assertion).some(k => !['assert_id','type','path','op','expected'].includes(k)) || (assertion.path !== undefined && typeof assertion.path !== 'string') || (assertion.op !== undefined && !['equals','exists','length_gt','contains'].includes(assertion.op)) || (assertion.expected !== undefined && !['string','number','boolean'].includes(typeof assertion.expected))) throw new Error('Flow 断言字段无效')
+        }
+      }
+      if (event.children !== undefined) walk(event.children, depth + 1)
+    }
+  }
+  if ('events' in p) walk(p.events)
+}
+export function createFlowCandidate(pid: string, planId: string, stepId: string, base: Flow, revision: string | null, patch: Partial<Flow>): AgentFlowCandidate {
+  validateFlowPatch(patch)
+  const existing = listFlowCandidates(pid).find(c => c.plan_id === planId && c.step_id === stepId)
+  if (existing) return existing
+  const candidate: AgentFlowCandidate = { kind: 'flow', candidate_id: randomUUID(), number: nextCandidateNumber(pid), project_id: pid, flow_id: base.flow_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), proposal: { ...structuredClone(base), ...structuredClone(patch) }, created_at: new Date().toISOString(), status: 'pending' }
+  writeLocal(file(pid, 'flow-candidates', candidate.candidate_id), candidate)
+  emit({ project_id: pid, flow_id: base.flow_id })
+  return candidate
+}
+function apply(candidate: AgentFlowCandidate, choices: Record<string, AgentConflictChoice> = {}, current = getFlowDraft(candidate.project_id, candidate.flow_id).flow): AgentFlowCandidate {
+  const saved = store.getFlow(candidate.project_id, candidate.flow_id)
+  if (!saved || flowSignature(saved) !== candidate.base_revision) return review(candidate, 'conflict', '正式 Flow 已变化，需核对最新定义后重新生成提案。')
+  const merged = mergeDefinitions(flowDefinition(candidate.base), flowDefinition(current), flowDefinition(candidate.proposal), choices)
+  const result: Flow = { ...current, ...merged.result }
+  const draft = getFlowDraft(candidate.project_id, candidate.flow_id)
+  const previous = draft.flow
+  draft.flow = result; draft.agent_owned = true
+  const merge = { base: candidate.base, proposal: candidate.proposal, review_id: randomUUID(), current, result, draft_signature: flowSignature(result), saved_revision: flowSignature(saved), conflicts: merged.conflicts, choices }
+  persist(draft)
+  const reviewed = review(candidate, merged.conflicts.length ? 'conflict' : 'applied', merged.conflicts.length ? '无冲突字段已合并；冲突解决前不能保存 Flow。' : undefined, merge, { before: candidate.application?.before ?? current, after: result })
+  emit({ project_id: candidate.project_id, flow_id: candidate.flow_id, draft, previous })
+  return reviewed
+}
+export function applyFlowCandidate(pid: string, id: string): AgentFlowCandidate {
+  const candidate = readCandidate(pid, id)
+  if (!['pending','conflict'].includes(candidate.status)) throw new Error('候选不是待确认状态')
+  return apply(candidate)
+}
+export function rejectFlowCandidate(pid: string, id: string): AgentFlowCandidate { return review(readCandidate(pid, id), 'rejected') }
+export function resolveFlowCandidate(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): AgentFlowCandidate {
+  const candidate = readCandidate(pid, id), merge = candidate.merge
+  if (candidate.status !== 'conflict' || !merge || merge.review_id !== reviewId) throw new Error('冲突审阅已变化，请重新打开')
+  const draft = getFlowDraft(pid, candidate.flow_id), saved = store.getFlow(pid, candidate.flow_id)
+  if (flowSignature(draft.flow) !== merge.draft_signature || !saved || flowSignature(saved) !== merge.saved_revision) return applyFlowCandidate(pid, id)
+  if (!choices || Object.keys(choices).some(key => !merge.conflicts.some(c => c.id === key)) || merge.conflicts.some(c => !['base','current','agent'].includes(choices[c.id]))) throw new Error('请为每个冲突字段明确选择结果')
+  return apply(candidate, choices, merge.current)
+}
+export function stashAgentFlowDrafts(): number {
+  let added = 0
+  for (const project of store.listProjects()) for (const draft of listAgentFlowDrafts(project.project_id)) {
+    if (listFlowCandidates(project.project_id, draft.flow_id).some(c => flowSignature(c.merge?.result ?? c.proposal) === flowSignature(draft.flow))) continue
+    const candidate = createFlowCandidate(project.project_id, 'exit-stash', randomUUID(), draft.flow, draft.base_revision, { description: draft.flow.description })
+    review(candidate, 'applied'); added++
+  }
+  return added
+}
+/** Synchronous check and write prevents a late Agent transition from becoming a Run auto-save. */
+export function saveManualFlowForRun(pid: string, flow: Flow): Flow {
+  if (getFlowDraft(pid, flow.flow_id).agent_owned) throw new Error('Agent Flow 草稿请先主动保存后运行；运行不会自动保存。')
+  const saved = store.saveFlow(pid, flow)
+  syncFlowEditorDraft(pid, saved)
+  return saved
+}
+export const flowDraftCommands = { saveManualFlowForRun, getFlowDraft, syncFlowEditorDraft, listAgentFlowDrafts, listFlowCandidates, applyFlowCandidate, rejectFlowCandidate, resolveFlowCandidate, stashAgentFlowDrafts }

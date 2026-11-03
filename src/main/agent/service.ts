@@ -1,3 +1,4 @@
+import { flowDraftCommands, stashAgentFlowDrafts } from './flowDrafts'
 import { draftCommands, stashAgentDrafts } from './drafts'
 import { activePlanCount } from './plans'
 import { projectRedactor } from './redaction'
@@ -133,4 +134,4 @@ export async function shutdownAgent(): Promise<void> {
   await Promise.all([shutdownPlans(), ...tasks])
 }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

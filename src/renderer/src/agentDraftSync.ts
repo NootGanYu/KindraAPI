@@ -1,3 +1,4 @@
+import { flushFlowDrafts } from './flowDraftSync'
 import { stableJson, targetDefinition } from '@shared/targetSync'
 import type { Result } from '@shared/types'
 import { useApp } from './store'
@@ -55,6 +56,7 @@ export function connectAgentDraftSync(): () => void {
 }
 export async function flushAgentDrafts(): Promise<void> {
   await pending
+  await flushFlowDrafts()
   const state = useApp.getState()
   if (!state.project) return
   for (const draft of Object.values(state.drafts)) {
