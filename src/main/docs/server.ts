@@ -94,6 +94,50 @@ function baseUrlFor(port: number): string {
   return `http://${lanAddress()}:${port}`
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1'])
+
+/**
+ * 分享文档展示用的内网地址。与 Share Address 不同：这里不读取 host_override。
+ * 无法识别可分享地址时返回空串，调用方保持原样。
+ */
+function shareableLanHost(): string {
+  const address = lanAddress()
+  return address && address !== '127.0.0.1' ? address : ''
+}
+
+interface DisplayUrl {
+  url: string
+  /** 已把回环 host 换成内网地址 */
+  replaced: boolean
+  /** 地址本身是回环 host（无论是否替换成功） */
+  loopback: boolean
+}
+
+/** 仅替换回环 host，保留 scheme、端口、用户信息、路径与查询。 */
+function rewriteLoopbackHost(raw: string, lanHost: string): DisplayUrl {
+  const value = (raw ?? '').trim()
+  if (!value || !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
+    return { url: raw, replaced: false, loopback: false }
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return { url: raw, replaced: false, loopback: false }
+  }
+  const hostname = parsed.hostname.toLowerCase()
+  if (!LOOPBACK_HOSTNAMES.has(hostname) && hostname !== '[::1]') {
+    return { url: raw, replaced: false, loopback: false }
+  }
+  if (!lanHost) return { url: raw, replaced: false, loopback: true }
+  try {
+    parsed.hostname = lanHost
+  } catch {
+    return { url: raw, replaced: false, loopback: true }
+  }
+  return { url: parsed.toString(), replaced: true, loopback: true }
+}
+
 function countShares(): number {
   try {
     return store.listAllDocShares().length
@@ -439,6 +483,7 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .try-send{border:0;border-radius:5px;background:#2f8f62;color:#fff;padding:8px 20px;font-size:13px;cursor:pointer}
 .try-send:disabled{opacity:.6;cursor:default}
 .try-hint{color:var(--muted);font-size:12px}
+.example-note{margin:6px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
 .try-response{margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
 .try-response[hidden]{display:none}
 .try-response-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -669,7 +714,8 @@ function renderWarning(warnings: ExampleWarning[], raw: string): string {
 function renderResponseExample(
   example: ResponseExample,
   settings: DocSettings,
-  warnings: ExampleWarning[] = []
+  warnings: ExampleWarning[] = [],
+  lanHost = ''
 ): string {
   const code = example.expect?.code ?? 200
   const name = example.expect?.name || ''
@@ -699,11 +745,12 @@ function renderResponseExample(
         ? '<h4>请求体</h4><p class="muted">无请求体</p>'
         : `<h4>请求体${request.body_mode === undefined ? '（历史记录）' : ''}</h4><pre>${escapeHtml(pretty(request.body))}</pre>`
       : ''
+  const displayRequestUrl = rewriteLoopbackHost(request?.url ?? '', lanHost).url
   const requestBlock =
     settings.show_request && request
       ? `<details class="raw-request"><summary>查看历史调用（字段规则以上方定义为准）</summary>
 <p class="muted mono" style="margin:8px 0 0">${escapeHtml(
-          `${request.method || ''} ${request.url || ''}`.trim()
+          `${request.method || ''} ${displayRequestUrl}`.trim()
         )}</p>
 ${snapshotHeaderBlock}${snapshotBodyBlock}</details>`
       : ''
@@ -862,6 +909,8 @@ interface RenderApiOptions {
   warnings?: ShareWarnings
   variables?: Record<string, string>
   shareId?: string
+  /** 展示用内网地址；空串表示无法识别 */
+  lanHost?: string
 }
 
 function renderApi(
@@ -869,12 +918,19 @@ function renderApi(
   settings: DocSettings,
   options: RenderApiOptions = {}
 ): string {
-  const { apiHref, warnings, variables, shareId } = options
+  const { apiHref, warnings, variables, shareId, lanHost = '' } = options
   const modelWarnings = modelDocumentationWarnings(target)
   target = resolveDocumentedTarget(target)
   // 模型展开会重新生成示例与字段说明，因此变量替换必须在其后进行。
   if (variables) target = replaceVariables(target, variables)
-  const requestExample = documentedRequestExample(target)
+  const displayUrl = rewriteLoopbackHost(target.url ?? '', lanHost)
+  const requestExample = documentedRequestExample(target, displayUrl.url)
+  // 只替换文档展示地址；分享代理仍按接口定义的原始 URL 执行。
+  const requestNote = displayUrl.replaced
+    ? `<div class="example-note">示例地址已替换为分享者内网地址（${escapeHtml(lanHost)}）</div>`
+    : displayUrl.loopback
+      ? '<div class="example-note">未识别到可分享的内网地址，示例保持原样。</div>'
+      : ''
   const project = store.getProject(target.project_id)
   const attributeRows = project ? customAttributeRows(target, settings, project) : []
   const attributeBlock = attributeRows.length
@@ -915,9 +971,9 @@ function renderApi(
   )
   const requestDetails =
     paramBlock || bodyBlock
-      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${paramBlock}${bodyBlock}${actionsInBody ? '' : debugActions}</div>`
+      ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${requestNote}${paramBlock}${bodyBlock}${actionsInBody ? '' : debugActions}</div>`
       : debug
-        ? `<div class="api-block"><h3>在线调试</h3><pre>${escapeHtml(requestExample)}</pre>${debugActions}</div>`
+        ? `<div class="api-block"><h3>在线调试</h3><pre>${escapeHtml(requestExample)}</pre>${requestNote}${debugActions}</div>`
         : ''
   const requestSection =
     debug && shareId
@@ -935,7 +991,8 @@ ${
             settings,
             warnings?.responseExamples.get(
               responseWarningKey(target.target_id, example.example_id)
-            ) ?? []
+            ) ?? [],
+            lanHost
           )
         )
         .join('')
@@ -1007,6 +1064,8 @@ interface RenderCtx {
   share: DocShare
   view: ShareView
   offline: boolean
+  /** 展示用内网地址；空串表示无法识别，回环地址保持原样 */
+  lanHost: string
   /** 完整 HTML / 单 API HTML 使用页内锚点，不引用包外文件。 */
   singleFile?: boolean
   /** 当前页面在 ZIP 内的路径，仅离线渲染使用 */
@@ -1321,7 +1380,8 @@ function renderListing(ctx: RenderCtx, parentId: string): string {
               apiHref: hrefFor(ctx, api),
               warnings: ctx.view.warnings,
               variables: ctx.view.environment?.vars,
-              shareId: ctx.offline ? undefined : ctx.share.share_id
+              shareId: ctx.offline ? undefined : ctx.share.share_id,
+              lanHost: ctx.lanHost
             })
           )
           .join('')}`
@@ -1400,7 +1460,8 @@ function renderApiPage(ctx: RenderCtx, apiId: string): string | null {
 ${renderApi(api, ctx.share.settings, {
   warnings: ctx.view.warnings,
   variables: ctx.view.environment?.vars,
-  shareId: ctx.offline ? undefined : ctx.share.share_id
+  shareId: ctx.offline ? undefined : ctx.share.share_id,
+  lanHost: ctx.lanHost
 })}`
   return renderShareShell(
     ctx,
@@ -1419,7 +1480,8 @@ function renderCompleteListing(ctx: RenderCtx, parentId: string): string {
         return renderApi(target, ctx.share.settings, {
           warnings: ctx.view.warnings,
           variables: ctx.view.environment?.vars,
-          shareId: ctx.offline ? undefined : ctx.share.share_id
+          shareId: ctx.offline ? undefined : ctx.share.share_id,
+          lanHost: ctx.lanHost
         })
       }
       return `<section class="folder-card" id="folder-${escapeHtml(target.target_id)}">
@@ -1556,7 +1618,7 @@ function mdFieldDocs(rows: JsonFieldRow[], title = '请求体字段说明'): str
   return rows.length ? '\n**' + title + '**\n\n' + mdDocumentationTable(['字段', '类型', ...RULE_HEADINGS], rows.map(row => [row.path || row.name, row.type, ...ruleCells({ ...row.doc, example: row.doc?.example !== undefined ? row.doc.example : row.value })])) : ''
 }
 
-function buildMarkdown(share: DocShare, view: ShareView): string {
+function buildMarkdown(share: DocShare, view: ShareView, lanHost = ''): string {
   const settings = share.settings
   const lines: string[] = []
   lines.push(`# ${share.name}`, '')
@@ -1578,9 +1640,12 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
         ''
       )
     }
+    const displayUrl = rewriteLoopbackHost(api.url ?? '', lanHost)
     lines.push('```http')
-    lines.push(documentedRequestExample(stored))
+    lines.push(documentedRequestExample(api, displayUrl.url))
     lines.push('```', '')
+    if (displayUrl.replaced) lines.push(`> 示例地址已替换为分享者内网地址（${lanHost}）。`, '')
+    else if (displayUrl.loopback) lines.push('> 未识别到可分享的内网地址，示例保持原样。', '')
     const descriptionText = descriptionToMarkdown(api.description ?? '')
     if (descriptionText) lines.push(descriptionText, '')
     for (const warning of modelDocumentationWarnings(stored)) lines.push(`> 模型定义待修复，相关字段可能不完整：${mdCell(warning.message)}`, '')
@@ -1642,8 +1707,9 @@ function buildMarkdown(share: DocShare, view: ShareView): string {
         lines.push('```json', pretty(example.raw ?? '') || '', '```', '')
         lines.push(mdFieldDocs(buildFieldRows(example.raw ?? '', example.field_docs ?? []).exportedRows, '响应字段说明'))
         if (settings.show_request && example.request) {
+          const displayRequestUrl = rewriteLoopbackHost(example.request.url ?? '', lanHost).url
           lines.push('**示例请求**', '', '```http')
-          lines.push(`${example.request.method || ''} ${example.request.url || ''}`.trim(), '```')
+          lines.push(`${example.request.method || ''} ${displayRequestUrl}`.trim(), '```')
           lines.push(mdParams('请求头', example.request.headers ?? []))
           if (settings.show_body && example.request.body) {
             lines.push('**请求体**', '', '```json', pretty(example.request.body), '```', '')
@@ -1733,15 +1799,23 @@ function urlToOpenApiPath(raw?: string): string {
   return value || '/'
 }
 
-function buildOpenApi(share: DocShare, view: ShareView): Record<string, unknown> {
-  const spec = buildOpenApi30(share, view)
+function buildOpenApi(
+  share: DocShare,
+  view: ShareView,
+  lanHost = ''
+): Record<string, unknown> {
+  const spec = buildOpenApi30(share, view, lanHost)
   const version = share.settings.openapi_version ?? '3.0'
   if (version === '3.1') return toOpenApi31(spec)
   if (version === '2.0') return toSwagger20(spec)
   return spec
 }
 
-function buildOpenApi30(share: DocShare, view: ShareView): Record<string, unknown> {
+function buildOpenApi30(
+  share: DocShare,
+  view: ShareView,
+  lanHost = ''
+): Record<string, unknown> {
   const apis = view.targets.filter((target) => target.target_type === 'api')
   const settings = share.settings
   const paths: Record<string, Record<string, unknown>> = {}
@@ -1752,9 +1826,10 @@ function buildOpenApi30(share: DocShare, view: ShareView): Record<string, unknow
     if (view.environment) api = replaceVariables(api, view.environment.vars)
     const method = (api.method || 'GET').toLowerCase()
     if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method)) continue
-    if (api.url && /^https?:\/\//i.test(api.url)) {
+    const displayApiUrl = rewriteLoopbackHost(api.url ?? '', lanHost).url
+    if (api.url && /^https?:\/\//i.test(displayApiUrl)) {
       try {
-        servers.add(new URL(api.url).origin)
+        servers.add(new URL(displayApiUrl).origin)
       } catch {
         // ignore
       }
@@ -2230,12 +2305,14 @@ function offlineCtx(
   share: DocShare,
   view: ShareView,
   layout: ZipLayout,
-  currentFile: string
+  currentFile: string,
+  lanHost: string
 ): RenderCtx {
   return {
     share,
     view,
     offline: true,
+    lanHost,
     currentFile,
     fileOf: (id) => layout.files.get(id) ?? null
   }
@@ -2244,12 +2321,13 @@ function offlineCtx(
 function buildZip(
   share: DocShare,
   view: ShareView,
+  lanHost: string,
   rootFolderId?: string
 ): Buffer {
   const layout = buildZipLayout(view, rootFolderId)
   const entries: Array<{ path: string; data: string }> = []
   const indexFile = rootFolderId ?? (view.share.scope === 'folder' || view.share.scope === 'api' ? view.rootId : null)
-  const indexCtx = offlineCtx(share, view, layout, 'index.html')
+  const indexCtx = offlineCtx(share, view, layout, 'index.html', lanHost)
   const indexHtml = indexFile
     ? view.byId.get(indexFile)?.target_type === 'api'
       ? renderApiPage(indexCtx, indexFile)
@@ -2259,7 +2337,7 @@ function buildZip(
 
   for (const page of layout.pages) {
     if (page.file === 'index.html') continue
-    const ctx = offlineCtx(share, view, layout, page.file)
+    const ctx = offlineCtx(share, view, layout, page.file, lanHost)
     const html =
       page.target.target_type === 'folder'
         ? renderFolderPage(ctx, page.target.target_id)
@@ -2306,6 +2384,7 @@ export function produceShareContent(
 ): ShareContentResult {
   const view = loadShareView(share)
   if (!view) return { kind: 'not-found' }
+  const lanHost = shareableLanHost()
   if (intent.type === 'zip') {
     const scoped =
       intent.selection.type === 'folder'
@@ -2317,6 +2396,7 @@ export function produceShareContent(
       bytes: buildZip(
         share,
         scoped,
+        lanHost,
         intent.selection.type === 'folder' ? intent.selection.targetId : undefined
       ),
       contentType: 'application/zip',
@@ -2333,6 +2413,7 @@ export function produceShareContent(
       share,
       view: scoped,
       offline: true,
+      lanHost,
       singleFile: true,
       currentFile: 'index.html',
       fileOf: null
@@ -2356,7 +2437,7 @@ export function produceShareContent(
     if (!scoped) return { kind: 'not-found' }
     return {
       kind: 'success',
-      bytes: Buffer.from(buildMarkdown(share, scoped), 'utf8'),
+      bytes: Buffer.from(buildMarkdown(share, scoped, lanHost), 'utf8'),
       contentType: 'text/markdown; charset=utf-8',
       filename:
         intent.selection.type === 'api'
@@ -2366,7 +2447,7 @@ export function produceShareContent(
   }
   if (intent.type === 'openapi') {
     if (!share.settings.openapi) return { kind: 'openapi-disabled' }
-    const spec = buildOpenApi(share, view)
+    const spec = buildOpenApi(share, view, lanHost)
     return {
       kind: 'success',
       bytes: Buffer.from(JSON.stringify(spec, null, 2), 'utf8'),
@@ -2378,6 +2459,7 @@ export function produceShareContent(
     share,
     view,
     offline: false,
+    lanHost,
     currentFile: '',
     fileOf: null
   }

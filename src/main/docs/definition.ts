@@ -3,8 +3,8 @@ import { fieldDocsFromSchema, mergeFieldDocs } from '@shared/jsonFields'
 import { documentedQuery } from '@shared/fieldRules'
 import { generateFromSchema, resolveModelRefs } from '../schema/example'
 
-export function documentedRequestExample(target: Target): string {
-  let url = target.url ?? ''
+export function documentedRequestExample(target: Target, displayUrl?: string): string {
+  let url = displayUrl ?? target.url ?? ''
   const query = (target.request?.query.parameter ?? []).filter(p => p.key && (p.is_checked > 0 || (p.is_system ?? 0) > 0))
   if (query.length) url += (url.includes('?') ? '&' : '?') + query.map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join('&')
   for (const p of target.request?.restful.parameter ?? []) if (p.key && p.is_checked > 0) {

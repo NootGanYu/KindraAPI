@@ -200,6 +200,21 @@ async function main(): Promise<void> {
     const markdown = await (await fetch(`${base}/download?format=md`)).text()
     assert(markdown.includes('新的状态说明') && markdown.includes('待审核'))
     const openapi: any = await (await fetch(`${base}/download?format=openapi`)).json()
+    if (expectedLan !== '127.0.0.1') {
+      assert(
+        html.includes(`http://${expectedLan}/orders/detail`),
+        'loopback request example uses the share LAN address'
+      )
+      assert(
+        html.includes(`示例地址已替换为分享者内网地址（${expectedLan}）`),
+        'replacement is explained on the share page'
+      )
+      assert(markdown.includes('示例地址已替换为分享者内网地址'), 'markdown explains the replacement')
+      assert(
+        openapi.servers.every((server: any) => !/localhost|127\.0\.0\.1/.test(server.url)),
+        'openapi servers avoid loopback hosts'
+      )
+    }
     const operation = openapi.paths['/orders/detail'].get
     const schema = operation.responses['200'].content['application/json'].schema
     const importedState = schema.properties.data.properties.items.items.properties.state
