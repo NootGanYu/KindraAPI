@@ -1,6 +1,13 @@
 import type { Target } from './types'
 
+export interface AgentExecutionPermissions {
+  /** Exact additional HTTP methods/URLs, supplied by the user, never by model arguments. */
+  requests?: Array<{ method: string; url: string; maxCalls?: number }>
+  writeVariables?: boolean
+  saveResponse?: boolean
+}
 export interface ReadPlanInput {
+  execution?: AgentExecutionPermissions
   goal: string
   connectionId?: string
   targetId: string
@@ -17,7 +24,7 @@ export interface AgentPlanStep {
   kind?: 'api' | 'flow'
   flow_id?: string
   step_id: string
-  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api' | 'create_api' | 'propose_flow_change'
+  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api' | 'save_api_response' | 'create_api' | 'propose_flow_change'
   execution?: { method: string; url: string; effects: string[] }
   changes?: unknown
   target_name?: string
