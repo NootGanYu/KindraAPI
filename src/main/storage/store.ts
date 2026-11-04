@@ -1,3 +1,4 @@
+import { flowSignature, type FlowVersion, type FlowSnapshot, type FlowSaveResult } from '@shared/flowSync'
 import { assertAgentConflictsResolved } from './agentConflicts'
 import { app } from 'electron'
 import crypto from 'node:crypto'
@@ -1016,12 +1017,43 @@ export function getFlow(projectId: string, flowId: string): Flow | null {
   return readJson<Flow | null>(flowPath(projectId, flowId), null)
 }
 
+function flowVersionsPath(projectId: string, flowId: string): string {
+  return path.join(localProjectDir(projectId), 'flow-versions', `${assertId(flowId, 'flow_id')}.json`)
+}
+export function listFlowVersions(projectId: string, flowId: string): FlowVersion[] {
+  return readJson<FlowVersion[]>(flowVersionsPath(projectId, flowId), []).sort((a, b) => b.version - a.version)
+}
+export function getFlowVersion(projectId: string, flowId: string, versionId: string): FlowVersion | null {
+  return listFlowVersions(projectId, flowId).find(version => version.version_id === versionId) ?? null
+}
+export function readFlowSnapshot(projectId: string, flowId: string): FlowSnapshot {
+  const flow = getFlow(projectId, flowId)
+  return { flow, revision: flow ? flowSignature(flow) : null }
+}
 export function saveFlow(projectId: string, flow: Flow): Flow {
   assertAgentConflictsResolved(getPaths().localRoot, projectId, flow.flow_id, 'flow')
   if (flow.project_id !== projectId) throw new Error('项目不匹配')
-  flow.updated_at = new Date().toISOString()
-  writeJson(flowPath(projectId, flow.flow_id), flow)
-  return flow
+  const current = getFlow(projectId, flow.flow_id)
+  const saved = { ...structuredClone(flow), created_at: current?.created_at ?? flow.created_at, updated_at: new Date().toISOString() }
+  const versions = listFlowVersions(projectId, flow.flow_id)
+  const record = (snapshot: Flow): void => {
+    const revision = flowSignature(snapshot)
+    if (versions[0]?.revision === revision) return
+    versions.unshift({ version_id: crypto.randomUUID(), version: (versions[0]?.version ?? 0) + 1, revision, flow: structuredClone(snapshot), created_at: new Date().toISOString() })
+  }
+  // Preserve the pre-migration definition when a legacy Flow is first edited.
+  if (current && !versions.length) record(current)
+  record(saved)
+  writeJson(flowPath(projectId, flow.flow_id), saved)
+  writeJson(flowVersionsPath(projectId, flow.flow_id), versions)
+  return saved
+}
+export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision: string): FlowSaveResult {
+  const snapshot = readFlowSnapshot(projectId, flow.flow_id)
+  if (!snapshot.flow) return { status: 'deleted', ...snapshot }
+  if (!expectedRevision || expectedRevision !== snapshot.revision) return { status: 'conflict', ...snapshot }
+  const saved = saveFlow(projectId, flow)
+  return { status: 'saved', flow: saved, revision: flowSignature(saved), version: listFlowVersions(projectId, flow.flow_id)[0] }
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
