@@ -56,13 +56,17 @@ export interface RequestExecutionPolicy {
   persistVariables: boolean
   onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown> }): void
 }
+/** Raw definition dependencies for scope checks; does not re-resolve live model references. */
+export function requestDefinitionDependencies(projectId: string, target: Target): Array<Target | RequestModel> {
+  return [store.readProjectRequestDefaults(projectId), ...getChain(projectId, target)]
+}
 export function captureRequestContext(projectId: string, target: Target, environmentId?: string): RequestExecutionContext {
   // Explicit absence means no environment for this captured run, never the manual fallback.
   const env = environmentId ? store.listEnvironments(projectId).find(env => env.env_id === environmentId) : null
   if (environmentId && !env) throw new Error('环境不存在')
   return structuredClone({ projectId, target, settings: store.getSettings(), env: env ?? null,
     globals: store.getGlobalVars(projectId), resolved: resolveRequest(projectId, target, env ?? null),
-    dependencies: [store.readProjectRequestDefaults(projectId), ...getChain(projectId, target)] })
+    dependencies: requestDefinitionDependencies(projectId, target) })
 }
 
 /** 供代码生成复用的有效请求描述（已完成环境变量/服务前缀替换）。 */

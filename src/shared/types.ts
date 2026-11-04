@@ -509,7 +509,7 @@ export interface FlowEventResult {
   event_id: string
   name: string
   type: FlowEventType
-  status: 'passed' | 'failed' | 'skipped'
+  status: 'passed' | 'failed' | 'skipped' | 'paused' | 'unknown' | 'cancelled'
   started_at: number
   elapsed_ms: number
   detail?: string
