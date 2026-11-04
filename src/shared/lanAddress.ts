@@ -8,6 +8,13 @@ export interface NetworkAddressEntry {
 const VIRTUAL_ADAPTER =
   /(utun|tun|tap|wintun|wireguard|openvpn|tailscale|zerotier|clash|vpn|ppp|awdl|llw|bridge|gif|stf|docker|veth|vmnet|virtualbox|hyper-?v|vethernet)/i
 
+/**
+ * Windows 的 “本地连接* 13 / Local Area Connection* 13” 是 Wi-Fi Direct、
+ * 移动热点等临时虚拟网卡（常见地址 192.168.137.1），不能当作物理网卡。
+ */
+const WINDOWS_VIRTUAL_ADAPTER =
+  /^(本地连接|无线网络连接|无线局域网|local area connection|wireless network connection)\s*\*/i
+
 const PHYSICAL_ADAPTER =
   /^(en\d+|eth\d*|ethernet|wlan\d*|wi-?fi|wlp\d+|以太网|本地连接|无线网络连接|无线局域网)/i
 
@@ -44,7 +51,12 @@ function isExcludedIpv4(address: string): boolean {
 }
 
 function isVirtualAdapter(name: string): boolean {
-  return VIRTUAL_ADAPTER.test(name) || /^lo\d*$/i.test(name)
+  return (
+    VIRTUAL_ADAPTER.test(name) ||
+    WINDOWS_VIRTUAL_ADAPTER.test(name) ||
+    name.includes('*') ||
+    /^lo\d*$/i.test(name)
+  )
 }
 
 function adapterScore(entry: NetworkAddressEntry): number {

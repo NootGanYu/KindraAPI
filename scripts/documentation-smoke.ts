@@ -46,6 +46,30 @@ async function main(): Promise<void> {
     '192.168.5.104',
     'physical adapter wins on macOS'
   )
+  assert.equal(
+    pickLanAddress([
+      { name: '本地连接* 13', address: '192.168.137.1', family: 'IPv4' },
+      { name: 'WLAN', address: '192.168.50.159', family: 'IPv4' }
+    ]),
+    '192.168.50.159',
+    'Windows Wi-Fi Direct virtual adapter must not be selected'
+  )
+  assert.equal(
+    pickLanAddress([
+      { name: 'Local Area Connection* 13', address: '192.168.137.1', family: 'IPv4' },
+      { name: 'Ethernet', address: '192.168.1.20', family: 'IPv4' }
+    ]),
+    '192.168.1.20',
+    'English Windows Wi-Fi Direct adapter must not be selected'
+  )
+  assert.equal(
+    pickLanAddress([
+      { name: 'VMware Network Adapter VMnet1', address: '192.168.46.1', family: 'IPv4' },
+      { name: 'WLAN', address: '192.168.50.159', family: 'IPv4' }
+    ]),
+    '192.168.50.159',
+    'VMware adapter must not be selected'
+  )
   const rootDocs = normalizeFieldDocs([{ pointer: '', nullable: true, description: '根对象' }, { pointer: '/id', type: 'integer', required: true }])!
   assert.equal(rootDocs[0].pointer, '')
   const rootSchema = buildFieldSchema('{"id":1}', rootDocs).schema
