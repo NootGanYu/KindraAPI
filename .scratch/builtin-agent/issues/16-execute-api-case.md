@@ -4,7 +4,7 @@
 
 **Blocked by:** [11 既有脚本、文件和变量授权](11-script-file-variables.md), [15 编辑与保存 API Case](15-edit-api-case.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 
