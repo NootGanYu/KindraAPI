@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
+import trayIcon from '../../resources/trayTemplate.png?asset'
 import { registerIpc } from './ipc'
 import { applyDebugSwitch, ensureDefaultProject } from './storage/store'
 import { shutdownMcp, startMcpServer } from './mcp/server'
@@ -34,6 +35,10 @@ applyDebugSwitch()
 const appIconPath = app.isPackaged
   ? path.join(process.resourcesPath, 'icon.png')
   : appIcon
+// macOS 菜单栏用单色 template 图标，由系统按亮/暗色模式着色。
+const trayIconPath = app.isPackaged
+  ? path.join(process.resourcesPath, 'trayTemplate.png')
+  : trayIcon
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -74,7 +79,11 @@ function requestQuit(): void {
 
 function createTray(): void {
   if (tray) return
-  const icon = nativeImage.createFromPath(appIconPath)
+  const icon =
+    process.platform === 'darwin'
+      ? nativeImage.createFromPath(trayIconPath)
+      : nativeImage.createFromPath(appIconPath)
+  if (process.platform === 'darwin') icon.setTemplateImage(true)
   const sized = process.platform === 'win32' ? icon.resize({ width: 16, height: 16 }) : icon
   tray = new Tray(sized)
   tray.setToolTip('KindraAPI')
