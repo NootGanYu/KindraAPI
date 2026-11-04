@@ -18,6 +18,11 @@ const subscribe = (
 
 const api = {
   agent: {
+    getDeletedObject: (pid: string, kind: 'api' | 'flow', id: string) => invoke('agent:getDeletedObject', pid, kind, id),
+    restoreDeletedApiDraft: (pid: string, id: string, deletionId: string) => invoke('agent:restoreDeletedApiDraft', pid, id, deletionId),
+    saveDeletedApiDraft: (pid: string, id: string, deletionId: string, signature: string) => invoke('agent:saveDeletedApiDraft', pid, id, deletionId, signature),
+    restoreDeletedFlowDraft: (pid: string, id: string, deletionId: string) => invoke('agent:restoreDeletedFlowDraft', pid, id, deletionId),
+    saveDeletedFlowDraft: (pid: string, id: string, deletionId: string, signature: string) => invoke('agent:saveDeletedFlowDraft', pid, id, deletionId, signature),
     listFlowVersions: (pid: string, id: string) => invoke('agent:listFlowVersions', pid, id),
     getFlowVersion: (pid: string, id: string, versionId: string) => invoke('agent:getFlowVersion', pid, id, versionId),
     restoreFlowVersionDraft: (pid: string, id: string, versionId: string) => invoke('agent:restoreFlowVersionDraft', pid, id, versionId),

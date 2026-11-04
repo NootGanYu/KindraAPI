@@ -1,3 +1,4 @@
+import type { DeletedObject } from '@shared/agentDeletion'
 import type { FlowVersion } from '@shared/flowSync'
 import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
 import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
@@ -93,6 +94,11 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    getDeletedObject(pid: string, kind: 'api' | 'flow', id: string): Promise<Result<DeletedObject | null>>
+    restoreDeletedApiDraft(pid: string, id: string, deletionId: string): Promise<Result<AgentDraft>>
+    saveDeletedApiDraft(pid: string, id: string, deletionId: string, signature: string): Promise<Result<AgentDraft>>
+    restoreDeletedFlowDraft(pid: string, id: string, deletionId: string): Promise<Result<AgentFlowDraft>>
+    saveDeletedFlowDraft(pid: string, id: string, deletionId: string, signature: string): Promise<Result<AgentFlowDraft>>
     listFlowVersions(pid: string, id: string): Promise<Result<FlowVersion[]>>
     getFlowVersion(pid: string, id: string, versionId: string): Promise<Result<FlowVersion | null>>
     restoreFlowVersionDraft(pid: string, id: string, versionId: string): Promise<Result<AgentFlowCandidate>>

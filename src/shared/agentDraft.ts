@@ -6,6 +6,7 @@ export interface AgentDraft {
   base_revision: string | null
   agent_owned: boolean
   new_object?: boolean
+  deleted_object?: string
   candidate_ids?: string[]
   updated_at: string
 }
@@ -65,6 +66,8 @@ export interface ProjectCandidateSummary {
   kind: 'api' | 'flow'
   entity_id: string
   name: string
-  lifecycle: 'uncreated' | 'saved' | 'unavailable'
+  lifecycle: 'uncreated' | 'saved' | 'unavailable' | 'deleted'
+  deletion_id?: string
+  deleted_at?: string
   candidate_count: number
 }
