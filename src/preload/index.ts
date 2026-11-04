@@ -45,6 +45,7 @@ const api = {
     proposeCreateApiPlan: (projectId: string, input: unknown) => invoke('agent:proposeCreateApiPlan', projectId, input),
     listProjectCandidates: (projectId: string) => invoke('agent:listProjectCandidates', projectId),
     proposeSavePlan: (projectId: string, input: unknown) => invoke('agent:proposeSavePlan', projectId, input),
+    proposeExecuteCasePlan: (projectId: string, input: unknown) => invoke('agent:proposeExecuteCasePlan', projectId, input),
     proposeExecutePlan: (projectId: string, input: unknown) => invoke('agent:proposeExecutePlan', projectId, input),
     cancelPlan: (projectId: string, id: string) => invoke('agent:cancelPlan', projectId, id),
     proposeEditPlan: (projectId: string, input: unknown) => invoke('agent:proposeEditPlan', projectId, input),

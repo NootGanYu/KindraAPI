@@ -119,6 +119,7 @@ export interface ApiBridge {
     proposeCreateApiPlan(projectId: string, input: CreateApiPlanInput): Promise<Result<AgentPlan>>
     listProjectCandidates(projectId: string): Promise<Result<ProjectCandidateSummary[]>>
     proposeSavePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
+    proposeExecuteCasePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     proposeExecutePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     cancelPlan(projectId: string, id: string): Promise<Result<AgentPlan>>
     proposeEditPlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>

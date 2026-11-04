@@ -7,6 +7,7 @@ export interface AgentExecutionPermissions {
   saveResponse?: boolean
 }
 export interface ReadPlanInput {
+  caseIds?: Record<string, string[]>
   execution?: AgentExecutionPermissions
   goal: string
   connectionId?: string
@@ -21,10 +22,12 @@ export interface ReadPlanInput {
   draft?: Target
 }
 export interface AgentPlanStep {
+  case_id?: string
+  case_name?: string
   kind?: 'api' | 'flow'
   flow_id?: string
   step_id: string
-  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'save_api' | 'save_api_response' | 'create_api' | 'propose_flow_change'
+  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'execute_api_case' | 'save_api' | 'save_api_response' | 'create_api' | 'propose_flow_change'
   execution?: { method: string; url: string; effects: string[] }
   changes?: unknown
   target_name?: string
