@@ -6,6 +6,7 @@ export interface AgentFlowDraft {
   flow: Flow
   base_revision: string | null
   agent_owned: boolean
+  deleted_object?: string
   candidate_ids?: string[]
   updated_at: string
 }
