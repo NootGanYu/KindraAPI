@@ -1,3 +1,4 @@
+import type { FlowVersion } from '@shared/flowSync'
 import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
 import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
 import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput } from '../shared/agentPlan'
@@ -92,6 +93,11 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    listFlowVersions(pid: string, id: string): Promise<Result<FlowVersion[]>>
+    getFlowVersion(pid: string, id: string, versionId: string): Promise<Result<FlowVersion | null>>
+    restoreFlowVersionDraft(pid: string, id: string, versionId: string): Promise<Result<AgentFlowCandidate>>
+    restoreFlowCandidate(pid: string, id: string): Promise<Result<AgentFlowCandidate>>
+    reloadFlowDraft(pid: string, id: string, signature: string): Promise<Result<AgentFlowDraft>>
     getFlowDraft(pid: string, id: string): Promise<Result<AgentFlowDraft>>
     syncFlowEditorDraft(pid: string, flow: Flow): Promise<Result<AgentFlowDraft>>
     saveManualFlowForRun(pid: string, flow: Flow): Promise<Result<Flow>>

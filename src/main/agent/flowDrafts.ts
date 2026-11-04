@@ -25,7 +25,10 @@ export function getFlowDraft(pid: string, id: string): AgentFlowDraft {
   if (draft) return structuredClone(draft)
   const flow = store.getFlow(pid, id)
   if (!flow) throw new Error('Flow 不存在')
-  return { project_id: pid, flow_id: id, flow, base_revision: flowSignature(flow), agent_owned: false, updated_at: new Date().toISOString() }
+  const opened: AgentFlowDraft = { project_id: pid, flow_id: id, flow, base_revision: flowSignature(flow), agent_owned: false, updated_at: new Date().toISOString() }
+  // The editor baseline belongs to the first read, not a later first keystroke.
+  persist(opened)
+  return opened
 }
 export function listAgentFlowDrafts(pid: string): AgentFlowDraft[] {
   const dir = directory(pid, 'flow-drafts')
@@ -57,7 +60,7 @@ function readCandidate(pid: string, id: string): AgentFlowCandidate {
   return { ...candidate, ...readLocal(file(pid, 'flow-candidate-reviews', id), {}) }
 }
 function review(candidate: AgentFlowCandidate, status: AgentFlowCandidate['status'], error?: string, merge = candidate.merge, application = candidate.application): AgentFlowCandidate {
-  writeLocal(file(candidate.project_id, 'flow-candidate-reviews', candidate.candidate_id), { flow_id: candidate.flow_id, status, error, merge, application })
+  writeLocal(file(candidate.project_id, 'flow-candidate-reviews', candidate.candidate_id), { ...readLocal(file(candidate.project_id, 'flow-candidate-reviews', candidate.candidate_id), {}), flow_id: candidate.flow_id, status, error, merge, application })
   emit({ project_id: candidate.project_id, flow_id: candidate.flow_id })
   return { ...candidate, status, error, merge, application }
 }
@@ -107,15 +110,16 @@ export function createFlowCandidate(pid: string, planId: string, stepId: string,
   emit({ project_id: pid, flow_id: base.flow_id })
   return candidate
 }
-function apply(candidate: AgentFlowCandidate, choices: Record<string, AgentConflictChoice> = {}, current = getFlowDraft(candidate.project_id, candidate.flow_id).flow): AgentFlowCandidate {
+function apply(candidate: AgentFlowCandidate, choices: Record<string, AgentConflictChoice> = {}, current = getFlowDraft(candidate.project_id, candidate.flow_id).flow, operation: 'apply' | 'restore' = 'apply', source = { base: candidate.base, proposal: candidate.proposal }): AgentFlowCandidate {
   const saved = store.getFlow(candidate.project_id, candidate.flow_id)
-  if (!saved || flowSignature(saved) !== candidate.base_revision) return review(candidate, 'conflict', '正式 Flow 已变化，需核对最新定义后重新生成提案。')
-  const merged = mergeDefinitions(flowDefinition(candidate.base), flowDefinition(current), flowDefinition(candidate.proposal), choices)
+  if (!saved || flowSignature(saved) !== (operation === 'restore' ? getFlowDraft(candidate.project_id, candidate.flow_id).base_revision : candidate.base_revision)) return review(candidate, 'conflict', '正式 Flow 已变化，需核对最新定义后重新生成提案。')
+  const merged = mergeDefinitions(flowDefinition(source.base), flowDefinition(current), flowDefinition(source.proposal), choices)
   const result: Flow = { ...current, ...merged.result }
   const draft = getFlowDraft(candidate.project_id, candidate.flow_id)
   const previous = draft.flow
   draft.flow = result; draft.agent_owned = true
-  const merge = { base: candidate.base, proposal: candidate.proposal, review_id: randomUUID(), current, result, draft_signature: flowSignature(result), saved_revision: flowSignature(saved), conflicts: merged.conflicts, choices }
+  draft.candidate_ids = [...new Set([...(draft.candidate_ids ?? []), candidate.candidate_id])]
+  const merge = { operation, base: source.base, proposal: source.proposal, review_id: randomUUID(), current, result, draft_signature: flowSignature(result), saved_revision: flowSignature(saved), conflicts: merged.conflicts, choices }
   persist(draft)
   const reviewed = review(candidate, merged.conflicts.length ? 'conflict' : 'applied', merged.conflicts.length ? '无冲突字段已合并；冲突解决前不能保存 Flow。' : undefined, merge, { before: candidate.application?.before ?? current, after: result })
   emit({ project_id: candidate.project_id, flow_id: candidate.flow_id, draft, previous })
@@ -124,7 +128,7 @@ function apply(candidate: AgentFlowCandidate, choices: Record<string, AgentConfl
 export function applyFlowCandidate(pid: string, id: string): AgentFlowCandidate {
   const candidate = readCandidate(pid, id)
   if (!['pending','conflict'].includes(candidate.status)) throw new Error('候选不是待确认状态')
-  return apply(candidate)
+  return candidate.merge?.operation === 'restore' ? restoreFlowCandidate(pid, id) : apply(candidate)
 }
 export function rejectFlowCandidate(pid: string, id: string): AgentFlowCandidate { return review(readCandidate(pid, id), 'rejected') }
 export function resolveFlowCandidate(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): AgentFlowCandidate {
@@ -133,7 +137,52 @@ export function resolveFlowCandidate(pid: string, id: string, reviewId: string, 
   const draft = getFlowDraft(pid, candidate.flow_id), saved = store.getFlow(pid, candidate.flow_id)
   if (flowSignature(draft.flow) !== merge.draft_signature || !saved || flowSignature(saved) !== merge.saved_revision) return applyFlowCandidate(pid, id)
   if (!choices || Object.keys(choices).some(key => !merge.conflicts.some(c => c.id === key)) || merge.conflicts.some(c => !['base','current','agent'].includes(choices[c.id]))) throw new Error('请为每个冲突字段明确选择结果')
-  return apply(candidate, choices, merge.current)
+  return apply(candidate, choices, merge.current, merge.operation === 'restore' ? 'restore' : 'apply', { base: merge.base ?? candidate.base, proposal: merge.proposal ?? candidate.proposal })
+}
+export function restoreFlowCandidate(pid: string, id: string): AgentFlowCandidate {
+  const candidate = readCandidate(pid, id), draft = getFlowDraft(pid, candidate.flow_id)
+  const saved = store.readFlowSnapshot(pid, candidate.flow_id)
+  if (!saved.flow || draft.base_revision !== saved.revision) throw new Error('正式 Flow 已变化，请先载入最新定义后恢复候选')
+  const source = candidate.status === 'conflict' && candidate.merge?.operation === 'restore'
+    ? { base: candidate.merge.base!, proposal: candidate.merge.proposal! }
+    : candidate.application ? { base: candidate.application.before, proposal: candidate.application.after } : { base: candidate.base, proposal: candidate.proposal }
+  return apply(candidate, {}, draft.flow, 'restore', source)
+}
+export function restoreFlowVersionDraft(pid: string, id: string, versionId: string): AgentFlowCandidate {
+  const version = store.getFlowVersion(pid, id, versionId), saved = store.readFlowSnapshot(pid, id), draft = getFlowDraft(pid, id)
+  if (!version || !saved.flow) throw new Error('Flow 或版本不存在')
+  if (draft.base_revision !== saved.revision) throw new Error('正式 Flow 已变化，请先载入最新定义后恢复版本')
+  const { name, description, env_id, events } = version.flow
+  const candidate = createFlowCandidate(pid, 'version-restore', randomUUID(), saved.flow, saved.revision, { name, description, env_id, events })
+  return apply(candidate, {}, draft.flow, 'restore')
+}
+/** Explicit user action; never used by background refresh or shutdown. */
+export function reloadFlowDraft(pid: string, id: string, expectedDraftSignature: string): AgentFlowDraft {
+  const draft = getFlowDraft(pid, id), saved = store.readFlowSnapshot(pid, id)
+  if (flowSignature(draft.flow) !== expectedDraftSignature) throw new Error('草稿已变化，请重新检查再载入')
+  if (!saved.flow) throw new Error('Flow 已删除')
+  const previous = draft.flow
+  draft.flow = saved.flow; draft.base_revision = saved.revision; draft.agent_owned = false; draft.candidate_ids = []
+  persist(draft)
+  emit({ project_id: pid, flow_id: id, draft, previous, saved_revision: saved.revision! })
+  return draft
+}
+/** Human Save and Run both check the editor's original baseline. */
+export function saveFlowEditor(pid: string, flow: Flow): Flow {
+  const draft = getFlowDraft(pid, flow.flow_id)
+  const outcome = store.saveFlowChecked(pid, flow, draft.base_revision ?? '')
+  if (outcome.status !== 'saved') throw new Error('正式 Flow 已变化，请先在版本入口载入最新定义并审阅候选')
+  const previous = draft.flow
+  for (const id of draft.candidate_ids ?? []) {
+    const candidate = readCandidate(pid, id)
+    if (candidate.status !== 'applied') continue
+    const reviewFile = file(pid, 'flow-candidate-reviews', id)
+    writeLocal(reviewFile, { ...readLocal(reviewFile, {}), saved_version: { version_id: outcome.version.version_id, version: outcome.version.version, revision: outcome.revision, plan_id: 'manual-save' } })
+  }
+  draft.flow = outcome.flow; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []
+  persist(draft)
+  emit({ project_id: pid, flow_id: flow.flow_id, draft, previous, saved_revision: outcome.revision })
+  return outcome.flow
 }
 export function stashAgentFlowDrafts(): number {
   let added = 0
@@ -144,11 +193,34 @@ export function stashAgentFlowDrafts(): number {
   }
   return added
 }
+/** Called only by the approved plan dispatcher; not exposed over IPC. */
+export function saveApprovedFlow(pid: string, planId: string, id: string, revision: string | null, candidateIds: string[]): { saved_version: NonNullable<AgentFlowCandidate['saved_version']>; candidate_ids: string[] } {
+  const saved = store.readFlowSnapshot(pid, id), current = getFlowDraft(pid, id)
+  if (!revision || saved.revision !== revision || current.base_revision !== revision) throw new Error('正式 Flow revision 或草稿基线已变化，保存已暂停，请重新核对计划')
+  for (const candidateId of candidateIds) {
+    const candidate = readCandidate(pid, candidateId)
+    if (candidate.plan_id !== planId || candidate.flow_id !== id) throw new Error('Flow 保存候选超出获批计划')
+    const applied = candidate.status === 'pending' ? applyFlowCandidate(pid, candidateId) : candidate
+    if (applied.status !== 'applied') throw new Error(applied.error ?? '候选尚有冲突，不能保存 Flow')
+  }
+  const draft = getFlowDraft(pid, id), before = structuredClone(draft.flow)
+  validateFlowPatch({ name: draft.flow.name, description: draft.flow.description, env_id: draft.flow.env_id, events: draft.flow.events })
+  const outcome = store.saveFlowChecked(pid, draft.flow, revision)
+  if (outcome.status !== 'saved') throw new Error('正式 Flow 已变化，保存已暂停')
+  const savedVersion = { version_id: outcome.version.version_id, version: outcome.version.version, revision: outcome.revision, plan_id: planId }
+  const linked = [...new Set([...candidateIds, ...(draft.candidate_ids ?? [])])].filter(candidateId => readCandidate(pid, candidateId).status === 'applied')
+  for (const candidateId of linked) {
+    const reviewFile = file(pid, 'flow-candidate-reviews', candidateId)
+    writeLocal(reviewFile, { ...readLocal(reviewFile, {}), saved_version: savedVersion })
+  }
+  draft.flow = outcome.flow; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []
+  persist(draft)
+  emit({ project_id: pid, flow_id: id, draft, previous: before, saved_revision: outcome.revision })
+  return { saved_version: savedVersion, candidate_ids: linked }
+}
 /** Synchronous check and write prevents a late Agent transition from becoming a Run auto-save. */
 export function saveManualFlowForRun(pid: string, flow: Flow): Flow {
   if (getFlowDraft(pid, flow.flow_id).agent_owned) throw new Error('Agent Flow 草稿请先主动保存后运行；运行不会自动保存。')
-  const saved = store.saveFlow(pid, flow)
-  syncFlowEditorDraft(pid, saved)
-  return saved
+  return saveFlowEditor(pid, flow)
 }
-export const flowDraftCommands = { saveManualFlowForRun, getFlowDraft, syncFlowEditorDraft, listAgentFlowDrafts, listFlowCandidates, applyFlowCandidate, rejectFlowCandidate, resolveFlowCandidate, stashAgentFlowDrafts }
+export const flowDraftCommands = { saveFlowEditor, reloadFlowDraft, restoreFlowCandidate, restoreFlowVersionDraft, listFlowVersions: store.listFlowVersions, getFlowVersion: store.getFlowVersion, saveManualFlowForRun, getFlowDraft, syncFlowEditorDraft, listAgentFlowDrafts, listFlowCandidates, applyFlowCandidate, rejectFlowCandidate, resolveFlowCandidate, stashAgentFlowDrafts }

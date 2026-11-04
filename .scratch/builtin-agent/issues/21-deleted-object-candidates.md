@@ -4,7 +4,7 @@
 
 **Blocked by:** [12 接口创建与项目候选汇总](12-create-api-candidates.md), [13 候选恢复与单对象撤销](13-candidate-undo.md), [18 Flow 计划保存与恢复](18-save-flow.md)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 父规格：[内置 Agent 规格](../spec.md)。22 张票共同构成已确认首版；新增工具复用两协议的协议无关工具契约。
 

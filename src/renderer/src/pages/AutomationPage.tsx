@@ -122,7 +122,8 @@ export default function AutomationPage(): JSX.Element {
   useEffect(() => window.api.agent.onFlowDraftChanged(event => {
     if (!event.draft || event.project_id !== live.current.projectId || event.flow_id !== live.current.flow?.flow_id) return
     if (event.previous && flowSignature(event.previous) !== flowSignature(live.current.flow)) { message.warning('审阅期间出现新编辑，已保留人工内容，请重新检查冲突'); return }
-    setFlow(event.draft.flow); setAgentOwned(event.draft.agent_owned); setDirty(true); setEnvId(event.draft.flow.env_id)
+    setFlow(event.draft.flow); setAgentOwned(event.draft.agent_owned); setDirty(!event.saved_revision); setEnvId(event.draft.flow.env_id)
+    if (event.saved_revision) setFlows(items => items.map(item => item.flow_id === event.flow_id ? event.draft!.flow : item))
   }), [message])
 
   const apiTargets = useMemo(
