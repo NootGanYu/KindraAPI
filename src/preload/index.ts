@@ -18,6 +18,11 @@ const subscribe = (
 
 const api = {
   agent: {
+    listFlowVersions: (pid: string, id: string) => invoke('agent:listFlowVersions', pid, id),
+    getFlowVersion: (pid: string, id: string, versionId: string) => invoke('agent:getFlowVersion', pid, id, versionId),
+    restoreFlowVersionDraft: (pid: string, id: string, versionId: string) => invoke('agent:restoreFlowVersionDraft', pid, id, versionId),
+    restoreFlowCandidate: (pid: string, id: string) => invoke('agent:restoreFlowCandidate', pid, id),
+    reloadFlowDraft: (pid: string, id: string, signature: string) => invoke('agent:reloadFlowDraft', pid, id, signature),
     getFlowDraft: (pid: string, id: string) => invoke('agent:getFlowDraft', pid, id),
     syncFlowEditorDraft: (pid: string, flow: unknown) => invoke('agent:syncFlowEditorDraft', pid, flow),
     saveManualFlowForRun: (pid: string, flow: unknown) => invoke('agent:saveManualFlowForRun', pid, flow),
