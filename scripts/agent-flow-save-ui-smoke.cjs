@@ -39,5 +39,9 @@ async function launch(){app=await _electron.launch({args:[path.resolve(__dirname
  await page.getByRole('button',{name:'恢复候选到草稿',exact:true}).first().click();await page.locator('.ant-drawer-close').click()
  assert.equal(await page.getByPlaceholder('流程名称',{exact:true}).inputValue(),'恢复候选 Flow')
  const saved=await page.evaluate(async({pid,flowId})=>(await window.api.flows.get(pid,flowId)).data,{pid,flowId});assert.equal(saved.name,'原始 Flow')
+ save=true;nextName='后台保存 Flow'
+ await page.evaluate(async({pid,flowId})=>{const p=(await window.api.agent.proposeSavePlan(pid,{targetId:'',flowIds:[flowId],goal:'当前Flow页接受后台保存事件'})).data;const result=await window.api.agent.approvePlan(pid,p.plan_id);if(!result.ok||result.data.status!=='completed')throw new Error(JSON.stringify(result))},{pid,flowId})
+ assert.equal(await page.getByPlaceholder('流程名称',{exact:true}).inputValue(),'后台保存 Flow')
+ assert.equal(await page.getByText('已恢复 Agent Flow 草稿 · 退出仅暂存 · 运行前需主动保存',{exact:true}).count(),0)
  console.log('PASS Electron save_flow approval, v/P distinction/link, history diff, restore draft/restart/manual Save and rejected candidate recovery')
 })().catch(async e=>{console.error(e);if(app){const page=await app.firstWindow();console.error((await page.locator('body').innerText()).slice(-4000));await page.screenshot({path:'/tmp/kindra-builtin-agent-context/flow-save-ui-18.png'})}process.exitCode=1}).finally(async()=>{if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});server.closeAllConnections();server.close()})
