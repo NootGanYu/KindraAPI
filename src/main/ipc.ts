@@ -491,7 +491,7 @@ export function registerIpc(): void {
     git.unstagePaths(projectDirOf(projectId), paths)
   )
   handle('git:discard', (projectId: string, targets: GitDiscardTarget[]) =>
-    git.discardPaths(projectDirOf(projectId), targets)
+    store.withExternalDefinitionChanges(projectId, () => git.discardPaths(projectDirOf(projectId), targets))
   )
   handle('git:commit', (projectId: string, message: string, stageAll: boolean) =>
     git.commitChanges(projectDirOf(projectId), message, stageAll)
@@ -501,10 +501,10 @@ export function registerIpc(): void {
   )
   handle('git:branches', (projectId: string) => git.listBranches(projectDirOf(projectId)))
   handle('git:branch:create', (projectId: string, name: string, checkout: boolean) =>
-    git.createBranch(projectDirOf(projectId), name, checkout)
+    store.withExternalDefinitionChanges(projectId, () => git.createBranch(projectDirOf(projectId), name, checkout))
   )
   handle('git:branch:checkout', (projectId: string, name: string) =>
-    git.checkoutBranch(projectDirOf(projectId), name)
+    store.withExternalDefinitionChanges(projectId, () => git.checkoutBranch(projectDirOf(projectId), name))
   )
   handle('git:branch:delete', (projectId: string, name: string) =>
     git.deleteBranch(projectDirOf(projectId), name)
@@ -522,7 +522,7 @@ export function registerIpc(): void {
     git.fetchRepo(projectDirOf(projectId), remote)
   )
   handle('git:pull', (projectId: string, options: GitPullOptions) =>
-    git.pullRepo(projectDirOf(projectId), options)
+    store.withExternalDefinitionChanges(projectId, () => git.pullRepo(projectDirOf(projectId), options))
   )
   handle('git:push', (projectId: string, options: GitPushOptions) =>
     git.pushRepo(projectDirOf(projectId), options)

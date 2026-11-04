@@ -1,3 +1,4 @@
+import { deletedObjects, retainDeletedObject, publishDeletedObject, settleDeletionCheckpoints } from './deletedObjects'
 import { flowSignature, type FlowVersion, type FlowSnapshot, type FlowSaveResult } from '@shared/flowSync'
 import { assertAgentConflictsResolved } from './agentConflicts'
 import { app } from 'electron'
@@ -731,14 +732,19 @@ export function deleteTarget(projectId: string, targetId: string): void {
       }
     }
   }
+  // Capture the whole subtree before deleting any file, including MCP and sync callers.
+  for (const id of toDelete) {
+    const snapshot = readTargetSnapshot(projectId, id)
+    if (snapshot.target?.target_type === 'api') retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: id, kind: 'api', snapshot: snapshot.target, revision: snapshot.revision!, versions: readTargetVersions(projectId, id).versions })
+  }
   for (const id of toDelete) {
     const file = path.join(projectDir(projectId), 'apis', `${assertId(id, 'target_id')}.json`)
     fs.rmSync(file, { force: true })
-    fs.rmSync(targetVersionsPath(projectId, id), { force: true })
+    if (!getDeletedObject(projectId, 'api', id)) fs.rmSync(targetVersionsPath(projectId, id), { force: true })
   }
   index.items = index.items.filter((i) => !toDelete.has(i.target_id))
   writeTargetIndex(projectId, index)
-  for (const id of toDelete) recordTargetChange(projectId, id, 'deleted')
+  for (const id of toDelete) { recordTargetChange(projectId, id, 'deleted'); publishDeletedObject(projectId, 'api', id) }
 }
 
 export function reorderTargets(
@@ -1057,7 +1063,10 @@ export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision:
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
+  const snapshot = readFlowSnapshot(projectId, flowId)
+  if (snapshot.flow) retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: flowId, kind: 'flow', snapshot: snapshot.flow, revision: snapshot.revision!, versions: listFlowVersions(projectId, flowId) })
   fs.rmSync(flowPath(projectId, flowId), { force: true })
+  publishDeletedObject(projectId, 'flow', flowId)
 }
 
 function countResults(
@@ -2172,4 +2181,30 @@ export function docShareExpireInfo(share: DocShare): {
   expired: boolean
 } {
   return docExpireInfo(share)
+}
+
+export function listDeletedObjects(projectId: string) {
+  settleDeletionCheckpoints(getPaths().localRoot, projectId, item => Boolean(item.kind === 'api' ? getTarget(projectId, item.entity_id) : getFlow(projectId, item.entity_id)))
+  return deletedObjects(getPaths().localRoot, projectId)
+}
+export function getDeletedObject(projectId: string, kind: 'api' | 'flow', id: string) { return listDeletedObjects(projectId).find(item => item.kind === kind && item.entity_id === id) ?? null }
+
+/** Git can remove definitions without using deleteTarget/deleteFlow. Persist evidence before its IO. */
+export async function withExternalDefinitionChanges<T>(projectId: string, action: () => Promise<T>): Promise<T> {
+  const checkpoints: string[] = []
+  const keep = (file: string | undefined): void => { if (file) checkpoints.push(file) }
+  try {
+    for (const summary of listTargets(projectId)) {
+      const snapshot = readTargetSnapshot(projectId, summary.target_id)
+      if (snapshot.target?.target_type === 'api') keep(retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: summary.target_id, kind: 'api', snapshot: snapshot.target, revision: snapshot.revision!, versions: readTargetVersions(projectId, summary.target_id).versions }, true))
+    }
+    for (const flow of listFlows(projectId)) keep(retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: flow.flow_id, kind: 'flow', snapshot: flow, revision: flowSignature(flow), versions: listFlowVersions(projectId, flow.flow_id) }, true))
+    return await action()
+  } finally {
+    const deleted = settleDeletionCheckpoints(getPaths().localRoot, projectId, item => Boolean(item.kind === 'api' ? getTarget(projectId, item.entity_id) : getFlow(projectId, item.entity_id)), checkpoints)
+    for (const item of deleted) {
+      if (item.kind === 'api') recordTargetChange(projectId, item.entity_id, 'deleted')
+      publishDeletedObject(projectId, item.kind, item.entity_id)
+    }
+  }
 }

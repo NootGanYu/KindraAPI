@@ -22,7 +22,7 @@ export function AgentCandidateNotice({ projectId, targetId, onReview }: { projec
   if (!items.length) return null
   return <div className="target-sync-banner" role="status"><span>{pending ? `${pending} 个 Agent 待确认候选` : 'Agent 修改记录 · 草稿退出仅暂存'}</span><Button size="small" onClick={onReview}>审阅 Agent 版本</Button></div>
 }
-export default function AgentCandidates({ projectId, targetId }: { projectId: string; targetId: string }): JSX.Element | null {
+export default function AgentCandidates({ projectId, targetId, deleted = false }: { projectId: string; targetId: string; deleted?: boolean }): JSX.Element | null {
   const [items, load] = useCandidates(projectId, targetId)
   const [selected, setSelected] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -48,7 +48,7 @@ export default function AgentCandidates({ projectId, targetId }: { projectId: st
         {item.status === 'conflict' && <Button size="small" onClick={() => { setSelected(item.candidate_id); void apply(item, item.merge?.operation === 'undo' ? 'undoCandidate' : item.merge?.operation === 'restore' ? 'restoreCandidate' : 'applyCandidate') }}>重新检查冲突</Button>}
         {item.status === 'pending' && <Button size="small" type="primary" onClick={() => void apply(item)}>应用到草稿</Button>}
         {item.saved_version && <Tag color="success">已关联正式版本 v{item.saved_version.version}</Tag>}
-        {(['rejected', 'undone'].includes(item.status) || (item.status === 'conflict' && !item.merge)) && <Button size="small" onClick={() => void apply(item, 'restoreCandidate')}>恢复到草稿</Button>}
+        {(deleted || ['rejected', 'undone'].includes(item.status) || (item.status === 'conflict' && !item.merge)) && <Button size="small" onClick={() => void apply(item, 'restoreCandidate')}>恢复到草稿</Button>}
         {item.status !== 'rejected' && item.status !== 'undone' && <Button size="small" onClick={() => void apply(item, 'rejectCandidate')}>不采纳</Button>}
         {item.application && !item.application.undone && item.merge?.operation !== 'undo' && <Button size="small" onClick={() => void apply(item, 'undoCandidate')}>撤销已应用修改</Button>}
       </Space>{item.error && <p>{item.error}</p>}

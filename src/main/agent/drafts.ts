@@ -1,3 +1,4 @@
+import { onCaptureDeletedDraft, onDeletedObject } from '../storage/deletedObjects'
 import { listFlowCandidates, getFlowDraft } from './flowDrafts'
 import { nextCandidateNumber } from './candidateSequence'
 import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
@@ -6,7 +7,7 @@ import { mergeDefinitions } from './merge'
 import { withTargetChanges } from '../storage/changes'
 import fs from 'node:fs'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import type { Target } from '@shared/types'
 import type { AgentCandidate, AgentDraft, AgentDraftEvent, AgentCandidateMerge, AgentConflictChoice, ProjectCandidateSummary } from '@shared/agentDraft'
 import { stableJson, targetDefinition, preserveCaseRuns } from '@shared/targetSync'
@@ -14,8 +15,10 @@ import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal } from './store'
 
 const mirrors = new Map<string, AgentDraft>()
+onCaptureDeletedDraft((pid, kind, id) => kind === 'api' ? mirrors.get(`${pid}:${id}`) : undefined)
 const listeners = new Set<(event: AgentDraftEvent) => void>()
 export function onDraftEvent(listener: (event: AgentDraftEvent) => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
+onDeletedObject((pid, kind, id) => { if (kind === 'api') emit({ project_id: pid, target_id: id }) })
 function emit(event: AgentDraftEvent): void { for (const listener of listeners) listener(structuredClone(event)) }
 function projectDir(pid: string): string {
   if (!/^[\w-]{1,100}$/.test(pid) || !store.getProject(pid)) throw new Error('项目不存在')
@@ -75,14 +78,15 @@ export function listProjectCandidates(pid: string): ProjectCandidateSummary[] {
   const candidates = listCandidates(pid)
   const apis: ProjectCandidateSummary[] = [...new Set(candidates.map(c => c.target_id))].map(id => {
     const saved = store.getTarget(pid, id)
+    const tombstone = store.getDeletedObject(pid, 'api', id)
     const draft = readLocal<AgentDraft | null>(file(pid, 'drafts', id), null)
     return { kind: 'api', entity_id: id, name: draft?.target.name ?? saved?.name ?? candidates.find(c => c.target_id === id)!.proposal.name,
-      lifecycle: saved ? 'saved' : draft?.new_object ? 'uncreated' : 'unavailable', candidate_count: candidates.filter(c => c.target_id === id).length }
+      lifecycle: saved ? 'saved' : tombstone ? 'deleted' : draft?.new_object ? 'uncreated' : 'unavailable', deletion_id: tombstone?.deletion_id, deleted_at: tombstone?.deleted_at, candidate_count: candidates.filter(c => c.target_id === id).length }
   })
   const flows = listFlowCandidates(pid)
   return [...apis, ...[...new Set(flows.map(c => c.flow_id))].map(id => ({
     kind: 'flow' as const, entity_id: id, name: store.getFlow(pid, id) ? getFlowDraft(pid, id).flow.name : flows.find(c => c.flow_id === id)!.proposal.name,
-    lifecycle: store.getFlow(pid, id) ? 'saved' as const : 'unavailable' as const, candidate_count: flows.filter(c => c.flow_id === id).length
+    lifecycle: store.getFlow(pid, id) ? 'saved' as const : store.getDeletedObject(pid, 'flow', id) ? 'deleted' as const : 'unavailable' as const, deletion_id: store.getDeletedObject(pid, 'flow', id)?.deletion_id, deleted_at: store.getDeletedObject(pid, 'flow', id)?.deleted_at, candidate_count: flows.filter(c => c.flow_id === id).length
   }))]
 }
 /** Called only by the approved create step; the factory identity was fixed before approval. */
@@ -175,11 +179,67 @@ export function applyCandidate(pid: string, id: string): AgentCandidate {
 export function rejectCandidate(pid: string, id: string): AgentCandidate {
   return review(readCandidate(pid, id), 'rejected')
 }
+/** Explicit recovery preserves the latest local edits, and records which deletion was reviewed. */
+export function restoreDeletedApiDraft(pid: string, id: string, deletionId: string): AgentDraft {
+  const tombstone = store.getDeletedObject(pid, 'api', id)
+  if (!tombstone || tombstone.kind !== 'api' || tombstone.deletion_id !== deletionId) throw new Error('删除记录已变化，请重新审阅')
+  if (store.getTarget(pid, id)) throw new Error('该编号已存在正式对象，请先载入最新定义并检查冲突')
+  const existing = readLocal<AgentDraft | null>(file(pid, 'drafts', id), null) ?? mirrors.get(`${pid}:${id}`)
+  if (existing?.deleted_object === deletionId) return structuredClone(existing)
+  const local = existing ?? tombstone.draft
+  const baseline = local?.base_revision
+    ? tombstone.versions.find(version => createHash('sha256').update(draftSignature(version.snapshot)).digest('hex') === local.base_revision)?.snapshot ?? listCandidates(pid, id).find(candidate => candidate.base_revision === local.base_revision)?.base
+    : local?.deleted_object ? store.listDeletedObjects(pid).find(item => item.deletion_id === local.deleted_object && item.kind === 'api')?.snapshot as Target | undefined : tombstone.snapshot
+  if (local && !baseline) throw new Error('删除前草稿的保存基线无法核实，已保留墓碑和候选，请先审阅历史')
+  const draft: AgentDraft = { ...(existing ?? tombstone.draft), project_id: pid, target_id: id, target: structuredClone(existing?.target ?? tombstone.draft?.target ?? tombstone.snapshot), base_revision: null, agent_owned: true, deleted_object: deletionId, updated_at: new Date().toISOString() }
+  // A deleted folder is not silently recreated. The recovery UI identifies root placement.
+  if (draft.target.parent_id !== '0' && !store.getTarget(pid, draft.target.parent_id)) draft.target.parent_id = '0'
+  if (local && local.base_revision !== tombstone.revision && draftSignature(local.target) !== draftSignature(tombstone.snapshot)) {
+    // A stale editor and a later saved definition must meet at the same conflict review as proposals.
+    const candidate: AgentCandidate = { candidate_id: randomUUID(), number: nextCandidateNumber(pid), project_id: pid, target_id: id, plan_id: 'deletion-recovery', step_id: deletionId, base_revision: null, base: structuredClone(baseline!), proposal: structuredClone(local.target), created_at: new Date().toISOString(), status: 'pending' }
+    writeLocal(file(pid, 'candidates', candidate.candidate_id), candidate)
+    const current = { ...tombstone.snapshot, parent_id: draft.target.parent_id }
+    draft.target = current; persistDraft(draft)
+    const merge = buildMerge(candidate, current, null); merge.operation = 'restore'
+    applyMergedCandidate(candidate, current, merge)
+    return getDraft(pid, id)
+  }
+  persistDraft(draft)
+  emit({ project_id: pid, target_id: id, draft })
+  return draft
+}
+function recoverDeletedApi(pid: string, id: string): void {
+  const tombstone = store.getDeletedObject(pid, 'api', id)
+  if (tombstone && !store.getTarget(pid, id)) restoreDeletedApiDraft(pid, id, tombstone.deletion_id)
+}
+/** Deliberate human save from the recovery review, never called by quit or an Agent tool. */
+export async function saveDeletedApiDraft(pid: string, id: string, deletionId: string, signature: string): Promise<AgentDraft> {
+  return withTargetChanges('ui', undefined, () => {
+    const draft = getDraft(pid, id), tombstone = store.getDeletedObject(pid, 'api', id)
+    if (draft.deleted_object !== deletionId || tombstone?.kind !== 'api' || tombstone.deletion_id !== deletionId || draftSignature(draft.target) !== signature) throw new Error('恢复草稿或删除记录已变化，请重新审阅')
+    if (store.getTarget(pid, id)) throw new Error('该编号已存在正式对象，恢复保存已暂停')
+    validateSystemParameterOrigins(tombstone.snapshot, draft.target)
+    validateAgentApiDocumentation(draft.target, tombstone.snapshot, (draft.candidate_ids ?? []).flatMap(candidateId => { const candidate = readCandidate(pid, candidateId); return candidate.patch ? [candidate.patch] : [] }))
+    const outcome = store.createAgentTargetChecked(pid, draft.target)
+    if (outcome.status !== 'saved') throw new Error('正式定义已变化，恢复保存已暂停')
+    const version = store.listTargetVersions(pid, id)[0]
+    for (const candidateId of draft.candidate_ids ?? []) {
+      const candidate = readCandidate(pid, candidateId)
+      if (candidate.status === 'applied') writeLocal(file(pid, 'candidate-reviews', candidateId), { ...readLocal(file(pid, 'candidate-reviews', candidateId), {}), saved_version: { version_id: version.version_id, version: version.version, revision: outcome.revision, plan_id: 'manual-recovery' } })
+    }
+    const previous = draft.target
+    draft.target = outcome.target; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []; delete draft.deleted_object
+    fs.rmSync(file(pid, 'drafts', id), { force: true }); persistDraft(draft)
+    emit({ project_id: pid, target_id: id, draft, previous, saved_revision: outcome.revision, saved_target: outcome.target })
+    return draft
+  })
+}
 export function restoreCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readCandidate(pid, id)
+  recoverDeletedApi(pid, candidate.target_id)
   const draft = getDraft(pid, candidate.target_id)
   const saved = store.readTargetSnapshot(pid, candidate.target_id)
-  if (!saved.target && !draft.new_object) throw new Error('接口已删除，无法恢复到草稿')
+  if (!saved.target && !draft.new_object && !draft.deleted_object) throw new Error('接口已删除，无法恢复到草稿')
   if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后恢复候选')
   // A restored snapshot is still a proposal against today's draft, never a formal save.
   const source = candidate.status === 'conflict' && candidate.merge?.operation === 'restore'
@@ -192,8 +252,9 @@ export function restoreCandidate(pid: string, id: string): AgentCandidate {
 export function undoCandidate(pid: string, id: string): AgentCandidate {
   const candidate = readCandidate(pid, id), application = candidate.application
   if (!application || application.undone) throw new Error('候选没有已应用修改或已撤销')
+  recoverDeletedApi(pid, candidate.target_id)
   const draft = getDraft(pid, candidate.target_id), saved = store.readTargetSnapshot(pid, candidate.target_id)
-  if (!saved.target && !draft.new_object) throw new Error('接口已删除，无法撤销草稿')
+  if (!saved.target && !draft.new_object && !draft.deleted_object) throw new Error('接口已删除，无法撤销草稿')
   if (saved.revision !== draft.base_revision) throw new Error('正式定义已变化，请先在编辑器载入最新定义后撤销')
   const merge = buildMerge({ ...candidate, base: application.after, proposal: application.before }, draft.target, saved.revision)
   merge.operation = 'undo'
@@ -309,4 +370,4 @@ export function saveManualDraftOnQuit(pid: string, target: Target, revision: str
   })
 }
 
-export const draftCommands = { saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, listProjectCandidates, applyCandidate, restoreCandidate, rejectCandidate, undoCandidate, resolveCandidateUndo, resolveCandidate, stashAgentDrafts }
+export const draftCommands = { getDeletedObject: store.getDeletedObject, restoreDeletedApiDraft, saveDeletedApiDraft, saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, listProjectCandidates, applyCandidate, restoreCandidate, rejectCandidate, undoCandidate, resolveCandidateUndo, resolveCandidate, stashAgentDrafts }
