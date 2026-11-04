@@ -35,6 +35,7 @@ import CustomAttributesPanel from '../components/CustomAttributesPanel'
 interface VarRow {
   key: string
   value: string
+  initial: string
   description: string
   checked: boolean
 }
@@ -44,6 +45,7 @@ function envToRows(env: Environment | null): VarRow[] {
   return Object.entries(env.env_var_list).map(([key, value]) => ({
     key,
     value: value.current_value ?? '',
+    initial: value.initial_value ?? '',
     description: value.description ?? '',
     checked: value.is_checked > 0
   }))
@@ -54,9 +56,22 @@ function globalsToRows(globals: GlobalVars | null): VarRow[] {
   return Object.entries(globals.vars).map(([key, value]) => ({
     key,
     value: value.current_value ?? '',
+    initial: value.initial_value ?? '',
     description: value.description ?? '',
     checked: true
   }))
+}
+
+function duplicateKeys(rows: Array<{ key: string }>): string[] {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const row of rows) {
+    const key = row.key.trim()
+    if (!key) continue
+    if (seen.has(key)) duplicates.add(key)
+    else seen.add(key)
+  }
+  return [...duplicates]
 }
 
 export default function SettingsPage(): JSX.Element {
@@ -132,21 +147,30 @@ export default function SettingsPage(): JSX.Element {
 
   const saveEnv = async (): Promise<void> => {
     if (!project || !env) return
+    const duplicated = duplicateKeys(envRows)
+    if (duplicated.length) {
+      message.error(`变量名重复：${duplicated.join('、')}`)
+      return
+    }
     const envVarList: Environment['env_var_list'] = {}
     for (const row of envRows) {
       if (!row.key.trim()) continue
       envVarList[row.key.trim()] = {
         current_value: row.value,
-        initial_value: '',
+        initial_value: row.initial,
         description: row.description,
         is_checked: row.checked ? 1 : -1
       }
     }
+    const first = env.server_list?.[0]
+    const serverList = first
+      ? [{ ...first, uri: baseUrl.trim() }, ...(env.server_list ?? []).slice(1)]
+      : [{ server_id: '1', name: 'default', uri: baseUrl.trim(), sort: 1000 }]
     const next: Environment = {
       ...env,
       name: envName.trim() || env.name,
       env_var_list: envVarList,
-      server_list: [{ ...(env.server_list?.[0] ?? { server_id: '1', name: 'default' }), uri: baseUrl }]
+      server_list: serverList
     }
     const result = await window.api.envs.save(project.project_id, next)
     if (result.ok) {
@@ -157,12 +181,17 @@ export default function SettingsPage(): JSX.Element {
 
   const saveGlobals = async (): Promise<void> => {
     if (!project) return
+    const duplicated = duplicateKeys(globalRows)
+    if (duplicated.length) {
+      message.error(`变量名重复：${duplicated.join('、')}`)
+      return
+    }
     const vars: GlobalVars['vars'] = {}
     for (const row of globalRows) {
       if (!row.key.trim()) continue
       vars[row.key.trim()] = {
         current_value: row.value,
-        initial_value: '',
+        initial_value: row.initial,
         description: row.description
       }
     }
@@ -680,7 +709,8 @@ function VarEditor({
       <div className="kv-row muted" style={{ fontSize: 11 }}>
         <span>{nameLabel}</span>
         <span>当前值</span>
-        <span>默认值 / 说明</span>
+        <span>初始值</span>
+        <span>说明</span>
         <span>启用</span>
         <span />
       </div>
@@ -697,6 +727,12 @@ function VarEditor({
             value={row.value}
             onChange={(e) => update(index, { value: e.target.value })}
             placeholder="当前值"
+          />
+          <Input
+            size="small"
+            value={row.initial}
+            onChange={(e) => update(index, { initial: e.target.value })}
+            placeholder="初始值"
           />
           <Input
             size="small"
@@ -720,7 +756,7 @@ function VarEditor({
         size="small"
         type="dashed"
         icon={<PlusOutlined />}
-        onClick={() => onChange([...rows, { key: '', value: '', description: '', checked: true }])}
+        onClick={() => onChange([...rows, { key: '', value: '', initial: '', description: '', checked: true }])}
       >
         添加变量
       </Button>

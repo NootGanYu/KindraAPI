@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { apiStatuses, defaultApiStatus } from '@shared/apiStatuses'
+import { isValidServerUri } from '@shared/environmentUrl'
 import type {
   AppPaths,
   ApiStatus,
@@ -803,14 +804,63 @@ export function listEnvironments(projectId: string): Environment[] {
     .filter((e): e is Environment => Boolean(e))
 }
 
+function normalizeEnvironment(env: Environment, index: EnvIndex): void {
+  const envName = (env.name ?? '').trim()
+  if (!envName) throw new Error('环境名称不能为空')
+  const existing = index.items.find((item) => item.env_id === env.env_id)
+  // 仅在新增或改名时校验重名，避免历史重名数据无法保存。
+  if (
+    (!existing || existing.name !== envName) &&
+    index.items.some((item) => item.env_id !== env.env_id && (item.name ?? '').trim() === envName)
+  ) {
+    throw new Error(`环境名称「${envName}」已存在`)
+  }
+  env.name = envName
+
+  const servers = env.server_list?.length
+    ? env.server_list
+    : [{ server_id: '1', name: 'default', uri: '', sort: 1000 }]
+  const explicitIds = new Set(servers.map((server) => (server.server_id ?? '').trim()).filter(Boolean))
+  const explicitNames = new Set(servers.map((server) => (server.name ?? '').trim()).filter(Boolean))
+  const usedIds = new Set<string>()
+  const usedNames = new Set<string>()
+  let nextId = 1
+
+  env.server_list = servers.map((server, position) => {
+    let id = (server.server_id ?? '').trim()
+    if (!id || usedIds.has(id)) {
+      while (explicitIds.has(String(nextId)) || usedIds.has(String(nextId))) nextId += 1
+      id = String(nextId)
+    }
+    usedIds.add(id)
+
+    let name = (server.name ?? '').trim()
+    if (!name) {
+      let suffix = position + 1
+      while (explicitNames.has(`服务${suffix}`) || usedNames.has(`服务${suffix}`)) suffix += 1
+      name = `服务${suffix}`
+    } else if (usedNames.has(name)) {
+      throw new Error(`服务名称「${name}」重复`)
+    }
+    usedNames.add(name)
+
+    const uri = (server.uri ?? '').trim()
+    if (!isValidServerUri(uri)) {
+      throw new Error(`服务「${name}」的前置 URL 不合法：${uri}`)
+    }
+    return { ...server, server_id: id, name, uri }
+  })
+}
+
 export function saveEnvironment(projectId: string, env: Environment): Environment {
+  const index = readEnvIndex(projectId)
+  normalizeEnvironment(env, index)
   env.project_id = projectId
   env.updated_at = new Date().toISOString()
   writeJson(
     path.join(projectDir(projectId), 'envs', `${assertId(env.env_id, 'env_id')}.json`),
     env
   )
-  const index = readEnvIndex(projectId)
   const idx = index.items.findIndex((i) => i.env_id === env.env_id)
   const summary = { env_id: env.env_id, name: env.name, sort: env.sort ?? 1000, updated_at: env.updated_at }
   if (idx >= 0) index.items[idx] = summary
@@ -1166,11 +1216,14 @@ export function writeMcpInfo(config: McpConfig): void {
 }
 
 export function deleteEnvironment(projectId: string, envId: string): void {
+  const index = readEnvIndex(projectId)
+  if (index.items.length <= 1 && index.items.some((item) => item.env_id === envId)) {
+    throw new Error('至少保留一个环境')
+  }
   fs.rmSync(
     path.join(projectDir(projectId), 'envs', `${assertId(envId, 'env_id')}.json`),
     { force: true }
   )
-  const index = readEnvIndex(projectId)
   index.items = index.items.filter((item) => item.env_id !== envId)
   writeEnvIndex(projectId, index)
 }

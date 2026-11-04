@@ -70,7 +70,7 @@ async function main(): Promise<void> {
     assert.equal(JSON.parse(unchecked.response!.body).body, '{"ok":true}')
     console.log('PASS 取消 Content-Type 后不会由运行器重新添加')
 
-    const env = createEnvironment(project.project_id)
+    const env = createEnvironment(project.project_id, 'debug-runtime')
     env.env_var_list = { user_id: { initial_value: 'user42', current_value: 'user42', is_checked: 1 } }
     store.saveEnvironment(project.project_id, env)
     target.url = `${base}/users/{id}?tag=old&disabled=old`

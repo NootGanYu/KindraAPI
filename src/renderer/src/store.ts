@@ -468,8 +468,13 @@ export const useApp = create<AppState>((set, get) => ({
   addEnvironment: async (name = '新环境') => {
     const project = get().project
     if (!project) throw new Error('项目未就绪')
+    const base = name.trim() || '新环境'
+    const used = new Set(get().environments.map((item) => item.name))
+    let next = base
+    let suffix = 2
+    while (used.has(next)) next = `${base} ${suffix++}`
     const env = unwrap(
-      await window.api.envs.save(project.project_id, createEnvironment(project.project_id, name))
+      await window.api.envs.save(project.project_id, createEnvironment(project.project_id, next))
     )
     await get().reloadEnvironments()
     await get().setEnv(env.env_id)

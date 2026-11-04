@@ -42,6 +42,7 @@ type Pane =
 interface VarRow {
   key: string
   value: string
+  initial: string
   description: string
   checked: boolean
 }
@@ -49,13 +50,33 @@ interface VarRow {
 interface GlobalRow {
   key: string
   value: string
+  initial: string
   description: string
+}
+
+function duplicateKeys(rows: Array<{ key: string }>): string[] {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const row of rows) {
+    const key = row.key.trim()
+    if (!key) continue
+    if (seen.has(key)) duplicates.add(key)
+    else seen.add(key)
+  }
+  return [...duplicates]
 }
 
 interface ServerRow {
   server_id: string
   name: string
   uri: string
+}
+
+function nextServerId(items: ServerRow[]): string {
+  const used = new Set(items.map((item) => item.server_id))
+  let suffix = 1
+  while (used.has(String(suffix))) suffix += 1
+  return String(suffix)
 }
 
 const BODY_MODES: Array<{ value: BodyMode; label: string }> = [
@@ -136,6 +157,7 @@ export default function EnvironmentModal({
       Object.entries(activeEnv.env_var_list ?? {}).map(([key, value]) => ({
         key,
         value: value.current_value ?? '',
+        initial: value.initial_value ?? '',
         description: value.description ?? '',
         checked: (value.is_checked ?? 1) > 0
       }))
@@ -155,6 +177,7 @@ export default function EnvironmentModal({
           Object.entries(result.data.vars).map(([key, value]) => ({
             key,
             value: value.current_value ?? '',
+            initial: value.initial_value ?? '',
             description: value.description ?? ''
           }))
         )
@@ -216,13 +239,18 @@ export default function EnvironmentModal({
 
   const saveEnv = async (closeAfter: boolean): Promise<void> => {
     if (!projectId || !activeEnv) return
+    const duplicated = duplicateKeys(envRows)
+    if (duplicated.length) {
+      message.error(`变量名重复：${duplicated.join('、')}`)
+      return
+    }
     const envVarList: Environment['env_var_list'] = {}
     for (const row of envRows) {
       const key = row.key.trim()
       if (!key) continue
       envVarList[key] = {
         current_value: row.value,
-        initial_value: '',
+        initial_value: row.initial,
         description: row.description,
         is_checked: row.checked ? 1 : -1
       }
@@ -256,13 +284,18 @@ export default function EnvironmentModal({
 
   const saveGlobals = async (closeAfter: boolean): Promise<void> => {
     if (!projectId) return
+    const duplicated = duplicateKeys(globals)
+    if (duplicated.length) {
+      message.error(`变量名重复：${duplicated.join('、')}`)
+      return
+    }
     const vars: GlobalVars['vars'] = {}
     for (const row of globals) {
       const key = row.key.trim()
       if (!key) continue
       vars[key] = {
         current_value: row.value,
-        initial_value: '',
+        initial_value: row.initial,
         description: row.description
       }
     }
@@ -391,7 +424,7 @@ export default function EnvironmentModal({
                 setServers((items) => [
                   ...items,
                   {
-                    server_id: String(items.length + 1),
+                    server_id: nextServerId(items),
                     name: `服务${items.length + 1}`,
                     uri: ''
                   }
@@ -457,7 +490,8 @@ export default function EnvironmentModal({
             <div className="env-tr env-thead">
               <span className="env-check" />
               <span>变量名</span>
-              <span>变量值</span>
+              <span>当前值</span>
+              <span>初始值</span>
               <span>描述</span>
               <span />
             </div>
@@ -490,11 +524,22 @@ export default function EnvironmentModal({
                   />
                   <Input
                     value={row.value}
-                    placeholder="变量值"
+                    placeholder="当前值"
                     onChange={(event) =>
                       setEnvRows((items) =>
                         items.map((item, i) =>
                           i === index ? { ...item, value: event.target.value } : item
+                        )
+                      )
+                    }
+                  />
+                  <Input
+                    value={row.initial}
+                    placeholder="初始值"
+                    onChange={(event) =>
+                      setEnvRows((items) =>
+                        items.map((item, i) =>
+                          i === index ? { ...item, initial: event.target.value } : item
                         )
                       )
                     }
@@ -525,7 +570,7 @@ export default function EnvironmentModal({
               onClick={() =>
                 setEnvRows((items) => [
                   ...items,
-                  { key: '', value: '', description: '', checked: true }
+                  { key: '', value: '', initial: '', description: '', checked: true }
                 ])
               }
             >
@@ -554,7 +599,8 @@ export default function EnvironmentModal({
       <div className="env-table">
         <div className="env-tr env-thead three">
           <span>变量名</span>
-          <span>变量值</span>
+          <span>当前值</span>
+          <span>初始值</span>
           <span>描述</span>
           <span />
         </div>
@@ -574,11 +620,22 @@ export default function EnvironmentModal({
               />
               <Input
                 value={row.value}
-                placeholder="变量值"
+                placeholder="当前值"
                 onChange={(event) =>
                   setGlobals((items) =>
                     items.map((item, i) =>
                       i === index ? { ...item, value: event.target.value } : item
+                    )
+                  )
+                }
+              />
+              <Input
+                value={row.initial}
+                placeholder="初始值"
+                onChange={(event) =>
+                  setGlobals((items) =>
+                    items.map((item, i) =>
+                      i === index ? { ...item, initial: event.target.value } : item
                     )
                   )
                 }
@@ -609,7 +666,7 @@ export default function EnvironmentModal({
           type="dashed"
           block
           icon={<PlusOutlined />}
-          onClick={() => setGlobals((items) => [...items, { key: '', value: '', description: '' }])}
+          onClick={() => setGlobals((items) => [...items, { key: '', value: '', initial: '', description: '' }])}
         >
           添加变量
         </Button>

@@ -24,6 +24,11 @@ import type {
 } from '@shared/types'
 import { createBody, createParam } from '@shared/factories'
 import { withQueryParams, withoutQueryKeys } from '@shared/requestUrl'
+import {
+  editableEnvironmentPath,
+  joinEnvironmentUrl,
+  splitEnvironmentUrl
+} from '@shared/environmentUrl'
 import { methodColor } from '@shared/httpMethods'
 import { buildExampleFromDocs } from '@shared/jsonFields'
 import { buildBodyExample } from '@shared/bodyImport'
@@ -97,6 +102,31 @@ function validateJson(raw: string): JsonError | null {
   }
 }
 
+interface ServerNode {
+  target_id: string
+  parent_id?: string
+  server_id?: string
+}
+
+/** 与发送端保持一致：最近一层显式指定的 server_id 优先。 */
+function nearestServerId(
+  target: ServerNode,
+  drafts: Record<string, ServerNode>,
+  targets: ServerNode[]
+): string {
+  const seen = new Set<string>()
+  let node: ServerNode | undefined = target
+  while (node) {
+    if (seen.has(node.target_id)) break
+    seen.add(node.target_id)
+    if (node.server_id && node.server_id !== '0') return node.server_id
+    const parentId: string | undefined = node.parent_id
+    if (!parentId || parentId === '0') break
+    node = drafts[parentId] ?? targets.find((item) => item.target_id === parentId)
+  }
+  return '0'
+}
+
 const BODY_OPTIONS = [
   { value: 'none', label: 'none' },
   { value: 'formdata', label: 'form-data' },
@@ -146,6 +176,10 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
   const [acting, setActing] = useState(false)
   const busy = acting || requestInFlight
   const folders = useApp(s => s.targets).filter(target => target.target_type === 'folder')
+  const environments = useApp(s => s.environments)
+  const currentEnvId = useApp(s => s.currentEnvId)
+  const targets = useApp(s => s.targets)
+  const drafts = useApp(s => s.drafts)
   const modelEpoch = useModelEpoch(draft.target_id)
   const [urlEditing, setUrlEditing] = useState(false)
   const [urlText, setUrlText] = useState('')
@@ -276,6 +310,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
 
   const handleSend = async (): Promise<SendRecord | null> => {
     formatJsonBody()
+    ensureEnvironmentUrl()
     const problem = latestRequest.current.body?.mode === 'json'
       ? validateJson(latestRequest.current.body.raw ?? '') : null
     setJsonError(problem)
@@ -299,6 +334,7 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
 
   const handleSave = async (notify = true): Promise<boolean> => {
     formatJsonBody()
+    ensureEnvironmentUrl()
     const problem = latestRequest.current.body?.mode === 'json'
       ? validateJson(latestRequest.current.body.raw ?? '') : null
     setJsonError(problem)
@@ -568,19 +604,49 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
     </div>
   }
 
-  const displayedUrl = withQueryParams(draft.url ?? '', request.query?.parameter ?? [], request.query?.omit_empty_equals)
+  const environment = environments.find((env) => env.env_id === currentEnvId) ?? null
+  const serverId = useMemo(
+    () => nearestServerId(draft, drafts, targets),
+    [draft, drafts, targets]
+  )
+  const environmentParts = useMemo(
+    () => splitEnvironmentUrl(draft.url ?? '', environment, serverId),
+    [draft.url, environment, serverId]
+  )
+  const editableUrl = environmentParts.bound ? environmentParts.path : draft.url ?? ''
+  const displayedUrl = withQueryParams(editableUrl, request.query?.parameter ?? [], request.query?.omit_empty_equals)
+  // 发送/保存前把写死域名的 URL 改绑为 {{baseUrl}} + 路径，保证实际请求使用当前环境。
+  // 从 store 读取最新草稿，避免回车提交后仍用旧 URL 覆盖刚编辑的路径。
+  const ensureEnvironmentUrl = (): void => {
+    const state = useApp.getState()
+    const current = state.drafts[draft.target_id] ?? draft
+    const env = state.environments.find((item) => item.env_id === state.currentEnvId) ?? null
+    const parts = splitEnvironmentUrl(
+      current.url ?? '',
+      env,
+      nearestServerId(current, state.drafts, state.targets)
+    )
+    if (!parts.bound) return
+    const url = joinEnvironmentUrl(parts, parts.path)
+    if (url !== (current.url ?? '')) onChange({ url })
+  }
   useTargetEditLock(urlEditing && urlText !== displayedUrl)
+  const boundUrl = (path: string): string => joinEnvironmentUrl(environmentParts, path)
   const updateQuery = (parameter: RequestModel['query']['parameter'], omit = request.query?.omit_empty_equals): void => {
     parameter = [...(request.query?.parameter ?? []).filter(param => param.inherited_override && !parameter.some(item => item.param_id === param.param_id)), ...parameter]
-    const url = withQueryParams(withoutQueryKeys(draft.url ?? '', (request.query?.parameter ?? []).map(param => param.key)), parameter, omit)
+    const nextPath = withQueryParams(withoutQueryKeys(editableUrl, (request.query?.parameter ?? []).map(param => param.key)), parameter, omit)
+    const url = boundUrl(nextPath)
     latestRequest.current = { ...latestRequest.current, query: { ...request.query, parameter, omit_empty_equals: omit } }
     onChange({ url, request: latestRequest.current })
   }
-  const commitUrl = (url: string): void => {
-    const names = [...url.split('?')[0].matchAll(/(?<!\{)\{([^{}]+)\}(?!\})/g)].map(match => match[1])
+  const commitUrl = (value: string): void => {
+    const urlPath = environmentParts.bound
+      ? editableEnvironmentPath(environmentParts, value, environment, serverId)
+      : value
+    const names = [...urlPath.split('?')[0].matchAll(/(?<!\{)\{([^{}]+)\}(?!\})/g)].map(match => match[1])
     const existing = latestRequest.current.restful?.parameter ?? []
     const parameter = [...existing, ...[...new Set(names)].filter(key => !existing.some(param => param.key === key)).map(key => createParam({ key }))]
-    const queryText = url.split('#')[0].split('?').slice(1).join('?')
+    const queryText = urlPath.split('#')[0].split('?').slice(1).join('?')
     const previous = latestRequest.current.query?.parameter ?? []
     const remaining = previous.slice()
     const parsed = [...new URLSearchParams(queryText)].filter(([key]) => key).map(([key, value]) => {
@@ -588,10 +654,10 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
       const param = index < 0 ? createParam({ key }) : remaining.splice(index, 1)[0]
       return { ...param, value, is_checked: 1, is_system: -1 }
     })
-    const unchanged = url === withQueryParams(draft.url ?? '', previous, latestRequest.current.query?.omit_empty_equals)
+    const unchanged = urlPath === displayedUrl
     const query = unchanged ? previous : [...parsed, ...remaining.filter(param => param.is_checked < 0 && (param.is_system ?? 0) <= 0)]
     latestRequest.current = { ...latestRequest.current, restful: { parameter }, query: { ...latestRequest.current.query, parameter: query } }
-    onChange({ url, request: latestRequest.current })
+    onChange({ url: boundUrl(urlPath), request: latestRequest.current })
     setUrlEditing(false)
   }
 
@@ -720,13 +786,18 @@ export default function RequestEditor({ draft, onChange, mode = 'design', intro,
             </Dropdown>
           </div>
           <div className="url-input">
+            {environmentParts.bound && environmentParts.prefix ? (
+              <Tooltip title={`${environmentParts.prefix} · 来自环境「${environment?.name || '当前环境'}」，可在环境管理中修改`}>
+                <span className="url-prefix" aria-label="环境前置地址">{environmentParts.prefix}</span>
+              </Tooltip>
+            ) : null}
             <Input
               variant="borderless"
               value={urlEditing ? urlText : displayedUrl}
               onFocus={() => { setUrlText(displayedUrl); setUrlEditing(true) }}
               onChange={event => { setUrlEditing(true); setUrlText(event.target.value) }}
               onBlur={event => commitUrl(event.target.value)}
-              placeholder="请输入请求 URL"
+              placeholder={environmentParts.bound ? '输入请求路径' : '请输入请求 URL'}
               aria-label="请求 URL"
               onPressEnter={event => {
                 commitUrl(event.currentTarget.value)
