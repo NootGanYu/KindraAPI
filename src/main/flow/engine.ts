@@ -1,4 +1,6 @@
 import vm from 'node:vm'
+import { isolatedScript } from './isolatedScript'
+import type { ExecutionVariables } from '../request/variables'
 import type {
   AssertionResult,
   ConsoleEntry,
@@ -126,12 +128,21 @@ function evalAssertion(
   }
 }
 
+export interface FlowExecutionProgress {
+  /** All observed values, including overwritten/unset values, for report redaction. */
+  secrets: Set<string>
+  results: Map<string, FlowEventResult>
+  conditions: Map<string, boolean>
+  lastResponse: FlowResponseSnapshot | null
+}
 export interface FlowExecutionPolicy {
+  progress: FlowExecutionProgress
+  variables: ExecutionVariables['values']
   environment: Environment | null
   globals: GlobalVars
   signal: AbortSignal
   checkScope(): void
-  executeRequest(event: FlowEvent): Promise<{ record: SendRecord; status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; error?: string }>
+  executeRequest(event: FlowEvent): Promise<{ record: SendRecord; status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; error?: string; retryable: boolean }>
 }
 
 class FlowRuntime {
@@ -139,9 +150,9 @@ class FlowRuntime {
   readonly projectId: string
   env: Environment | null
   globals: GlobalVars
-  envValues: Record<string, string>
-  globalValues: Record<string, string>
-  localValues: Record<string, string> = {}
+  envValues: Record<string, unknown>
+  globalValues: Record<string, unknown>
+  localValues: Record<string, unknown> = {}
   consoleEntries: ConsoleEntry[] = []
   lastResponse: FlowResponseSnapshot | null = null
   private envDirty = false
@@ -163,7 +174,7 @@ class FlowRuntime {
     }
   }
 
-  get(key: string): string | undefined {
+  get(key: string): unknown {
     if (this.localValues[key] !== undefined) return this.localValues[key]
     if (this.envValues[key] !== undefined) return this.envValues[key]
     return this.globalValues[key]
@@ -207,11 +218,11 @@ class FlowRuntime {
       for (const [key, value] of Object.entries(this.envValues)) {
         const existing = this.env.env_var_list[key]
         if (existing) {
-          existing.current_value = value
+          existing.current_value = String(value)
           existing.is_checked = existing.is_checked > 0 ? existing.is_checked : 1
         } else {
           this.env.env_var_list[key] = {
-            current_value: value,
+            current_value: String(value),
             initial_value: '',
             description: '',
             is_checked: 1
@@ -224,10 +235,10 @@ class FlowRuntime {
     if (this.globalsDirty) {
       for (const [key, value] of Object.entries(this.globalValues)) {
         const existing = this.globals.vars[key]
-        if (existing) existing.current_value = value
+        if (existing) existing.current_value = String(value)
         else
           this.globals.vars[key] = {
-            current_value: value,
+            current_value: String(value),
             initial_value: '',
             description: ''
           }
@@ -345,6 +356,15 @@ interface ScriptRunResult {
 }
 
 function runScript(runtime: FlowRuntime, code: string): ScriptRunResult {
+  if (runtime.policy) {
+    const output = isolatedScript({ environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues, response: runtime.lastResponse }, code)
+    runtime.envValues = runtime.policy.variables.environment = output.environment
+    runtime.globalValues = runtime.policy.variables.globals = output.globals
+    runtime.localValues = runtime.policy.variables.local = output.local
+    for (const value of output.observed) if (value) runtime.policy.progress.secrets.add(value)
+    runtime.consoleEntries.push(...output.console)
+    return { assertions: output.assertions, error: output.error }
+  }
   const assertions: AssertionResult[] = []
   const response = runtime.lastResponse
   const pmResponse = response
@@ -365,7 +385,7 @@ function runScript(runtime: FlowRuntime, code: string): ScriptRunResult {
 
   const pm = {
     environment: {
-      get: (key: string): string | undefined =>
+      get: (key: string): unknown =>
         runtime.envValues[key] !== undefined
           ? runtime.envValues[key]
           : runtime.env?.env_var_list[key]?.initial_value,
@@ -376,7 +396,7 @@ function runScript(runtime: FlowRuntime, code: string): ScriptRunResult {
       }
     },
     globals: {
-      get: (key: string): string | undefined =>
+      get: (key: string): unknown =>
         runtime.globalValues[key] !== undefined
           ? runtime.globalValues[key]
           : runtime.globals.vars[key]?.initial_value,
@@ -386,7 +406,7 @@ function runScript(runtime: FlowRuntime, code: string): ScriptRunResult {
       }
     },
     variables: {
-      get: (key: string): string | undefined => runtime.get(key),
+      get: (key: string): unknown => runtime.get(key),
       set: (key: string, value: unknown): void => runtime.setLocal(key, String(value ?? ''))
     },
     response: pmResponse,
@@ -525,17 +545,18 @@ function result(
   }
 }
 
-function skipped(events: FlowEvent[] | undefined, detail: string): FlowEventResult[] {
+function skipped(events: FlowEvent[] | undefined, detail: string, status: 'skipped' | 'paused' = 'skipped'): FlowEventResult[] {
   if (!events?.length) return []
   return events.map((event) => ({
     event_id: event.event_id,
     name: event.name,
     type: event.type,
-    status: 'skipped' as const,
+    status,
+    retryable: status === 'paused',
     started_at: Date.now(),
     elapsed_ms: 0,
     detail,
-    children: skipped(event.children, detail)
+    children: skipped(event.children, detail, status)
   }))
 }
 
@@ -564,6 +585,10 @@ function evalCondition(
   const expanded = text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, key: string) =>
     JSON.stringify(runtime.get(key.trim()) ?? '')
   )
+  if (runtime.policy) {
+    const output = isolatedScript({ environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues, response: runtime.lastResponse }, expanded, true)
+    return { ok: !!output.ok, error: output.error }
+  }
   try {
     const sandbox = {
       env: { ...runtime.envValues },
@@ -611,6 +636,11 @@ async function runRequestEvent(
   runtime.persist()
   try {
     const execution = runtime.policy ? await runtime.policy.executeRequest(event) : null
+    if (runtime.policy) {
+      runtime.envValues = runtime.policy.variables.environment
+      runtime.globalValues = runtime.policy.variables.globals
+      runtime.localValues = runtime.policy.variables.local ??= {}
+    }
     const record = execution ? execution.record : await sendRequest(projectId, prepared!, flow.env_id || undefined)
     if (!runtime.policy) store.addSendRecord(projectId, record)
     runtime.lastResponse = toFlowResponse(record)
@@ -642,10 +672,11 @@ async function runRequestEvent(
       },
       response: runtime.lastResponse ?? undefined,
       assertions,
+      retryable: execution?.retryable,
       error: execution?.error ?? record.error?.message
     })
   } catch (error) {
-    return result(event, runtime.policy ? (runtime.policy.signal.aborted ? 'cancelled' : 'paused') : 'failed', startedAt, { error: (error as Error).message })
+    return result(event, runtime.policy ? (runtime.policy.signal.aborted ? 'cancelled' : 'paused') : 'failed', startedAt, { error: (error as Error).message, retryable: false })
   }
 }
 
@@ -653,7 +684,8 @@ async function runEvent(
   projectId: string,
   event: FlowEvent,
   runtime: FlowRuntime,
-  flow: Flow
+  flow: Flow,
+  address: string
 ): Promise<FlowEventResult> {
   const startedAt = Date.now()
   if (!event.enabled) {
@@ -664,7 +696,6 @@ async function runEvent(
   }
 
   try {
-    if (runtime.policy && !['api', 'request', 'assert', 'wait', 'begin'].includes(event.type)) throw new Error('Agent Flow 尚未批准该节点安全执行策略')
     if (event.type === 'api' || event.type === 'request') {
       return await runRequestEvent(projectId, event, runtime, flow)
     }
@@ -716,7 +747,9 @@ async function runEvent(
     }
 
     if (event.type === 'if') {
-      const condition = evalCondition(runtime, event.condition ?? '')
+      const previous = runtime.policy?.progress.conditions.get(address)
+      const condition = previous === undefined ? evalCondition(runtime, event.condition ?? '') : { ok: previous }
+      if (!condition.error) runtime.policy?.progress.conditions.set(address, condition.ok)
       if (condition.error) {
         return result(event, 'failed', startedAt, {
           detail: `条件求值失败：${condition.error}`,
@@ -730,7 +763,7 @@ async function runEvent(
           children: skipped(event.children, '条件不成立')
         })
       }
-      const children = await runEvents(projectId, event.children ?? [], runtime, flow)
+      const children = await runEvents(projectId, event.children ?? [], runtime, flow, address)
       const failed = hasFailure(children)
       return result(event, failed ? 'failed' : 'passed', startedAt, {
         detail: `条件成立：${event.condition ?? ''}`,
@@ -739,7 +772,7 @@ async function runEvent(
     }
 
     if (event.type === 'begin') {
-      const children = await runEvents(projectId, event.children ?? [], runtime, flow)
+      const children = await runEvents(projectId, event.children ?? [], runtime, flow, address)
       return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
         detail: `分组 ${children.length} 个事件`,
         children
@@ -747,23 +780,35 @@ async function runEvent(
     }
 
     if (event.type === 'loop') {
+      const previousIndex = runtime.localValues.loop_index
       const count = Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
       const children: FlowEventResult[] = []
+      let iterations = 0
       for (let index = 0; index < count; index += 1) {
         runtime.setLocal('loop_index', String(index))
-        const iterationResults = await runEvents(projectId, event.children ?? [], runtime, flow)
+        const iterationResults = await runEvents(projectId, event.children ?? [], runtime, flow, `${address}/${index}`)
+        iterations++
         children.push(...iterationResults.map((item) => ({ ...item, iteration: index })))
+        if (runtime.policy && hasFailure(iterationResults)) break
       }
-      runtime.unsetLocal('loop_index')
+      if (previousIndex === undefined) runtime.unsetLocal('loop_index')
+      else runtime.setLocal('loop_index', String(previousIndex))
       return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
-        detail: `循环 ${count} 轮`,
+        detail: runtime.policy ? `循环计划 ${count} 轮，已运行 ${iterations} 轮${hasFailure(children) ? "，后续轮次已暂停" : ""}` : `循环 ${count} 轮`,
         children
       })
     }
 
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
-    return result(event, runtime.policy ? (runtime.policy.signal.aborted ? 'cancelled' : 'paused') : 'failed', startedAt, { error: (error as Error).message })
+    return result(event, runtime.policy ? (runtime.policy.signal.aborted ? 'cancelled' : 'paused') : 'failed', startedAt, { error: (error as Error).message, retryable: !!runtime.policy })
+  }
+}
+
+function rememberVariables(runtime: FlowRuntime): void {
+  if (!runtime.policy) return
+  for (const scope of [runtime.policy.variables.environment, runtime.policy.variables.globals, runtime.policy.variables.local ?? {}]) {
+    for (const value of Object.values(scope)) if (value !== undefined && value !== null && String(value)) runtime.policy.progress.secrets.add(String(value))
   }
 }
 
@@ -771,21 +816,39 @@ async function runEvents(
   projectId: string,
   events: FlowEvent[],
   runtime: FlowRuntime,
-  flow: Flow
+  flow: Flow,
+  parentAddress = ''
 ): Promise<FlowEventResult[]> {
   const results: FlowEventResult[] = []
   for (const [index, event] of events.entries()) {
+    const address = `${parentAddress}/${event.event_id}`
+    const completed = runtime.policy?.progress.results.get(address)
+    if (completed) {
+      results.push(structuredClone(completed))
+      if (hasFailure([completed])) { results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行', 'paused')); break }
+      continue
+    }
     if (runtime.policy) {
       try {
         if (runtime.policy.signal.aborted) throw new Error('执行已取消')
         runtime.policy.checkScope()
       } catch (error) {
-        results.push(result(event, runtime.policy.signal.aborted ? 'cancelled' : 'paused', Date.now(), { error: (error as Error).message }))
-        results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行')); break
+        results.push(result(event, runtime.policy.signal.aborted ? 'cancelled' : 'paused', Date.now(), { error: (error as Error).message, retryable: !!runtime.policy }))
+        results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行', 'paused')); break
       }
     }
-    results.push(await runEvent(projectId, event, runtime, flow))
-    if (runtime.policy && hasFailure(results)) { results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行')); break }
+    if (runtime.policy) {
+      runtime.envValues = runtime.policy.variables.environment
+      runtime.globalValues = runtime.policy.variables.globals
+      runtime.localValues = runtime.policy.variables.local ??= {}
+    }
+    rememberVariables(runtime)
+    const executed = await runEvent(projectId, event, runtime, flow, address)
+    rememberVariables(runtime)
+    results.push(executed)
+    // Containers with incomplete children are revisited; terminal leaves are never replayed.
+    if (runtime.policy && (['passed', 'skipped'].includes(executed.status) || !['if', 'begin', 'loop'].includes(event.type) && !executed.retryable)) runtime.policy.progress.results.set(address, structuredClone(executed))
+    if (runtime.policy && hasFailure(results)) { results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行', 'paused')); break }
   }
   return results
 }
@@ -803,9 +866,11 @@ export async function runFlow(
   const globals = policy?.globals ?? store.getGlobalVars(projectId)
   const runtime = new FlowRuntime(projectId, env, globals)
   runtime.policy = policy
+  runtime.lastResponse = policy?.progress.lastResponse ?? null
   const startedAt = Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
   runtime.persist()
+  if (policy) policy.progress.lastResponse = runtime.lastResponse
   const finishedAt = Date.now()
   const run: FlowRun = {
     run_id: createId('run'),
@@ -817,7 +882,7 @@ export async function runFlow(
     finished_at: finishedAt,
     status: hasFailure(events) ? 'failed' : 'passed',
     elapsed_ms: finishedAt - startedAt,
-    variables: { ...runtime.envValues },
+    variables: Object.fromEntries(Object.entries(runtime.envValues).map(([key, value]) => [key, String(value)])),
     events,
     console: runtime.consoleEntries
   }

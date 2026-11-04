@@ -57,6 +57,7 @@ const api = {
     proposeReadPlan: (projectId: string, input: unknown) => invoke('agent:proposeReadPlan', projectId, input),
     getPlan: (projectId: string, id: string) => invoke('agent:getPlan', projectId, id),
     listPlans: (projectId: string) => invoke('agent:listPlans', projectId),
+    resumePlan: (projectId: string, id: string, stepIds: string[]) => invoke('agent:resumePlan', projectId, id, stepIds),
     approvePlan: (projectId: string, id: string) => invoke('agent:approvePlan', projectId, id),
     rejectPlan: (projectId: string, id: string) => invoke('agent:rejectPlan', projectId, id),
     deletePlan: (projectId: string, id: string) => invoke('agent:deletePlan', projectId, id),
