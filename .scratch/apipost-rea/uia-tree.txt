@@ -1,3 +1,0 @@
-﻿ControlType.Window | name=Apipost单机版-你的接口数据，只留在你的电脑里 | id= | class=Chrome_WidgetWin_1
-  ControlType.Pane | name=Chrome Legacy Window | id=160203392 | class=Chrome_RenderWidgetHostHWND
-  ControlType.Pane | name= | id= | class=Intermediate D3D Window

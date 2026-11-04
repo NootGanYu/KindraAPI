@@ -17,9 +17,9 @@ Apipost Offline
 *.log
 .claude/settings.local.json
 
-# UI inventory: keep WebP + docs in git, keep originals/local state out
-ui-inventory/screenshots/png/
-ui-inventory/tools/.cache/
-ui-inventory/tools/.runs/
-ui-inventory/.user-data/
-ui-inventory/.env.local
+# code-only branch: docs and analysis artifacts stay local, not tracked
+docs/
+.scratch/
+prototype/
+ui-inventory/
+.mcp.json

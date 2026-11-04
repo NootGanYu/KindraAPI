@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "KindraAPI": {
-      "command": "node",
-      "args": ["mcp-stdio.cjs"]
-    }
-  }
-}
