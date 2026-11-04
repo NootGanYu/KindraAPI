@@ -1,3 +1,4 @@
+import { applyCaseOverride, executeApiCase } from '../request/cases'
 import { createExecutionVariables, persistExecutionVariables, type ExecutionVariables } from '../request/variables'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -7,12 +8,13 @@ import { getDraft } from './drafts'
 import { createHash } from 'node:crypto'
 import type { AgentExecutionPermissions } from '@shared/agentPlan'
 import { withTransportIntegrity } from '../request/transport'
-import type { Target, SendRecord } from '@shared/types'
+import type { Target, SendRecord, ApiCase, CaseRunResult } from '@shared/types'
 import { captureRequestContext, sendRequest, type RequestExecutionContext } from '../request/executor'
 import { projectRedactor } from './redaction'
 const { VariableScope, Url } = require('postman-collection') as any
 
 export interface ExecutionSnapshot {
+  apiCase?: ApiCase
   context: RequestExecutionContext
   method: string
   host: string
@@ -24,15 +26,16 @@ export interface ExecutionSnapshot {
   scopeSignature: string
   variables: ExecutionVariables
 }
-function scopeSignature(projectId: string, target: Target): string {
-  const context = captureRequestContext(projectId, target)
-  return JSON.stringify(context.dependencies.map(d => { const r = 'target_id' in d ? d.request : d; return { identity: 'target_id' in d ? [d.target_id, d.parent_id, d.method, d.url] : 'global', pre: r?.pre_script, preEnabled: r?.pre_script_enabled, post: r?.test, postEnabled: r?.test_enabled, file: r?.body?.binary, formFiles: (r?.body?.formdata ?? r?.body?.parameter ?? []).filter(p => p.field_type === 'file') } }))
+function scopeSignature(projectId: string, target: Target, caseId?: string): string {
+  const apiCase = caseId ? target.cases?.find(item => item.case_id === caseId) : undefined
+  const context = captureRequestContext(projectId, apiCase ? applyCaseOverride(target, apiCase) : target)
+  return JSON.stringify([apiCase ? { case_id: apiCase.case_id, enabled: apiCase.is_enabled } : null, context.dependencies.map(d => { const r = 'target_id' in d ? d.request : d; return { identity: 'target_id' in d ? [d.target_id, d.parent_id, d.method, d.url] : 'global', pre: r?.pre_script, preEnabled: r?.pre_script_enabled, post: r?.test, postEnabled: r?.test_enabled, file: r?.body?.binary, formFiles: (r?.body?.formdata ?? r?.body?.parameter ?? []).filter(p => p.field_type === 'file') } })])
 }
 function fileHash(bytes: Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
 /** The same snapshot supplies the approval display and the eventual runtime. */
-export function prepareExecution(projectId: string, target: Target, environmentId?: string, permissions: AgentExecutionPermissions = {}): ExecutionSnapshot {
+export function prepareExecution(projectId: string, target: Target, environmentId?: string, permissions: AgentExecutionPermissions = {}, apiCase?: ApiCase): ExecutionSnapshot {
   if (permissions && (typeof permissions !== 'object' || Object.keys(permissions).some(k => !['requests', 'writeVariables', 'saveResponse'].includes(k)) || ['writeVariables', 'saveResponse'].some(k => (permissions as any)[k] !== undefined && typeof (permissions as any)[k] !== 'boolean') || (permissions.requests !== undefined && (!Array.isArray(permissions.requests) || permissions.requests.length > 32)))) throw new Error('执行授权参数无效')
-  const context = captureRequestContext(projectId, target, environmentId)
+  const context = captureRequestContext(projectId, apiCase ? applyCaseOverride(target, apiCase) : target, environmentId)
   const scripts = context.dependencies.flatMap(dependency => {
     const request = 'target_id' in dependency ? dependency.request : dependency
     return request ? [request] : []
@@ -70,11 +73,11 @@ export function prepareExecution(projectId: string, target: Target, environmentI
   const effects = [`HTTP Host: ${host}`, '发送获批 HTTP 请求，可能产生远端业务副作用；不跟随重定向', '查询变量可按脚本演进；方法、主机、路径及查询字段名固定', ...files.map(f => `上传文件 ${f.path} (${f.bytes.length} bytes, SHA256 ${f.hash})`), ...requests.map(r => `额外请求 ${r.method} ${r.url}，最多 ${r.maxCalls} 次`), ...(pre ? [`前置脚本 SHA256 ${createHash('sha256').update(pre).digest('hex')}`] : []), ...(post ? [`后置脚本 SHA256 ${createHash('sha256').update(post).digest('hex')}`] : []), permissions.writeVariables ? '允许变量差量写回，冲突时暂停' : '脚本变量仅在本轮内存演进，不写回环境或全局变量', '仅保存脱敏本机报告']
   const variables = createExecutionVariables(context.env, context.globals, context.resolved.baseUrl)
   context.variables = variables.values
-  return { variables, files, scopeSignature: scopeSignature(projectId, getDraft(projectId, target.target_id).target), context, host, method: context.resolved.method, url, effects, requests, permissions: structuredClone(permissions) }
+  return { apiCase: apiCase ? structuredClone(apiCase) : undefined, variables, files, scopeSignature: scopeSignature(projectId, getDraft(projectId, target.target_id).target, apiCase?.case_id), context, host, method: context.resolved.method, url, effects, requests, permissions: structuredClone(permissions) }
 
 }
 export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: AbortSignal): Promise<{ status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; report: unknown; error?: string; response?: SendRecord['response'] }> {
-  if (snapshot.scopeSignature !== scopeSignature(snapshot.context.projectId, getDraft(snapshot.context.projectId, snapshot.context.target.target_id).target)) throw new Error('脚本、目标或文件配置已改变，请重新确认执行计划')
+  if (snapshot.scopeSignature !== scopeSignature(snapshot.context.projectId, getDraft(snapshot.context.projectId, snapshot.context.target.target_id).target, snapshot.apiCase?.case_id)) throw new Error('脚本、目标或文件配置已改变，请重新确认执行计划')
   for (const file of snapshot.files) {
     if (fs.realpathSync(file.path) !== file.realPath || fileHash(fs.readFileSync(file.path)) !== file.hash) throw new Error('获批文件已变化，请重新确认执行计划')
   }
@@ -88,7 +91,8 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   let dispatched = 0
   const remaining = [{ method: snapshot.method, url: snapshot.url, maxCalls: 1 }, ...snapshot.requests].map(r => ({ ...r }))
   const { context } = snapshot
-  const { value: record, complete, started } = await withTransportIntegrity(() => sendRequest(context.projectId, context.target, context.env?.env_id, {
+  let caseResult: CaseRunResult | undefined
+  const options: NonNullable<Parameters<typeof sendRequest>[3]> = {
     context, signal, policy: {
       followRedirects: false, persistVariables: false,
       onVariables: values => { snapshot.variables.values.environment = values.environment; snapshot.variables.values.globals = values.globals },
@@ -100,7 +104,7 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
       },
       beforeRequest: (request, variables) => {
         if (scopeError) throw new Error(scopeError)
-        if (snapshot.scopeSignature !== scopeSignature(context.projectId, getDraft(context.projectId, context.target.target_id).target)) throw new Error('脚本、目标或文件配置已改变，请重新确认')
+        if (snapshot.scopeSignature !== scopeSignature(context.projectId, getDraft(context.projectId, context.target.target_id).target, snapshot.apiCase?.case_id)) throw new Error('脚本、目标或文件配置已改变，请重新确认')
         if (context.env && !store.listEnvironments(context.projectId).some(e => e.env_id === context.env!.env_id)) throw new Error('获批环境已删除')
         if (signal.aborted) throw new Error('请求已取消，尚未发送')
         const currentScope = new VariableScope({ values: Object.entries({ ...variables.globals, ...variables.environment }).map(([key, value]) => ({ key, value })) })
@@ -117,7 +121,13 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
         allowed.maxCalls--; dispatched++
       }
     }
-  }))
+  }
+  const { value: record, complete, started } = await withTransportIntegrity(async () => {
+    if (!snapshot.apiCase) return sendRequest(context.projectId, context.target, context.env?.env_id, options)
+    const run = await executeApiCase(context.projectId, context.target, snapshot.apiCase, context.env?.env_id, options)
+    caseResult = run.result
+    return run.record
+  })
   const unknown = dispatched > 0 && (!complete || started !== dispatched)
   if (unknown) {
     record.error = { type: 'transport', message: '响应传输未完整结束，远端结果未知' }; record.status = 'failed'
@@ -128,10 +138,11 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   if (!record.error) {
     try {
       if (context.env && !store.listEnvironments(context.projectId).some(e => e.env_id === context.env!.env_id)) throw new Error('获批环境已删除')
-      if (snapshot.scopeSignature !== scopeSignature(context.projectId, getDraft(context.projectId, context.target.target_id).target)) throw new Error('脚本、目标或文件配置已改变，请重新确认')
+      if (snapshot.scopeSignature !== scopeSignature(context.projectId, getDraft(context.projectId, context.target.target_id).target, snapshot.apiCase?.case_id)) throw new Error('脚本、目标或文件配置已改变，请重新确认')
       for (const approvedFile of snapshot.files) file(approvedFile.path)
     } catch (error) { record.error = { type: 'authorization', message: error instanceof Error ? error.message : '执行范围已变化' } }
   }
+  if (!record.error && caseResult?.status === 'failed') record.error = { type: 'assertion', message: '用例断言失败' }
   if (!record.error && snapshot.permissions.writeVariables) {
     try { persistExecutionVariables(context.projectId, snapshot.variables) }
     catch (error) { record.error = { type: 'variables', message: error instanceof Error ? error.message : '变量写回暂停' } }
@@ -142,5 +153,5 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   const status = record.error ? unknown ? 'unknown' : signal.aborted ? 'cancelled' : 'failed' : 'succeeded'
   const error = status === 'unknown' ? '远端结果未知：请求可能已到达服务，禁止自动重发；请先人工核实。' : record.error?.message
   const redact = projectRedactor(context.projectId, Object.values(context.variables?.environment ?? {}).concat(Object.values(context.variables?.globals ?? {})).map(String), [context, record, snapshot.requests])
-  return { status, response: status === 'succeeded' ? redact(record.response) : undefined, report: redact({ ...record, network_attempts: remaining.map((request, index) => ({ method: request.method, url: request.url, count: (index === 0 ? 1 : snapshot.requests[index - 1].maxCalls) - request.maxCalls })), outcome: status, error: error ? { type: status, message: error } : null }), error: error ? redact(error) : undefined }
+  return { status, response: status === 'succeeded' ? redact(record.response) : undefined, report: redact({ ...record, ...(caseResult ? { case_id: snapshot.apiCase!.case_id, case_name: snapshot.apiCase!.name, case_result: { ...caseResult, ...(record.error ? { status: record.error.type === 'assertion' ? 'failed' : 'error', error } : {}) } } : {}), network_attempts: remaining.map((request, index) => ({ method: request.method, url: request.url, count: (index === 0 ? 1 : snapshot.requests[index - 1].maxCalls) - request.maxCalls })), outcome: status, error: error ? { type: status, message: error } : null }), error: error ? redact(error) : undefined }
 }
