@@ -69,8 +69,10 @@
     "test:agent-create-ui": "node scripts/agent-create-ui-smoke.cjs",
     "test:agent-case-execution": "esbuild scripts/agent-case-execution-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-case-execution-16.cjs && electron node_modules/.tmp/agent-case-execution-16.cjs && electron node_modules/.tmp/agent-case-execution-16.cjs --responses",
     "test:agent-case-execution-ui": "node scripts/agent-case-execution-ui-smoke.cjs",
+    "test:agent-flow-execution": "esbuild scripts/agent-flow-execution-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-flow-19.cjs && electron node_modules/.tmp/agent-flow-19.cjs && electron node_modules/.tmp/agent-flow-19.cjs --responses",
     "test:agent-flow-save": "esbuild scripts/agent-flow-save-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-save-18.cjs && electron node_modules/.tmp/flow-save-18.cjs && electron node_modules/.tmp/flow-save-18.cjs --responses",
-    "test:agent-flow-save-ui": "node scripts/agent-flow-save-ui-smoke.cjs"
+    "test:agent-flow-save-ui": "node scripts/agent-flow-save-ui-smoke.cjs",
+    "test:agent-flow-execution-ui": "node scripts/agent-flow-execution-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

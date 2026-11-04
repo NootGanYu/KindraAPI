@@ -13,7 +13,8 @@ import type {
   GlobalVars,
   Param,
   RequestModel,
-  Target
+  Target,
+  SendRecord
 } from '@shared/types'
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
@@ -125,7 +126,16 @@ function evalAssertion(
   }
 }
 
+export interface FlowExecutionPolicy {
+  environment: Environment | null
+  globals: GlobalVars
+  signal: AbortSignal
+  checkScope(): void
+  executeRequest(event: FlowEvent): Promise<{ record: SendRecord; status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; error?: string }>
+}
+
 class FlowRuntime {
+  policy?: FlowExecutionPolicy
   readonly projectId: string
   env: Environment | null
   globals: GlobalVars
@@ -192,6 +202,7 @@ class FlowRuntime {
   }
 
   persist(): void {
+    if (this.policy) return
     if (this.env && this.envDirty) {
       for (const [key, value] of Object.entries(this.envValues)) {
         const existing = this.env.env_var_list[key]
@@ -466,7 +477,7 @@ export function applyRequestInput(target: Target, input?: FlowRequestInput): Tar
   return copy
 }
 
-function inlineTarget(projectId: string, event: FlowEvent): Target {
+export function inlineTarget(projectId: string, event: FlowEvent): Target {
   const target = createTarget(projectId, '0', 'api', event.name)
   target.method = (event.method || 'GET').toUpperCase()
   target.url = event.url || ''
@@ -529,7 +540,7 @@ function skipped(events: FlowEvent[] | undefined, detail: string): FlowEventResu
 }
 
 function hasFailure(events: FlowEventResult[]): boolean {
-  return events.some((event) => event.status === 'failed' || hasFailure(event.children ?? []))
+  return events.some((event) => !['passed', 'skipped'].includes(event.status) || hasFailure(event.children ?? []))
 }
 
 function countFailed(events: FlowEventResult[]): number {
@@ -586,7 +597,9 @@ async function runRequestEvent(
 ): Promise<FlowEventResult> {
   const startedAt = Date.now()
   let target: Target | null = null
-  if (event.type === 'api') {
+  if (runtime.policy) {
+    // Target resolution and all dependencies were captured before approval.
+  } else if (event.type === 'api') {
     if (!event.target_id) return result(event, 'failed', startedAt, { error: '未选择接口' })
     target = store.getTarget(projectId, event.target_id)
     if (!target) return result(event, 'failed', startedAt, { error: '接口不存在或已删除' })
@@ -594,11 +607,12 @@ async function runRequestEvent(
     target = inlineTarget(projectId, event)
   }
 
-  const prepared = applyRequestInput(target, event.input)
+  const prepared = target ? applyRequestInput(target, event.input) : null
   runtime.persist()
   try {
-    const record = await sendRequest(projectId, prepared, flow.env_id || undefined)
-    store.addSendRecord(projectId, record)
+    const execution = runtime.policy ? await runtime.policy.executeRequest(event) : null
+    const record = execution ? execution.record : await sendRequest(projectId, prepared!, flow.env_id || undefined)
+    if (!runtime.policy) store.addSendRecord(projectId, record)
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
 
@@ -606,7 +620,7 @@ async function runRequestEvent(
       evalAssertion(assertion, runtime.lastResponse)
     )
     const failed = assertions.some((assertion) => !assertion.passed)
-    const status: FlowEventResult['status'] = record.error || !record.response || failed ? 'failed' : 'passed'
+    const status: FlowEventResult['status'] = execution && execution.status !== 'succeeded' ? (execution.status === 'failed' && record.error?.type === 'authorization' ? 'paused' : execution.status) : record.error || !record.response || failed ? 'failed' : 'passed'
     const detail = record.error
       ? record.error.message
       : record.response
@@ -628,10 +642,10 @@ async function runRequestEvent(
       },
       response: runtime.lastResponse ?? undefined,
       assertions,
-      error: record.error?.message
+      error: execution?.error ?? record.error?.message
     })
   } catch (error) {
-    return result(event, 'failed', startedAt, { error: (error as Error).message })
+    return result(event, runtime.policy ? (runtime.policy.signal.aborted ? 'cancelled' : 'paused') : 'failed', startedAt, { error: (error as Error).message })
   }
 }
 
@@ -650,6 +664,7 @@ async function runEvent(
   }
 
   try {
+    if (runtime.policy && !['api', 'request', 'assert', 'wait', 'begin'].includes(event.type)) throw new Error('Agent Flow 尚未批准该节点安全执行策略')
     if (event.type === 'api' || event.type === 'request') {
       return await runRequestEvent(projectId, event, runtime, flow)
     }
@@ -688,7 +703,15 @@ async function runEvent(
 
     if (event.type === 'wait') {
       const ms = Math.min(Math.max(Number(event.wait_ms ?? 500), 0), MAX_WAIT_MS)
-      await sleep(ms)
+      if (runtime.policy) {
+        await new Promise<void>((resolve, reject) => {
+          const signal = runtime.policy!.signal
+          const cancel = (): void => { clearTimeout(timer); signal.removeEventListener('abort', cancel); reject(new Error('执行已取消')) }
+          const timer = setTimeout(() => { signal.removeEventListener('abort', cancel); resolve() }, ms)
+          signal.addEventListener('abort', cancel, { once: true })
+          if (signal.aborted) cancel()
+        })
+      } else await sleep(ms)
       return result(event, 'passed', startedAt, { detail: `等待 ${ms} ms` })
     }
 
@@ -740,7 +763,7 @@ async function runEvent(
 
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
-    return result(event, 'failed', startedAt, { error: (error as Error).message })
+    return result(event, runtime.policy ? (runtime.policy.signal.aborted ? 'cancelled' : 'paused') : 'failed', startedAt, { error: (error as Error).message })
   }
 }
 
@@ -751,8 +774,18 @@ async function runEvents(
   flow: Flow
 ): Promise<FlowEventResult[]> {
   const results: FlowEventResult[] = []
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
+    if (runtime.policy) {
+      try {
+        if (runtime.policy.signal.aborted) throw new Error('执行已取消')
+        runtime.policy.checkScope()
+      } catch (error) {
+        results.push(result(event, runtime.policy.signal.aborted ? 'cancelled' : 'paused', Date.now(), { error: (error as Error).message }))
+        results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行')); break
+      }
+    }
     results.push(await runEvent(projectId, event, runtime, flow))
+    if (runtime.policy && hasFailure(results)) { results.push(...skipped(events.slice(index + 1), '前置节点未成功，停止依赖执行')); break }
   }
   return results
 }
@@ -760,14 +793,16 @@ async function runEvents(
 export async function runFlow(
   projectId: string,
   flow: Flow,
-  environmentId?: string
+  environmentId?: string,
+  policy?: FlowExecutionPolicy
 ): Promise<FlowRun> {
   const envs = store.listEnvironments(projectId)
   const settings = store.getSettings()
   const preferredEnvId = environmentId || flow.env_id || settings.environment_id
-  const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
-  const globals = store.getGlobalVars(projectId)
+  const env = policy ? policy.environment : envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
+  const globals = policy?.globals ?? store.getGlobalVars(projectId)
   const runtime = new FlowRuntime(projectId, env, globals)
+  runtime.policy = policy
   const startedAt = Date.now()
   const events = await runEvents(projectId, flow.events, runtime, flow)
   runtime.persist()
@@ -786,7 +821,7 @@ export async function runFlow(
     events,
     console: runtime.consoleEntries
   }
-  store.saveFlowRun(projectId, run)
+  if (!policy) store.saveFlowRun(projectId, run)
   return run
 }
 
