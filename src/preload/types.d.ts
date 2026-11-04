@@ -138,6 +138,7 @@ export interface ApiBridge {
     proposeReadPlan: (projectId: string, input: ReadPlanInput) => Promise<Result<AgentPlan>>
     getPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
     listPlans: (projectId: string) => Promise<Result<AgentPlan[]>>
+    resumePlan: (projectId: string, id: string, stepIds: string[]) => Promise<Result<AgentPlan>>
     approvePlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
     rejectPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
     deletePlan: (projectId: string, id: string) => Promise<Result<boolean>>

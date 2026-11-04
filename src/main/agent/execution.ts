@@ -35,7 +35,7 @@ function scopeSignature(projectId: string, target: Target, caseId?: string): str
 }
 function fileHash(bytes: Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
 /** The same snapshot supplies the approval display and the eventual runtime. */
-export function prepareExecution(projectId: string, target: Target, environmentId?: string, permissions: AgentExecutionPermissions = {}, apiCase?: ApiCase, source?: { currentTarget: () => Target; checkScope?: () => void }): ExecutionSnapshot {
+export function prepareExecution(projectId: string, target: Target, environmentId?: string, permissions: AgentExecutionPermissions = {}, apiCase?: ApiCase, source?: { currentTarget: () => Target; checkScope?: () => void; variableQuery?: boolean }): ExecutionSnapshot {
   if (permissions && (typeof permissions !== 'object' || Object.keys(permissions).some(k => !['requests', 'writeVariables', 'saveResponse'].includes(k)) || ['writeVariables', 'saveResponse'].some(k => (permissions as any)[k] !== undefined && typeof (permissions as any)[k] !== 'boolean') || (permissions.requests !== undefined && (!Array.isArray(permissions.requests) || permissions.requests.length > 32)))) throw new Error('执行授权参数无效')
   const context = captureRequestContext(projectId, apiCase ? applyCaseOverride(target, apiCase) : target, environmentId)
   const scripts = context.dependencies.flatMap(dependency => {
@@ -61,6 +61,7 @@ export function prepareExecution(projectId: string, target: Target, environmentI
   const approvedUrl = new Url(scope.replaceIn(context.resolved.url))
   const auth = context.resolved.authModel
   if (auth?.type === 'kv' && auth.kv?.in === 'query') approvedUrl.query.upsert({ key: scope.replaceIn(auth.kv.key), value: scope.replaceIn(auth.kv.value) })
+  if (source?.variableQuery) approvedUrl.query.each((param: { value?: string | null }) => { if (typeof param.value === 'string') param.value = param.value.replace(/\{\{[^}]+\}\}/g, '') })
   const url = approvedUrl.toString()
   if (/\{\{/.test(url) || /\{\{\s*\$/.test(context.resolved.url)) throw new Error('执行目标包含未解析或动态变量，请使用固定目标重新生成计划')
   const parsed = new URL(url)
@@ -84,7 +85,7 @@ export function prepareExecution(projectId: string, target: Target, environmentI
   return { apiCase: apiCase ? structuredClone(apiCase) : undefined, checkScope, variables, files, scopeSignature: signature, context, host, method: context.resolved.method, url, effects, requests, permissions: structuredClone(permissions) }
 
 }
-export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: AbortSignal): Promise<{ status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; report: unknown; error?: string; response?: SendRecord['response']; record: SendRecord }> {
+export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: AbortSignal): Promise<{ status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; report: unknown; error?: string; response?: SendRecord['response']; record: SendRecord; retryable: boolean }> {
   snapshot.checkScope()
   for (const file of snapshot.files) {
     if (fs.realpathSync(file.path) !== file.realPath || fileHash(fs.readFileSync(file.path)) !== file.hash) throw new Error('获批文件已变化，请重新确认执行计划')
@@ -103,7 +104,7 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   const options: NonNullable<Parameters<typeof sendRequest>[3]> = {
     context, signal, policy: {
       followRedirects: false, persistVariables: false,
-      onVariables: values => { snapshot.variables.values.environment = values.environment; snapshot.variables.values.globals = values.globals },
+      onVariables: values => { snapshot.variables.values.environment = values.environment; snapshot.variables.values.globals = values.globals; snapshot.variables.values.local = values.local },
       // Pre-send helpers can read before beforeRequest, so file access is denied independently.
       fileResolver: {
         stat: (source: unknown, callback: (error: unknown, stat?: unknown) => void) => { try { const f = file(source); callback(null, { isFile: () => true, mode: f.mode, size: f.bytes.length }) } catch (error) { callback(error) } },
@@ -115,7 +116,7 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
         snapshot.checkScope()
         if (context.env && !store.listEnvironments(context.projectId).some(e => e.env_id === context.env!.env_id)) throw new Error('获批环境已删除')
         if (signal.aborted) throw new Error('请求已取消，尚未发送')
-        const currentScope = new VariableScope({ values: Object.entries({ ...variables.globals, ...variables.environment }).map(([key, value]) => ({ key, value })) })
+        const currentScope = new VariableScope({ values: Object.entries({ ...variables.globals, ...variables.environment, ...variables.local }).map(([key, value]) => ({ key, value })) })
         const currentUrl = new Url(currentScope.replaceIn(context.resolved.url))
         const auth = context.resolved.authModel
         if (auth?.type === 'kv' && auth.kv?.in === 'query') currentUrl.query.upsert({ key: currentScope.replaceIn(auth.kv.key), value: currentScope.replaceIn(auth.kv.value) })
@@ -160,6 +161,6 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   if (record.error) record.status = 'failed'
   const status = record.error ? unknown ? 'unknown' : signal.aborted ? 'cancelled' : 'failed' : 'succeeded'
   const error = status === 'unknown' ? '远端结果未知：请求可能已到达服务，禁止自动重发；请先人工核实。' : record.error?.message
-  const redact = projectRedactor(context.projectId, Object.values(context.variables?.environment ?? {}).concat(Object.values(context.variables?.globals ?? {})).map(String), [context, record, snapshot.requests])
-  return { record, status, response: status === 'succeeded' ? redact(record.response) : undefined, report: redact({ ...record, ...(caseResult ? { case_id: snapshot.apiCase!.case_id, case_name: snapshot.apiCase!.name, case_result: { ...caseResult, ...(record.error ? { status: record.error.type === 'assertion' ? 'failed' : 'error', error } : {}) } } : {}), network_attempts: remaining.map((request, index) => ({ method: request.method, url: request.url, count: (index === 0 ? 1 : snapshot.requests[index - 1].maxCalls) - request.maxCalls })), outcome: status, error: error ? { type: status, message: error } : null }), error: error ? redact(error) : undefined }
+  const redact = projectRedactor(context.projectId, Object.values(context.variables?.environment ?? {}).concat(Object.values(context.variables?.globals ?? {}), Object.values(context.variables?.local ?? {})).map(String), [context, record, snapshot.requests])
+  return { record, status, retryable: dispatched === 0 && started === 0 && status !== 'succeeded', response: status === 'succeeded' ? redact(record.response) : undefined, report: redact({ ...record, ...(caseResult ? { case_id: snapshot.apiCase!.case_id, case_name: snapshot.apiCase!.name, case_result: { ...caseResult, ...(record.error ? { status: record.error.type === 'assertion' ? 'failed' : 'error', error } : {}) } } : {}), network_attempts: remaining.map((request, index) => ({ method: request.method, url: request.url, count: (index === 0 ? 1 : snapshot.requests[index - 1].maxCalls) - request.maxCalls })), outcome: status, error: error ? { type: status, message: error } : null }), error: error ? redact(error) : undefined }
 }

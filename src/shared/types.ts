@@ -506,6 +506,8 @@ export interface FlowResponseSnapshot {
 }
 
 export interface FlowEventResult {
+  /** A paused/cancelled boundary with no dispatched remote effects. */
+  retryable?: boolean
   event_id: string
   name: string
   type: FlowEventType

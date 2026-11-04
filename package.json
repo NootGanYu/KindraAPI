@@ -72,9 +72,11 @@
     "test:agent-flow-execution": "esbuild scripts/agent-flow-execution-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-flow-19.cjs && electron node_modules/.tmp/agent-flow-19.cjs && electron node_modules/.tmp/agent-flow-19.cjs --responses",
     "test:agent-flow-save": "esbuild scripts/agent-flow-save-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/flow-save-18.cjs && electron node_modules/.tmp/flow-save-18.cjs && electron node_modules/.tmp/flow-save-18.cjs --responses",
     "test:agent-flow-save-ui": "node scripts/agent-flow-save-ui-smoke.cjs",
+    "test:agent-flow-execution-ui": "node scripts/agent-flow-execution-ui-smoke.cjs",
+    "test:agent-flow-control": "esbuild scripts/agent-flow-control-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-flow-20.cjs && electron node_modules/.tmp/agent-flow-20.cjs && electron node_modules/.tmp/agent-flow-20.cjs --responses",
+    "test:agent-flow-control-ui": "node scripts/agent-flow-control-ui-smoke.cjs",
     "test:agent-deletion": "esbuild scripts/agent-deletion-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/deletion-21.cjs && electron node_modules/.tmp/deletion-21.cjs",
-    "test:agent-deletion-ui": "node scripts/agent-deletion-ui-smoke.cjs",
-    "test:agent-flow-execution-ui": "node scripts/agent-flow-execution-ui-smoke.cjs"
+    "test:agent-deletion-ui": "node scripts/agent-deletion-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

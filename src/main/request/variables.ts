@@ -4,7 +4,7 @@ import * as store from '../storage/store'
 
 /** Mutable only inside an approved run. Persistence uses the original disk baseline, never blind replacement. */
 export interface ExecutionVariables {
-  values: { environment: Record<string, unknown>; globals: Record<string, unknown> }
+  values: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }
   baseline: ExecutionVariables['values']
   environment: Environment | null
   globals: GlobalVars

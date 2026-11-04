@@ -22,6 +22,7 @@ export interface ReadPlanInput {
   draft?: Target
 }
 export interface AgentPlanStep {
+  retryable?: boolean
   case_id?: string
   case_name?: string
   kind?: 'api' | 'flow'
@@ -40,6 +41,8 @@ export interface AgentPlanStep {
   result?: unknown
 }
 export interface AgentPlan {
+  can_resume?: boolean
+  approval_revision?: number
   plan_id: string
   project_id: string
   project_name: string
