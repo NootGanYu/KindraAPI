@@ -2667,6 +2667,7 @@ export function checkPermission(
   const projectId = typeof args.project_id === 'string' ? args.project_id : ''
   if (!projectId) return '缺少 project_id'
   if (!config.allowed_project_ids.includes(projectId)) return '项目不在授权列表'
+  if (tool.name === 'execute_api' && boolArg(args, 'save_response') && !config.allow_write) return '保存响应示例需要写入权限 allow_write'
   if (tool.requires_write && !config.allow_write) return '未开启写入权限 allow_write'
   if (tool.requires_execute && !config.allow_execute) return '未开启接口执行权限 allow_execute'
   return null

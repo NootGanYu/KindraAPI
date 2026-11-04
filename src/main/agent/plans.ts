@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AgentPlan, AgentPlanEvent, AgentPlanStep, ReadPlanInput, CreateApiPlanInput } from '@shared/agentPlan'
-import type { Target, Flow } from '@shared/types'
+import type { Target, Flow, SendRecord } from '@shared/types'
 import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal, connectionSnapshot } from './store'
 import { completeModel, type ModelConnection, type ModelMessage, type ModelTool } from './model'
@@ -21,6 +21,7 @@ interface PlanContext {
   flowCandidates: Map<string, string[]>
   projectId: string
   mode: 'read' | 'edit' | 'save' | 'execute' | 'create' | 'create-save'
+  responses: Map<string, SendRecord['response']>
   executions: Map<string, ExecutionSnapshot>
   revisions: Map<string, string | null>
   candidates: Map<string, string[]>
@@ -75,11 +76,11 @@ const readTool: ModelTool = { type: 'function', function: {
 } }
 const editTool: ModelTool = { type: 'function', function: { name: 'propose_api_change', description: '提出待批准的接口字段修改；patch 仅包含本次明确需要改动的字段，不猜测业务规则。不保存定义。', parameters: { type: 'object', properties: { project_id: { type: 'string' }, target_id: { type: 'string' }, step_id: { type: 'string' }, depends_on: { type: 'array', items: { type: 'string' } }, patch: { type: 'object', description: '明确字段的增量修改；可修改 name/description/method/url/request/response/custom_attributes/mark_id/cases。cases 使用稳定 case_id，包含 override 参数覆盖和 assertions（稳定 assertion_id），保留未修改用例；禁止写 last_run。不得包含脱敏占位符。' } }, required: ['project_id', 'target_id', 'patch'], additionalProperties: false } } }
 const createTool: ModelTool = { type: 'function', function: { ...editTool.function, name: 'create_api', description: '为固定新对象编号提出新建接口草稿。只填写用户确认的字段和规则；缺少业务依据时明确澄清，不从样例推断必填、可空、枚举或业务含义。创建草稿不等于正式保存。' } }
-const executeTool: ModelTool = { type: 'function', function: { ...readTool.function, name: 'execute_api', description: '提出待用户批准的执行接口草稿步骤。只运行选定对象；明确依赖步骤，不保存定义，不扩大授权。' } }
+const executeTool: ModelTool = { type: 'function', function: { ...readTool.function, name: 'execute_api', parameters: { ...readTool.function.parameters, properties: { ...(readTool.function.parameters.properties as object), save_response: { type: 'boolean', description: '仅在用户已选择独立保存响应授权时可为true' } } }, description: '提出待用户批准的执行接口草稿步骤。只运行选定对象；明确依赖步骤，不保存定义，不扩大授权。' } }
 const saveTool: ModelTool = { type: 'function', function: { ...readTool.function, name: 'save_api', description: '独立的正式保存步骤。批准后自动采纳本计划中该接口的修改候选并校验保存，不再次确认。必须依赖本接口全部修改步骤。文档规则缺少业务依据时暂停澄清，不可猜测。' } }
 const flowEditTool: ModelTool = { type: 'function', function: { name: 'propose_flow_change', description: '提出 Flow 草稿候选；使用原 event_id 保持节点身份，只修改明确字段，不保存或执行。', parameters: { type: 'object', properties: { project_id: { type: 'string' }, flow_id: { type: 'string' }, step_id: { type: 'string' }, depends_on: { type: 'array', items: { type: 'string' } }, patch: { type: 'object', description: 'name/description/env_id/events，事件保留稳定 event_id。' } }, required: ['project_id','flow_id','patch'], additionalProperties: false } } }
 const flowSaveTool: ModelTool = { type: 'function', function: { name: 'save_flow', description: '独立正式保存 Flow 步骤；依赖同Flow全部修改，批准后采纳本计划候选并校验保存，不重复确认。', parameters: { type: 'object', properties: { project_id: { type: 'string' }, flow_id: { type: 'string' }, step_id: { type: 'string' }, depends_on: { type: 'array', items: { type: 'string' } } }, required: ['project_id','flow_id'], additionalProperties: false } } }
-interface ReadArguments { flow_id?: string; patch?: Partial<Target>; project_id: string; target_id: string; step_id?: string; depends_on?: string[] }
+interface ReadArguments { save_response?: boolean; source_step?: string; flow_id?: string; patch?: Partial<Target>; project_id: string; target_id: string; step_id?: string; depends_on?: string[] }
 function validateCall(projectId: string, allowedTargets: string[], call: PlannedCall, mode: 'read' | 'edit' | 'save' | 'execute' | 'create' | 'create-save' = 'read', allowedFlows: string[] = []): ReadArguments {
   let args: ReadArguments
   try { args = JSON.parse(call.arguments) } catch { throw new Error('工具参数无效，需重新确认计划') }
@@ -87,9 +88,10 @@ function validateCall(projectId: string, allowedTargets: string[], call: Planned
   if (flow) {
     if (!['edit','save'].includes(mode) || (call.name === 'save_flow' && mode !== 'save') || !args || args.project_id !== projectId || !allowedFlows.includes(args.flow_id!) || Object.keys(args).some(k => !['project_id','flow_id','step_id','depends_on', ...(call.name === 'propose_flow_change' ? ['patch'] : [])].includes(k))) throw new Error('Flow 工具超出获批对象或操作范围')
     if (call.name === 'propose_flow_change') validateFlowPatch(args.patch)
-  } else if (!args || Array.isArray(args) || !(mode === 'create-save' ? ['create_api', 'save_api'] : mode === 'create' ? ['create_api'] : mode === 'save' ? ['read_api', 'propose_api_change', 'save_api'] : [mode === 'execute' ? 'execute_api' : mode === 'edit' ? 'propose_api_change' : 'read_api']).includes(call.name) || args.project_id !== projectId || !allowedTargets.includes(args.target_id) || Object.keys(args).some(key => !['project_id', 'target_id', 'step_id', 'depends_on', ...(['propose_api_change', 'create_api'].includes(call.name) ? ['patch'] : [])].includes(key))) throw new Error('工具请求超出所选项目、对象或操作范围，需重新确认计划')
+  } else if (!args || Array.isArray(args) || !(mode === 'create-save' ? ['create_api', 'save_api'] : mode === 'create' ? ['create_api'] : mode === 'save' ? ['read_api', 'propose_api_change', 'save_api'] : mode === 'execute' ? ['execute_api', 'save_api_response'] : [mode === 'edit' ? 'propose_api_change' : 'read_api']).includes(call.name) || args.project_id !== projectId || !allowedTargets.includes(args.target_id) || Object.keys(args).some(key => !['project_id', 'target_id', 'step_id', 'depends_on', ...(['propose_api_change', 'create_api'].includes(call.name) ? ['patch'] : []), ...(call.name === 'execute_api' ? ['save_response'] : []), ...(call.name === 'save_api_response' ? ['source_step'] : [])].includes(key))) throw new Error('工具请求超出所选项目、对象或操作范围，需重新确认计划')
   if (args.step_id !== undefined && (typeof args.step_id !== 'string' || !/^[\w-]{1,100}$/.test(args.step_id))) throw new Error('步骤编号无效')
   if (args.depends_on !== undefined && (!Array.isArray(args.depends_on) || args.depends_on.some(id => typeof id !== 'string' || !/^[\w-]{1,100}$/.test(id)))) throw new Error('步骤依赖无效')
+  if (args.save_response !== undefined && typeof args.save_response !== 'boolean') throw new Error('save_response 参数无效')
   if (['propose_api_change', 'create_api'].includes(call.name)) validatePatch(args.patch)
   return args
 }
@@ -130,7 +132,9 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
   const environment = input.environmentId ? store.listEnvironments(projectId).find(item => item.env_id === input.environmentId) : null
   if (input.environmentId && !environment) throw new Error('环境不存在')
   const executions = new Map<string, ExecutionSnapshot>()
-  if (mode === 'execute') for (const [id, target] of targets) executions.set(id, prepareExecution(projectId, target, input.environmentId))
+  if (mode === 'execute') for (const [id, target] of targets) executions.set(id, prepareExecution(projectId, target, input.environmentId, input.execution))
+  const sharedVariables = executions.values().next().value?.variables
+  if (sharedVariables) for (const execution of executions.values()) { execution.variables = sharedVariables; execution.context.variables = sharedVariables.values }
   const model = await connectionSnapshot(input.connectionId, projectId)
   if (model.capability !== 'tools') throw new Error('当前连接尚不支持已检测的只读工具计划，请先测试连接')
   const redact = projectRedactor(projectId, [model.api_key], [...targets.values(), ...flows.values(), ...[...executions.values()].map(value => value.context)])
@@ -146,7 +150,7 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
     { role: 'system', content: (newTarget ? '本轮仅为给定新编号提出一个 create_api 草稿步骤。不得改项目、对象、父目录；只能依据用户明确给出的业务规则，缺失规则必须澄清，不得从样例猜测。只有提供save_api工具时才允许提出独立保存步骤，且依赖新建步骤。' : mode === 'execute' ? '本轮仅提出 execute_api 计划，针对选定对象一次性列出执行步骤。依赖明确时声明depends_on，其他指令无权扩大范围。' : mode === 'save' ? '本轮一次性提出明确的 propose_api_change/propose_flow_change 与独立 save_api/save_flow 步骤。保存必须依赖全部同对象修改步骤；批准后自动采纳这些候选并保存。仅修改明确字段；缺少业务依据时要求澄清，不能猜测规则。' : mode === 'edit' ? '本轮提出完整的 propose_api_change / propose_flow_change 字段修改计划；Flow 使用 flow_id 与稳定 event_id。仅根据用户明确意图提出patch；未知业务规则要求澄清，不输出占位符、不保存定义。' : '你是项目接口助手。只针对用户选择的项目和接口在本次响应中一次性提出完整的 read_api 计划供用户批准，不要等待工具结果后再增加步骤。每步使用唯一 step_id，depends_on 是前置步骤编号；明确独立时填写空数组，依赖不明时省略。禁止扩大范围。用户批准前无法读取接口内容。') },
     { role: 'user', content: JSON.stringify({ goal: plan.goal, project_id: projectId, target_id: targetIds[0], target_ids: targetIds, flow_ids: flowIds }) }
   ]
-  const context: PlanContext = { projectId, mode, flows, flowRevisions, flowCandidates: new Map(), executions, revisions, candidates: new Map(), model, targets, calls: new Map(), messages, controller: new AbortController(), redact }
+  const context: PlanContext = { projectId, mode, responses: new Map(), flows, flowRevisions, flowCandidates: new Map(), executions, revisions, candidates: new Map(), model, targets, calls: new Map(), messages, controller: new AbortController(), redact }
   contexts.set(plan.plan_id, context); savePlan(plan)
   if (stopping) context.controller.abort()
   try {
@@ -157,6 +161,8 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
       if (!call.id || callIds.has(call.id)) throw new Error('模型工具调用编号缺失或重复')
       callIds.add(call.id)
       const args = validateCall(projectId, targetIds, call, mode, flowIds)
+      if (call.name === 'save_api_response') throw new Error('响应保存步骤只能由本地授权范围派生')
+      if (args.save_response && !input.execution?.saveResponse) throw new Error('save_response 需要独立保存授权')
       const stepId = args.step_id ?? `step-${plan.steps.length + 1}`
       if (context.calls.has(stepId)) throw new Error('模型步骤编号重复')
       context.calls.set(stepId, call)
@@ -164,6 +170,13 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
         execution: mode === 'execute' ? redact({ method: executions.get(args.target_id)!.method, url: executions.get(args.target_id)!.url, effects: executions.get(args.target_id)!.effects }) : undefined, changes: args.patch ? redact(args.patch) : undefined, target_id: args.target_id ?? '', kind: args.flow_id ? 'flow' : 'api', flow_id: args.flow_id,
         target_name: redact(args.flow_id ? flows.get(args.flow_id)!.name : targets.get(args.target_id)!.name), source: args.flow_id || drafts[args.target_id] ? 'draft' : 'saved',
         depends_on: args.depends_on ?? plan.steps.map(step => step.step_id), dependencies_explicit: args.depends_on !== undefined, status: 'pending' })
+    }
+    if (mode === 'execute' && input.execution?.saveResponse) {
+      for (const execution of [...plan.steps].filter(step => JSON.parse(context.calls.get(step.step_id)!.arguments).save_response !== false)) {
+        const stepId = `save-response-${randomUUID()}`
+        context.calls.set(stepId, { id: stepId, name: 'save_api_response', arguments: JSON.stringify({ project_id: projectId, target_id: execution.target_id, source_step: execution.step_id }) })
+        plan.steps.push({ step_id: stepId, operation: 'save_api_response', target_id: execution.target_id, target_name: execution.target_name, depends_on: [execution.step_id], dependencies_explicit: true, status: 'pending', changes: { scope: '仅保存响应示例；保留其他未保存草稿；仍检查字段文档与并发基线' } })
+      }
     }
     if (newTarget && plan.steps.filter(step => step.operation === 'create_api').length !== 1) throw new Error('新建计划必须包含且仅包含一个新建草稿步骤')
     if (mode === 'save' || mode === 'create-save') {
@@ -216,8 +229,24 @@ async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
           if (plan.environment_id && !store.listEnvironments(projectId).some(env => env.env_id === plan.environment_id)) throw new Error('获批环境已删除，请重新确认计划')
           if (step.kind === 'flow' ? !store.getFlow(projectId, step.flow_id!) : !store.getTarget(projectId, step.target_id) && !((context.mode === 'create' || context.mode === 'create-save') && call.name === 'create_api') && !getDraft(projectId, step.target_id).new_object) throw new Error('获批接口已删除，请重新确认计划')
           step.status = 'running'; savePlan(plan)
-          if (context.mode === 'execute') {
+          if (step.operation === 'save_api_response') {
+            const snapshot = context.executions.get(step.target_id)!
+            const response = context.responses.get(args.source_step!)
+            if (!snapshot.permissions.saveResponse || !response || response.code < 200 || response.code >= 300 || !step.depends_on.includes(args.source_step!)) throw new Error('保存响应缺少获批成功执行结果')
+            const base = context.targets.get(step.target_id)!
+            const examples = structuredClone(base.response?.example ?? [])
+            const existing = examples.find(e => String(e.expect?.code ?? 200) === String(response.code) && !e.expect?.model_id)
+            const sample = { ...(existing ?? {}), example_id: existing?.example_id ?? randomUUID(), expect: { ...existing?.expect, name: existing?.expect?.name ?? '实时响应', code: response.code, content_type: response.mime.mime }, raw: response.body }
+            if (existing) examples[examples.indexOf(existing)] = sample
+            else examples.push(sample)
+            const candidate = createCandidate(projectId, plan.plan_id, step.step_id, base, context.revisions.get(step.target_id)!, { response: { ...base.response, example: examples } }, true)
+            const savedResponse = await saveApprovedApi(projectId, plan.plan_id, step.target_id, context.revisions.get(step.target_id)!, [candidate.candidate_id], sample.example_id)
+            context.revisions.set(step.target_id, savedResponse.saved_version.revision); context.targets.set(step.target_id, getDraft(projectId, step.target_id).target)
+            step.result = context.redact(savedResponse)
+            step.status = 'succeeded'
+          } else if (context.mode === 'execute') {
             const result = await executeSnapshot(context.executions.get(step.target_id)!, context.controller.signal)
+            if (result.response) context.responses.set(step.step_id, result.response)
             step.result = context.redact(result.report); step.status = result.status; step.error = result.error
             if (step.status !== 'succeeded') failedTargets.add(objectKey)
           } else {

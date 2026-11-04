@@ -42,13 +42,15 @@ export function connectAgentDraftSync(): () => void {
     }
     projectingMain = true
     try {
+      const savedTarget = event.saved_target ?? event.draft.target
+      const remainsDirty = !event.saved_revision || stableJson(targetDefinition(event.draft.target)) !== stableJson(targetDefinition(savedTarget))
       const pendingUpdates = { ...state.pendingUpdates }
       if (event.saved_revision) delete pendingUpdates[event.target_id]
       useApp.setState({
         drafts: { ...state.drafts, [event.target_id]: event.draft.target },
-        ...(event.saved_revision ? { baselines: { ...state.baselines, [event.target_id]: { target: event.draft.target, revision: event.saved_revision } }, pendingUpdates } : {}),
-        tabs: state.tabs.map(tab => tab.id === event.target_id ? { ...tab, name: event.draft!.target.name, dirty: !event.saved_revision, resetKey: (tab.resetKey ?? 0) + 1 } : tab),
-        syncNotice: event.saved_revision ? 'Agent 获批保存已完成，候选已关联正式版本。' : 'Agent 候选已应用到草稿；正式定义尚未保存。'
+        ...(event.saved_revision ? { baselines: { ...state.baselines, [event.target_id]: { target: savedTarget, revision: event.saved_revision } }, pendingUpdates } : {}),
+        tabs: state.tabs.map(tab => tab.id === event.target_id ? { ...tab, name: event.draft!.target.name, dirty: remainsDirty, resetKey: (tab.resetKey ?? 0) + 1 } : tab),
+        syncNotice: event.saved_revision && remainsDirty ? 'Agent 获批范围已保存；仍有其他未保存草稿。' : event.saved_revision ? 'Agent 获批保存已完成，候选已关联正式版本。' : 'Agent 候选已应用到草稿；正式定义尚未保存。'
       })
     } finally { projectingMain = false }
   })
