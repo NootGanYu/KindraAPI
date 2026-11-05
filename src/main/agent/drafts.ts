@@ -1,7 +1,7 @@
 import { onCaptureDeletedDraft, onDeletedObject } from '../storage/deletedObjects'
 import { listFlowCandidates, getFlowDraft } from './flowDrafts'
 import { nextCandidateNumber, nextApplicationOrder } from './candidateSequence'
-import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
+import { fillStablePatchRows, validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
 import { validateAgentApiDocumentation } from './apiDocumentation'
 import { mergeDefinitions } from './merge'
 import { withTargetChanges } from '../storage/changes'
@@ -118,6 +118,7 @@ export function validatePatch(patch: unknown): asserts patch is Partial<Target> 
   if (/\[已隐藏\]|\[REDACTED\]/i.test(JSON.stringify(patch))) throw new Error('提案包含脱敏占位符，请只修改明确的业务字段')
   for (const key of ['name', 'description', 'method', 'url', 'mark_id']) if (key in patch && typeof (patch as any)[key] !== 'string') throw new Error('提案文本字段类型无效')
 }
+const STABLE_ROW_KEYS = ['param_id', 'case_id', 'assertion_id', 'example_id', 'event_id']
 function mergePatch(base: unknown, patch: unknown): any {
   if (patch && typeof patch === 'object' && !Array.isArray(patch)) {
     const result = { ...(base && typeof base === 'object' ? base : {}) } as Record<string, unknown>
@@ -127,6 +128,25 @@ function mergePatch(base: unknown, patch: unknown): any {
     }
     return result
   }
+  if (Array.isArray(patch)) {
+    const baseRows = Array.isArray(base) ? base as any[] : []
+    const idKey = STABLE_ROW_KEYS.find(key =>
+      patch.length > 0 &&
+      patch.every(row => row && typeof row === 'object' && typeof row[key] === 'string' && row[key]) &&
+      baseRows.every(row => row && typeof row === 'object' && typeof row[key] === 'string' && row[key])
+    )
+    if (idKey) {
+      // Partial rows addressed by stable ID preserve unrelated/hidden sibling fields and order.
+      const source = new Map(baseRows.map(row => [String(row[idKey]), row]))
+      for (const row of patch) {
+        const id = String(row[idKey])
+        const current = source.get(id)
+        source.set(id, current ? mergePatch(current, row) : structuredClone(row))
+      }
+      const order = [...baseRows.map(row => String(row[idKey])), ...patch.map(row => String(row[idKey]))]
+      return [...new Set(order)].filter(id => source.has(id)).map(id => source.get(id))
+    }
+  }
   return structuredClone(patch)
 }
 /** Internal business action, called only after the plan dispatcher checks approval. */
@@ -134,7 +154,7 @@ export function createCandidate(pid: string, planId: string, stepId: string, bas
   if (responseSnapshot) {
     if (Object.keys(patch).length !== 1 || !patch.response) throw new Error('响应快照不能修改其他定义字段')
     validateNestedPatch(patch)
-  } else validatePatch(patch)
+  } else validatePatch(fillStablePatchRows(base, patch))
   const previous = listCandidates(pid).find(c => c.plan_id === planId && c.step_id === stepId)
   if (previous) return previous
   const candidate: AgentCandidate = { candidate_id: randomUUID(), number: nextCandidateNumber(pid), project_id: pid, target_id: base.target_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), patch: structuredClone(patch), proposal: mergePatch(base, patch), created_at: new Date().toISOString(), status: 'pending' }

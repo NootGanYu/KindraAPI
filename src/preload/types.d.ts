@@ -3,7 +3,7 @@ import type { DeletedObject } from '@shared/agentDeletion'
 import type { FlowVersion } from '@shared/flowSync'
 import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
 import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
-import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput } from '../shared/agentPlan'
+import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput, TaskPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
 import type {
   AppPaths,
@@ -143,10 +143,11 @@ export interface ApiBridge {
     cancelPlan(projectId: string, id: string): Promise<Result<AgentPlan>>
     proposeEditPlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
     proposeReadPlan: (projectId: string, input: ReadPlanInput) => Promise<Result<AgentPlan>>
+    proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise<Result<AgentPlan>>
     getPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
     listPlans: (projectId: string) => Promise<Result<AgentPlan[]>>
     resumePlan: (projectId: string, id: string, stepIds: string[]) => Promise<Result<AgentPlan>>
-    approvePlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
+    approvePlan: (projectId: string, id: string, expectedRevision?: number) => Promise<Result<AgentPlan>>
     rejectPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
     deletePlan: (projectId: string, id: string) => Promise<Result<boolean>>
     onPlanChanged: (callback: (event: AgentPlanEvent) => void) => () => void

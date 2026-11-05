@@ -21,14 +21,24 @@ export interface ReadPlanInput {
   /** An unsaved editor snapshot, never a request to persist the definition. */
   draft?: Target
 }
+export type AgentPlanOperation = 'read_api' | 'read_flow' | 'propose_api_change' | 'execute_api' | 'execute_api_case' | 'execute_flow' | 'save_api' | 'save_api_response' | 'save_flow' | 'create_api' | 'propose_flow_change' | 'apply_candidate'
+/** Whether an operation was fully specified before approval or is bound after approved reads. */
+export type AgentPlanBinding = 'static' | 'deferred'
 export interface AgentPlanStep {
   retryable?: boolean
+  binding?: AgentPlanBinding
+  /** Human-readable intent fixed before approval; actual values may be read-derived. */
+  intent?: string
+  /** Field selectors the deferred patch may touch, matched against actual merged changes. */
+  allowed_changes?: string[]
+  /** Approval slots whose successful output supplies this step's input. */
+  source_steps?: string[]
   case_id?: string
   case_name?: string
   kind?: 'api' | 'flow'
   flow_id?: string
   step_id: string
-  operation: 'read_api' | 'propose_api_change' | 'execute_api' | 'execute_api_case' | 'execute_flow' | 'save_api' | 'save_api_response' | 'save_flow' | 'create_api' | 'propose_flow_change'
+  operation: AgentPlanOperation
   execution?: { method: string; url: string; effects: string[] }
   changes?: unknown
   target_name?: string
@@ -37,11 +47,16 @@ export interface AgentPlanStep {
   error?: string
   target_id: string
   depends_on: string[]
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'paused' | 'unknown' | 'cancelled'
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'paused' | 'unknown' | 'cancelled' | 'awaiting_approval'
   result?: unknown
 }
 export interface AgentPlan {
   can_resume?: boolean
+  /** Entry preset used for legacy static plans; never a runtime dispatch gate. */
+  mode?: string
+  /** Continuation plans bind read-derived values after approval. */
+  continuation?: boolean
+  /** Incremented whenever unapproved scope is requested; stale approvals are rejected. */
   approval_revision?: number
   plan_id: string
   project_id: string
@@ -66,6 +81,17 @@ export interface AgentPlan {
 }
 export interface AgentPlanEvent { project_id: string; plan_id: string; plan: AgentPlan | null }
 
+export interface TaskPlanInput {
+  goal: string
+  connectionId?: string
+  targetIds: string[]
+  flowIds?: string[]
+  environmentId?: string
+  execution?: AgentExecutionPermissions
+  drafts?: Record<string, Target>
+  draftRevisions?: Record<string, string | null>
+  caseIds?: Record<string, string[]>
+}
 export interface CreateApiPlanInput {
   goal: string
   parentId?: string

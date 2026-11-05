@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import type { AgentExecutionPermissions } from '@shared/agentPlan'
 import { withTransportIntegrity } from '../request/transport'
 import type { Target, SendRecord, ApiCase, CaseRunResult } from '@shared/types'
-import { captureRequestContext, requestDefinitionDependencies, sendRequest, type RequestExecutionContext } from '../request/executor'
+import { captureRequestContext, requestDefinitionDependencies, resolveFrozenRequest, sendRequest, type RequestExecutionContext } from '../request/executor'
 import { projectRedactor } from './redaction'
 const { VariableScope, Url } = require('postman-collection') as any
 
@@ -28,16 +28,26 @@ export interface ExecutionSnapshot {
   scopeSignature: string
   variables: ExecutionVariables
 }
-function scopeSignature(projectId: string, target: Target, caseId?: string): string {
+function scopeSignature(projectId: string, target: Target, caseId?: string, frozenDependencies?: RequestExecutionContext['dependencies']): string {
   const apiCase = caseId ? target.cases?.find(item => item.case_id === caseId) : undefined
-  const dependencies = requestDefinitionDependencies(projectId, apiCase ? applyCaseOverride(target, apiCase) : target)
-  return JSON.stringify([apiCase ? { case_id: apiCase.case_id, enabled: apiCase.is_enabled } : null, dependencies.map(d => { const r = 'target_id' in d ? d.request : d; return { identity: 'target_id' in d ? [d.target_id, d.parent_id, d.method, d.url] : 'global', pre: r?.pre_script, preEnabled: r?.pre_script_enabled, post: r?.test, postEnabled: r?.test_enabled, file: r?.body?.binary, formFiles: (r?.body?.formdata ?? r?.body?.parameter ?? []).filter(p => p.field_type === 'file') } })])
+  // Frozen dependencies keep ancestor/script/file expectations from the approved turn.
+  const dependencies = frozenDependencies ?? requestDefinitionDependencies(projectId, apiCase ? applyCaseOverride(target, apiCase) : target)
+  return JSON.stringify([apiCase ? { case_id: apiCase.case_id, enabled: apiCase.is_enabled } : null, dependencies.map(d => { const r = 'target_id' in d ? d.request : d; return { identity: 'target_id' in d ? [d.target_id, d.parent_id, d.method, d.url] : 'global', pre: r?.pre_script ?? '', preEnabled: r?.pre_script_enabled !== false, post: r?.test ?? '', postEnabled: r?.test_enabled !== false, file: r?.body?.binary ?? null, formFiles: (r?.body?.formdata ?? r?.body?.parameter ?? []).filter(p => p.field_type === 'file') } })])
 }
 function fileHash(bytes: Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
 /** The same snapshot supplies the approval display and the eventual runtime. */
-export function prepareExecution(projectId: string, target: Target, environmentId?: string, permissions: AgentExecutionPermissions = {}, apiCase?: ApiCase, source?: { currentTarget: () => Target; checkScope?: () => void; variableQuery?: boolean }): ExecutionSnapshot {
+export function prepareExecution(projectId: string, target: Target, environmentId?: string, permissions: AgentExecutionPermissions = {}, apiCase?: ApiCase, source?: { currentTarget: () => Target; checkScope?: () => void; variableQuery?: boolean }, frozen?: RequestExecutionContext): ExecutionSnapshot {
   if (permissions && (typeof permissions !== 'object' || Object.keys(permissions).some(k => !['requests', 'writeVariables', 'saveResponse'].includes(k)) || ['writeVariables', 'saveResponse'].some(k => (permissions as any)[k] !== undefined && typeof (permissions as any)[k] !== 'boolean') || (permissions.requests !== undefined && (!Array.isArray(permissions.requests) || permissions.requests.length > 32)))) throw new Error('执行授权参数无效')
-  const context = captureRequestContext(projectId, apiCase ? applyCaseOverride(target, apiCase) : target, environmentId)
+  let context: RequestExecutionContext
+  if (frozen) {
+    // Approved continuation: resolve the new request fields against the same frozen
+    // ancestors/settings/model example/cookie jar captured before approval.
+    context = structuredClone(frozen)
+    context.target = structuredClone(apiCase ? applyCaseOverride(target, apiCase) : target)
+    context.resolved = resolveFrozenRequest(context)
+  } else {
+    context = captureRequestContext(projectId, apiCase ? applyCaseOverride(target, apiCase) : target, environmentId)
+  }
   const scripts = context.dependencies.flatMap(dependency => {
     const request = 'target_id' in dependency ? dependency.request : dependency
     return request ? [request] : []
@@ -76,15 +86,35 @@ export function prepareExecution(projectId: string, target: Target, environmentI
   const effects = [`HTTP Host: ${host}`, '发送获批 HTTP 请求，可能产生远端业务副作用；不跟随重定向', '查询变量可按脚本演进；方法、主机、路径及查询字段名固定', ...files.map(f => `上传文件 ${f.path} (${f.bytes.length} bytes, SHA256 ${f.hash})`), ...requests.map(r => `额外请求 ${r.method} ${r.url}，最多 ${r.maxCalls} 次`), ...(pre ? [`前置脚本 SHA256 ${createHash('sha256').update(pre).digest('hex')}`] : []), ...(post ? [`后置脚本 SHA256 ${createHash('sha256').update(post).digest('hex')}`] : []), permissions.writeVariables ? '允许变量差量写回，冲突时暂停' : '脚本变量仅在本轮内存演进，不写回环境或全局变量', '仅保存脱敏本机报告']
   const variables = createExecutionVariables(context.env, context.globals, context.resolved.baseUrl)
   context.variables = variables.values
-  const currentTarget = source?.currentTarget ?? (() => getDraft(projectId, target.target_id).target)
-  const signature = scopeSignature(projectId, currentTarget(), apiCase?.case_id)
+  const frozenDeps = frozen ? context.dependencies : undefined
+  const currentTarget = source?.currentTarget ?? (frozen ? (() => target) : (() => getDraft(projectId, target.target_id).target))
+  const signature = scopeSignature(projectId, currentTarget(), apiCase?.case_id, frozenDeps)
   const checkScope = (): void => {
     source?.checkScope?.()
-    if (signature !== scopeSignature(projectId, currentTarget(), apiCase?.case_id)) throw new Error('脚本、目标或文件配置已改变，请重新确认执行计划')
+    if (signature !== scopeSignature(projectId, currentTarget(), apiCase?.case_id, frozenDeps)) throw new Error('脚本、目标或文件配置已改变，请重新确认执行计划')
   }
   return { apiCase: apiCase ? structuredClone(apiCase) : undefined, checkScope, variables, files, scopeSignature: signature, context, host, method: context.resolved.method, url, effects, requests, permissions: structuredClone(permissions) }
 
 }
+/**
+ * Approved continuation: overlay only the candidate delta onto the frozen request definition.
+ * Destination method/host/path and script/file/ancestor expectations must still match the
+ * approved scope; otherwise the caller pauses for a new approval instead of sending.
+ */
+export function prepareExecutionFromApplied(base: ExecutionSnapshot, target: Target): ExecutionSnapshot {
+  const next = prepareExecution(base.context.projectId, target, base.context.env?.env_id, base.permissions, base.apiCase, undefined, base.context)
+  const before = new URL(base.url), after = new URL(next.url)
+  const sameDestination = before.protocol === after.protocol && before.host === after.host && before.pathname === after.pathname && before.username === after.username && before.password === after.password && JSON.stringify([...before.searchParams.keys()]) === JSON.stringify([...after.searchParams.keys()])
+  if (next.method !== base.method || !sameDestination) throw new Error('执行的来源草稿改变了方法或目的地，请重新确认计划')
+  if (next.scopeSignature !== base.scopeSignature) throw new Error('脚本、文件或祖先默认值已改变，请重新确认执行计划')
+  const fileKey = (files: ExecutionSnapshot['files']): string => JSON.stringify(files.map(file => [file.path, file.realPath, file.hash]))
+  if (fileKey(next.files) !== fileKey(base.files)) throw new Error('上传文件范围已变化，请重新确认执行计划')
+  next.files = base.files
+  next.variables = base.variables
+  next.context.variables = base.variables.values
+  return next
+}
+
 export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: AbortSignal): Promise<{ status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; report: unknown; error?: string; response?: SendRecord['response']; record: SendRecord; retryable: boolean }> {
   snapshot.checkScope()
   for (const file of snapshot.files) {
