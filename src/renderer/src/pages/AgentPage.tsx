@@ -1,3 +1,4 @@
+import AgentTurnUndoPanel from '../components/AgentTurnUndoPanel'
 import AgentProjectCandidates from '../components/AgentProjectCandidates'
 import AgentPlanPanel from '../components/AgentPlanPanel'
 import { useEffect, useRef, useState } from 'react'
@@ -24,6 +25,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
   const [defaultId, setDefaultId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<AgentConversation[]>([])
+  const [recordsEpoch, setRecordsEpoch] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
   const [text, setText] = useState('')
   const [configOpen, setConfigOpen] = useState(false)
@@ -40,6 +42,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
     let mounted = true
     const off = window.api.agent.onChanged(event => {
       if (event.project_id !== projectId) return
+      if (event.records_deleted) { setSelected(null); setConversations([]); setRecordsEpoch(n => n + 1); return }
       setConversations(previous => {
         const other = previous.filter(item => item.conversation_id !== event.conversation_id)
         return event.conversation ? [event.conversation, ...other] : other
@@ -135,7 +138,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
     <section className="agent-chat">
       <header className="agent-toolbar"><div><Typography.Title level={4}>Agent 对话</Typography.Title>
         <Typography.Text type="secondary">{connection ? `${connection.name} · ${connection.model}` : '配置模型后开始对话'}</Typography.Text></div>
-        <Space wrap><AgentProjectCandidates projectId={projectId} /><AgentPlanPanel projectId={projectId} connection={connection} /><Button icon={<SettingOutlined />} onClick={() => openConfig()}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
+        <Space wrap><AgentTurnUndoPanel key={`undo-${recordsEpoch}`} projectId={projectId} /><AgentProjectCandidates key={`candidates-${recordsEpoch}`} projectId={projectId} /><AgentPlanPanel key={`plans-${recordsEpoch}`} projectId={projectId} connection={connection} /><Button icon={<SettingOutlined />} onClick={() => openConfig()}>配置模型</Button><Button onClick={() => void test()} loading={testing} disabled={!connection}>测试连接</Button><Button onClick={remove} disabled={!conversation || running}>删除会话</Button></Space>
       </header>
       <Space wrap style={{ padding: '0 20px' }}>
         <Select aria-label="本轮模型连接" placeholder="请选择本轮模型连接" style={{ minWidth: 240 }} value={connection?.connection_id} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} onChange={id => { setConnection(connections.find(item => item.connection_id === id) ?? null); setTestMessage('') }} />

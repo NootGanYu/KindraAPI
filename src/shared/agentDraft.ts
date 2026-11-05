@@ -27,9 +27,10 @@ export interface AgentCandidate {
   status: 'pending' | 'applied' | 'conflict' | 'rejected' | 'undone'
   error?: string
   merge?: AgentCandidateMerge
-  application?: { before: Target; after: Target; undone?: boolean }
+  application?: { before: Target; after: Target; undone?: boolean; order?: number }
 }
 export interface AgentDraftEvent {
+  records_deleted?: boolean
   project_id: string
   target_id: string
   draft?: AgentDraft

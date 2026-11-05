@@ -8,7 +8,7 @@ import type { AgentConflictChoice } from '@shared/agentDraft'
 import { flowDefinition, flowSignature } from '@shared/flowSync'
 import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal } from './store'
-import { nextCandidateNumber } from './candidateSequence'
+import { nextCandidateNumber, nextApplicationOrder } from './candidateSequence'
 import { mergeDefinitions } from './merge'
 const listeners = new Set<(event: AgentFlowDraftEvent) => void>()
 export function onFlowDraftEvent(listener: (event: AgentFlowDraftEvent) => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
@@ -124,7 +124,12 @@ function apply(candidate: AgentFlowCandidate, choices: Record<string, AgentConfl
   draft.candidate_ids = [...new Set([...(draft.candidate_ids ?? []), candidate.candidate_id])]
   const merge = { operation, base: source.base, proposal: source.proposal, review_id: randomUUID(), current, result, draft_signature: flowSignature(result), saved_revision: saved ? flowSignature(saved) : null, conflicts: merged.conflicts, choices }
   persist(draft)
-  const reviewed = review(candidate, merged.conflicts.length ? 'conflict' : 'applied', merged.conflicts.length ? '无冲突字段已合并；冲突解决前不能保存 Flow。' : undefined, merge, { before: candidate.application?.before ?? current, after: result })
+  let before = current
+  if (candidate.application && !candidate.application.undone) {
+    const inverse = mergeDefinitions(flowDefinition(candidate.application.after), flowDefinition(current), flowDefinition(candidate.application.before))
+    before = { ...mergeDefinitions(flowDefinition(candidate.application.after), flowDefinition(current), flowDefinition(candidate.application.before), Object.fromEntries(inverse.conflicts.map(c => [c.id, 'current' as const]))).result, created_at: current.created_at, updated_at: current.updated_at } as Flow
+  }
+  const reviewed = review(candidate, merged.conflicts.length ? 'conflict' : 'applied', merged.conflicts.length ? '无冲突字段已合并；冲突解决前不能保存 Flow。' : undefined, merge, { before, after: result, order: nextApplicationOrder(candidate.project_id) })
   emit({ project_id: candidate.project_id, flow_id: candidate.flow_id, draft, previous })
   return reviewed
 }
@@ -266,3 +271,28 @@ export function saveManualFlowForRun(pid: string, flow: Flow): Flow {
   return saveFlowEditor(pid, flow)
 }
 export const flowDraftCommands = { restoreDeletedFlowDraft, saveDeletedFlowDraft, saveFlowEditor, reloadFlowDraft, restoreFlowCandidate, restoreFlowVersionDraft, listFlowVersions: store.listFlowVersions, getFlowVersion: store.getFlowVersion, saveManualFlowForRun, getFlowDraft, syncFlowEditorDraft, listAgentFlowDrafts, listFlowCandidates, applyFlowCandidate, rejectFlowCandidate, resolveFlowCandidate, stashAgentFlowDrafts }
+
+/** Internal turn undo commit; never saves a formal Flow or touches run reports. */
+export function commitTurnUndoFlow(pid: string, id: string, flow: Flow, candidateIds: string[]): void {
+  const draft = getFlowDraft(pid, id), previous = draft.flow
+  draft.flow = flow; draft.agent_owned = true; draft.base_revision = store.readFlowSnapshot(pid, id).revision
+  persist(draft)
+  for (const candidateId of candidateIds) {
+    const candidate = readCandidate(pid, candidateId)
+    review(candidate, 'undone', undefined, undefined, { ...candidate.application!, undone: true })
+  }
+  emit({ project_id: pid, flow_id: id, draft, previous })
+}
+
+export function forgetProjectAgentFlowDrafts(pid: string, ids: string[]): void {
+  for (const id of ids) {
+    const saved = store.readFlowSnapshot(pid, id)
+    emit({ project_id: pid, flow_id: id, records_deleted: true, ...(saved.flow ? { draft: { project_id: pid, flow_id: id, flow: saved.flow, base_revision: saved.revision, agent_owned: false, updated_at: new Date().toISOString() }, saved_revision: saved.revision! } : {}) })
+  }
+}
+
+export function retainManualFlowDrafts(pid: string): () => void {
+  const folder = directory(pid, 'flow-drafts')
+  const manual = fs.existsSync(folder) ? fs.readdirSync(folder).filter(n=>n.endsWith('.json')).map(n=>readLocal<AgentFlowDraft>(path.join(folder,n),null!)).filter(d=>!d.agent_owned) : []
+  return () => { for (const draft of manual) persist({ ...draft, candidate_ids: [] }) }
+}
