@@ -139,6 +139,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await panel.waitFor()
 
   const goalBox = page.getByRole('textbox', { name: '告诉 Agent 要做什么' })
+  await page.getByRole('button', { name: '旧计划模式' }).click()
   await goalBox.fill('你好')
   await goalBox.press('Enter')
   await panel.getByText('你好！我是项目 Agent，可以帮你读取、修改和测试接口与 Flow。', { exact: true }).waitFor()

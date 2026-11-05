@@ -12,8 +12,8 @@ let app
 const server = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
   const body = JSON.parse(raw)
-  if (body.tools) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] } }] })); return }
   if (body.messages?.some(message => message.content === '保持运行')) return // hold the turn open
+  if (body.tools) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] } }] })); return }
   res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }))
 })
 async function launch() {
