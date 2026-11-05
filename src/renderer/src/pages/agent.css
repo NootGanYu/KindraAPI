@@ -36,6 +36,9 @@
 .agent-dock-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; flex: 1; }
 .agent-dock-project { white-space: nowrap; }
 .agent-session-title { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.agent-session-title { padding: 0 4px; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: text; }
+button.agent-session-title:hover { text-decoration: underline; }
+.agent-session-title-input { width: 160px; flex: 0 0 160px; }
 .agent-permission-hint { font-size: 12px; line-height: 1.5; }
 .agent-messages { flex: 1; overflow: auto; min-height: 0; padding: 8px 0; }
 .agent-messages .ant-empty { margin-top: 40px; }

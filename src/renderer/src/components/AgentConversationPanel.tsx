@@ -34,7 +34,9 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const [text, setText] = useState('')
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>('ask')
   const [busy, setBusy] = useState(false)
-  const [titleTick, setTitleTick] = useState(0)
+  const [renaming, setRenaming] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const canceledRename = useRef(false)
   const [view, setView] = useState<'chat' | 'undo' | 'candidates' | 'settings'>('chat')
   const [error, setError] = useState('')
   const end = useRef<HTMLDivElement>(null)
@@ -138,14 +140,22 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     } catch (e) { setConnectionError((e as Error).message) }
   }
   function closeSettings(): void { setView('chat'); void refreshConnections() }
-  async function rename(value: string): Promise<void> {
+  function startRename(): void {
     if (!conversation) return
-    const next = value.trim()
-    if (!next) { setError('会话名称不能为空'); setTitleTick(n => n + 1); return }
+    canceledRename.current = false
+    setTitleDraft(conversation.title)
+    setRenaming(true)
+  }
+  async function commitRename(): Promise<void> {
+    setRenaming(false)
+    if (canceledRename.current) { canceledRename.current = false; return }
+    if (!conversation) return
+    const next = titleDraft.trim()
+    if (!next) { setError('会话名称不能为空'); return }
     if (next === conversation.title) return
     try {
       unwrap(await window.api.agent.renameConversation(projectId, conversation.conversation_id, next))
-    } catch (e) { setError((e as Error).message); setTitleTick(n => n + 1) }
+    } catch (e) { setError((e as Error).message) }
   }
 
   return <div className="agent-dock-panel">
@@ -153,12 +163,19 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
       <div className="agent-dock-controls">
         <Typography.Text type="secondary" className="agent-dock-project">{projectName}</Typography.Text>
         {conversation
-          ? <Typography.Text
-              key={`${conversation.conversation_id}:${conversation.title}:${titleTick}`}
-              strong
-              className="agent-session-title"
-              editable={{ triggerType: ['text'], icon: null, tooltip: false, maxLength: 100, enterIcon: null, onChange: value => void rename(value) }}
-            >{conversation.title}</Typography.Text>
+          ? renaming
+            ? <Input
+                className="agent-session-title-input"
+                size="small"
+                autoFocus
+                value={titleDraft}
+                maxLength={100}
+                onChange={event => setTitleDraft(event.target.value)}
+                onPressEnter={event => event.currentTarget.blur()}
+                onBlur={() => void commitRename()}
+                onKeyDown={event => { if (event.key === 'Escape') { canceledRename.current = true; event.currentTarget.blur() } }}
+              />
+            : <button type="button" className="agent-session-title" onClick={startRename} title="点击修改会话名称">{conversation.title}</button>
           : <Typography.Text type="secondary" className="agent-session-title">暂无会话</Typography.Text>}
         <Dropdown trigger={['click']} menu={{ items: conversations.length ? conversations.map(item => ({ key: item.conversation_id, label: item.title })) : [{ key: 'none', label: '暂无会话', disabled: true }], onClick: ({ key }) => { if (key !== 'none') setSelected(key) } }}>
           <Button type="text" size="small" aria-label="切换会话" icon={<DownOutlined />} />
