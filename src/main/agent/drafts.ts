@@ -302,8 +302,9 @@ export function stashAgentDrafts(): number {
   for (const project of store.listProjects()) for (const draft of listAgentDrafts(project.project_id)) {
     const candidates = listCandidates(project.project_id, draft.target_id)
     if (candidates.some(c => draftSignature(c.merge?.result ?? c.proposal) === draftSignature(draft.target))) continue
-    const candidate = createCandidate(project.project_id, 'exit-stash', randomUUID(), draft.target, draft.base_revision, { description: draft.target.description })
-    review(candidate, 'applied'); added++
+    // ADR-0007: quit/exit snapshots stay awaiting confirmation; they are never applied silently.
+    createCandidate(project.project_id, 'exit-stash', randomUUID(), draft.target, draft.base_revision, { description: draft.target.description })
+    added++
   }
   return added
 }

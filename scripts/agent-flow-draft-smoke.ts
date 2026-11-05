@@ -40,7 +40,11 @@ async function main(): Promise<void> {
   const done = commands.resolveFlowCandidate(pid, candidate.candidate_id, applied.merge!.review_id, { [applied.merge!.conflicts[0].id]: 'agent' })
   assert.equal(done.status, 'applied'); assert.equal(commands.getFlowDraft(pid, flow.flow_id).flow.events[0].name, 'Agent 节点')
   assert.throws(() => commands.saveManualFlowForRun(pid, commands.getFlowDraft(pid, flow.flow_id).flow), /主动保存/)
+  const stashDraft = commands.getFlowDraft(pid, flow.flow_id).flow; stashDraft.description = '退出前未保存 Flow'; commands.syncFlowEditorDraft(pid, stashDraft)
   commands.stashAgentFlowDrafts(); const count = commands.listFlowCandidates(pid).length; commands.stashAgentFlowDrafts(); assert.equal(commands.listFlowCandidates(pid).length, count)
+  const stashFlow = commands.listFlowCandidates(pid).find(c => c.plan_id === 'exit-stash')!
+  assert.equal(stashFlow.status, 'pending', 'Flow exit stash must stay awaiting confirmation')
+  assert.equal(stashFlow.application, undefined, 'Flow exit stash must not record an applied change')
   assert.equal(store.getFlow(pid, flow.flow_id)!.events[0].name, '原节点')
   const target = store.createTargetInProject(pid, '0', 'api')
   forcedCalls = [{ name: 'propose_api_change', args: { project_id: pid, target_id: target.target_id, patch: { name: 'API 名称' }, step_id: 'api', depends_on: [] } }, { name: 'propose_flow_change', args: { project_id: pid, flow_id: flow.flow_id, patch: { description: 'Flow 说明' }, step_id: 'flow', depends_on: ['api'] } }]

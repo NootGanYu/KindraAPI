@@ -65,6 +65,12 @@ async function main(): Promise<void> {
   const stale=commands.applyTurnUndo(pid,conflicting.undo_id,conflicting.review_id,{[conflictEntry.key]:Object.fromEntries(conflictEntry.conflicts.map(c=>[c.id,'agent' as const]))})
   assert.equal(stale.status,'partial');assert.equal(stale.entries.find(e=>e.kind==='flow')!.status,'completed')
   assert.equal(commands.getDraft(pid,api.target_id).target.description,'人工后续说明')
+  // A later preview must not rewrite a prior partial audit as cancelled.
+  const rePreview=commands.previewTurnUndo(pid,plan.plan_id)
+  const durable=commands.listTurnUndos(pid).find(r=>r.undo_id===stale.undo_id)!
+  assert.equal(durable.status,'partial','prior partial undo audit must remain durable')
+  assert.equal(durable.entries.find(e=>e.kind==='flow')!.status,'completed')
+  commands.cancelTurnUndo(pid,rePreview.undo_id)
   const currentEntry=stale.entries.find(e=>e.kind==='api')!
   const resolved=commands.applyTurnUndo(pid,stale.undo_id,stale.review_id,{[currentEntry.key]:Object.fromEntries(currentEntry.conflicts.map(c=>[c.id,'current' as const]))})
   assert.equal(resolved.status,'completed');assert.equal(commands.getDraft(pid,api.target_id).target.name,'审阅中人工名称')

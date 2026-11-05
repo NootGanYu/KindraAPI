@@ -45,8 +45,14 @@ async function main(): Promise<void> {
     assert.equal(store.getTarget(pid, target.target_id)!.description, '原说明')
     assert(!JSON.stringify(received).includes('local-token'))
     const count = commands.listCandidates(pid, target.target_id).length
-    commands.stashAgentDrafts(); commands.stashAgentDrafts()
-    assert.equal(commands.listCandidates(pid, target.target_id).length, count, 'exit deduplicates existing snapshot')
+    const stashDraft = structuredClone(commands.getDraft(pid, target.target_id).target); stashDraft.description = '退出前未保存草稿'; commands.syncEditorDraft(pid, stashDraft)
+    commands.stashAgentDrafts()
+    assert.equal(commands.listCandidates(pid, target.target_id).length, count + 1, 'exit snapshots the unsaved draft once')
+    commands.stashAgentDrafts()
+    assert.equal(commands.listCandidates(pid, target.target_id).length, count + 1, 'exit deduplicates existing snapshot')
+    const stashCandidate = commands.listCandidates(pid, target.target_id).find(c => c.plan_id === 'exit-stash')!
+    assert.equal(stashCandidate.status, 'pending', 'exit stash must stay awaiting confirmation')
+    assert.equal(stashCandidate.application, undefined, 'exit stash must not record an applied change')
     patch = { description: 'Agent 第二次修改' }
     const second = await commands.proposeEditPlan(pid, { goal: '修改', targetId: target.target_id })
     await commands.approvePlan(pid, second.plan_id)
@@ -74,7 +80,8 @@ async function main(): Promise<void> {
       const next = await commands.proposeEditPlan(pid, { goal: `候选 ${index}`, targetId: target.target_id })
       await commands.approvePlan(pid, next.plan_id)
     }
-    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending').length, 102)
+    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending' && c.plan_id !== 'exit-stash').length, 102)
+    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending' && c.plan_id === 'exit-stash').length, 1, 'stash snapshot remains a pending review')
     assert.equal(store.listTargetVersions(pid, target.target_id).length, versionsBefore)
     const projectFiles = fs.readdirSync(path.join(store.getPaths().projectRoot, pid), { recursive: true }).filter(name => typeof name === 'string') as string[]
     for (const name of projectFiles) {

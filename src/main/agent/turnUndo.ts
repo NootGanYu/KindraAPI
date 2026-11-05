@@ -64,7 +64,9 @@ export function previewTurnUndo(pid: string, planId: string): AgentTurnUndo {
   if (!candidates.length && !pending.length) throw new Error('本轮没有可撤销的已应用修改')
   const groups = new Map<string,Candidate[]>()
   for (const c of candidates) { const key=`${kindOf(c)}:${idOf(c)}`;groups.set(key,[...(groups.get(key)??[]),c]) }
-  for (const old of listTurnUndos(pid)) if (old.plan_id===planId && ['review','partial'].includes(old.status)) { old.status='cancelled'; persist(old) }
+  // A partial record already contains completed object undos. It is durable audit evidence and
+  // must keep blocking conflicted saves; only a fresh unapplied review is superseded here.
+  for (const old of listTurnUndos(pid)) if (old.plan_id===planId && old.status==='review') { old.status='cancelled'; persist(old) }
   const now=new Date().toISOString()
   return persist({undo_id:randomUUID(),review_id:randomUUID(),project_id:pid,plan_id:planId,created_at:now,updated_at:now,status:'review',pending_candidate_ids:pending.map(c=>c.candidate_id),entries:[...groups.values()].map(group=>prepare(pid,group))})
 }
