@@ -27,6 +27,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
 }): JSX.Element {
   const { modal } = AntApp.useApp()
   const [connection, setConnection] = useState<AgentConnection | null>(null)
+  const [connections, setConnections] = useState<AgentConnection[]>([])
   const [connectionError, setConnectionError] = useState('')
   const [conversations, setConversations] = useState<AgentConversation[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -62,9 +63,14 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     if (!open) return
     let mounted = true
     setConnectionError('')
-    window.api.agent.getProjectConnection(projectId).then(result => {
+    Promise.all([window.api.agent.listConnections(), window.api.agent.getProjectConnection(projectId)]).then(([all, preferred]) => {
       if (!mounted) return
-      try { setConnection(unwrap(result)) } catch (e) { setConnection(null); setConnectionError((e as Error).message) }
+      try {
+        const list = unwrap(all)
+        const fallback = unwrap(preferred)
+        setConnections(list)
+        setConnection(current => list.find(item => item.connection_id === current?.connection_id) ?? fallback ?? list[0] ?? null)
+      } catch (e) { setConnection(null); setConnectionError((e as Error).message) }
     }).catch(e => mounted && setConnectionError(e.message))
     return () => { mounted = false }
   }, [open, projectId])
@@ -121,7 +127,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   async function newConversation(): Promise<void> {
     try { await create() } catch (e) { setError((e as Error).message) }
   }
-  const connectionLabel = connection ? `${connection.name} · ${connection.model}` : '未配置模型连接'
+  function selectConnection(id: string): void { setConnection(connections.find(item => item.connection_id === id) ?? null) }
 
   return <div className="agent-dock-panel">
     <header className="agent-dock-header">
@@ -137,19 +143,9 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     </header>
     <div className="agent-dock-controls">
       <Space wrap size={8}>
-        <Button type="text" size="small" icon={<SettingOutlined />} onClick={onOpenSettings} aria-label="Agent 模型连接设置">
-          <Typography.Text type={connection ? undefined : 'danger'}>{connectionLabel}</Typography.Text>
-          {connection?.capability === 'tools' && <Tag color="success">工具</Tag>}
-          {connection?.capability === 'text-only' && <Tag>仅文本</Tag>}
-          {connection?.capability === 'unchecked' && <Tag>未检测</Tag>}
-        </Button>
         <Select aria-label="Agent 会话" size="small" style={{ minWidth: 160, maxWidth: 240 }} placeholder="选择会话" value={selected ?? undefined} onChange={setSelected} options={conversations.map(item => ({ value: item.conversation_id, label: item.title }))} />
         <Tooltip title="新建会话"><Button size="small" aria-label="新建会话" icon={<PlusOutlined />} onClick={() => void newConversation()} /></Tooltip>
         <Tooltip title="删除会话"><Button size="small" aria-label="删除会话" icon={<DeleteOutlined />} disabled={!conversation || running} onClick={remove} /></Tooltip>
-      </Space>
-      <Space wrap size={8}>
-        <Select aria-label="权限模式" size="small" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} />
-        <Typography.Text type="secondary" className="agent-permission-hint">{permission.description}</Typography.Text>
       </Space>
     </div>
     {connectionError && <Alert type="error" showIcon message={connectionError} />}
@@ -174,10 +170,19 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
       </div>
       <div className="agent-compose">
         <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send() } }} />
-        <Space>
-          <Typography.Text type="secondary">⌘ / Ctrl + Enter 发送 · {permission.label}</Typography.Text>
-          {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
-        </Space>
+        <div className="agent-compose-bar">
+          <Space size={4} wrap>
+            <Tooltip title={permission.description}>
+              <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 96 }} />
+            </Tooltip>
+            <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 230 }} />
+            <Tooltip title="管理模型连接"><Button type="text" size="small" aria-label="管理模型连接" icon={<SettingOutlined />} onClick={onOpenSettings} /></Tooltip>
+          </Space>
+          <Space size={8}>
+            <Typography.Text type="secondary">⌘ / Ctrl + Enter</Typography.Text>
+            {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
+          </Space>
+        </div>
       </div>
     </> : <div className="agent-dock-subview">
       {view === 'undo'

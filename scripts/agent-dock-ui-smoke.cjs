@@ -74,7 +74,9 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   for (const name of ['只读计划', '修改草稿', '执行草稿', '执行接口用例', '修改并保存', '新建接口草稿', '连续任务']) {
     assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, `legacy mode button ${name} must be removed`)
   }
-  assert(await page.getByRole('combobox', { name: '权限模式' }).isVisible())
+  assert(await page.locator('.agent-compose-bar').getByRole('combobox', { name: '权限模式' }).isVisible())
+  assert(await page.locator('.agent-compose-bar').getByRole('combobox', { name: '模型连接' }).isVisible())
+  assert.equal(await page.locator('.agent-dock-controls').getByRole('combobox', { name: '权限模式' }).count(), 0, 'permission selector must sit in the bottom bar')
   assert(await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).isVisible())
   await panel.getByText('界面连接', { exact: false }).waitFor()
 
@@ -102,14 +104,14 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.getByText('自动模式不能保证绝对安全', { exact: false }).waitFor()
   await page.getByRole('button', { name: '启用自动模式', exact: true }).click()
   await page.getByRole('button', { name: '启用自动模式', exact: true }).waitFor({ state: 'hidden' })
-  const modeSelect = page.locator('.agent-dock-controls .ant-select').filter({ hasText: '自动模式' })
+  const modeSelect = page.locator('.agent-compose-bar .ant-select').filter({ hasText: '自动模式' })
   await modeSelect.locator('.ant-select-selector').click()
   await page.locator('.ant-select-item-option').filter({ hasText: '跳过权限' }).click()
   await page.getByText('高风险', { exact: false }).first().waitFor()
   await page.getByRole('button', { name: /取\s*消/ }).click()
 
   // Connection status jumps to the settings section and closes the panel.
-  await page.getByRole('button', { name: 'Agent 模型连接设置' }).click()
+  await page.getByRole('button', { name: '管理模型连接' }).click()
   await page.waitForURL(/#\/settings#agent-connections/)
   await assert.doesNotReject(() => panel.waitFor({ state: 'hidden', timeout: 3000 }))
   await page.locator('#agent-connections').waitFor()

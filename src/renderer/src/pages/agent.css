@@ -48,4 +48,5 @@
 .agent-plan-result { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-plan-explanation { white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-compose { display: flex; flex-direction: column; gap: 8px; }
-.agent-compose > .ant-space { justify-content: space-between; }
+.agent-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.agent-compose-bar .ant-select-selector { padding-inline: 6px !important; }

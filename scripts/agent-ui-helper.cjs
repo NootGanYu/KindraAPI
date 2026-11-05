@@ -28,7 +28,7 @@ async function selectPermissionMode(page, mode) {
   if (mode === 'ask') return
   await openAgentPanel(page)
   const label = permissionLabels[mode]
-  const select = page.locator('.agent-dock-controls .ant-select').filter({ has: page.getByRole('combobox', { name: '权限模式' }) })
+  const select = page.locator('.ant-select').filter({ has: page.getByRole('combobox', { name: '权限模式' }) })
   await select.locator('.ant-select-selector').click()
   await page.locator('.ant-select-item-option').filter({ hasText: label }).click()
   const confirm = page.getByRole('button', { name: mode === 'bypass' ? /仍要启用/ : '启用自动模式' })
