@@ -84,10 +84,15 @@ export function listProjectCandidates(pid: string): ProjectCandidateSummary[] {
       lifecycle: saved ? 'saved' : tombstone ? 'deleted' : draft?.new_object ? 'uncreated' : 'unavailable', deletion_id: tombstone?.deletion_id, deleted_at: tombstone?.deleted_at, candidate_count: candidates.filter(c => c.target_id === id).length }
   })
   const flows = listFlowCandidates(pid)
-  return [...apis, ...[...new Set(flows.map(c => c.flow_id))].map(id => ({
-    kind: 'flow' as const, entity_id: id, name: store.getFlow(pid, id) ? getFlowDraft(pid, id).flow.name : flows.find(c => c.flow_id === id)!.proposal.name,
-    lifecycle: store.getFlow(pid, id) ? 'saved' as const : store.getDeletedObject(pid, 'flow', id) ? 'deleted' as const : 'unavailable' as const, deletion_id: store.getDeletedObject(pid, 'flow', id)?.deletion_id, deleted_at: store.getDeletedObject(pid, 'flow', id)?.deleted_at, candidate_count: flows.filter(c => c.flow_id === id).length
-  }))]
+  return [...apis, ...[...new Set(flows.map(c => c.flow_id))].map(id => {
+    const flowDraft = readLocal<{ new_object?: boolean; flow?: { name?: string } } | null>(file(pid, 'flow-drafts', id), null)
+    const savedFlow = store.getFlow(pid, id)
+    const tombstone = store.getDeletedObject(pid, 'flow', id)
+    return {
+      kind: 'flow' as const, entity_id: id, name: savedFlow?.name ?? flowDraft?.flow?.name ?? flows.find(c => c.flow_id === id)!.proposal.name,
+      lifecycle: savedFlow ? 'saved' as const : tombstone ? 'deleted' as const : flowDraft?.new_object ? 'uncreated' as const : 'unavailable' as const, deletion_id: tombstone?.deletion_id, deleted_at: tombstone?.deleted_at, candidate_count: flows.filter(c => c.flow_id === id).length
+    }
+  })]
 }
 /** Called only by the approved create step; the factory identity was fixed before approval. */
 export function createApiDraft(pid: string, planId: string, stepId: string, base: Target, patch: Partial<Target>): AgentCandidate {
@@ -149,6 +154,11 @@ function mergePatch(base: unknown, patch: unknown): any {
     }
   }
   return structuredClone(patch)
+}
+/** Compute the proposal exactly as createCandidate will, without persisting anything. */
+export function previewCandidatePatch(base: Target, patch: Partial<Target>): Target {
+  validatePatch(fillStablePatchRows(base, patch))
+  return mergePatch(base, patch) as Target
 }
 /** Internal business action, called only after the plan dispatcher checks approval. */
 export function createCandidate(pid: string, planId: string, stepId: string, base: Target, revision: string | null, patch: Partial<Target>, responseSnapshot = false): AgentCandidate {

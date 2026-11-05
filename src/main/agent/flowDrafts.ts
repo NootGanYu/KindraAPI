@@ -37,6 +37,17 @@ export function listAgentFlowDrafts(pid: string): AgentFlowDraft[] {
   const dir = directory(pid, 'flow-drafts')
   return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => getFlowDraft(pid, n.slice(0, -5))).filter(d => d.agent_owned) : []
 }
+/** Read an existing draft without opening one for a saved Flow (no side effects). */
+export function readFlowDraftIfPresent(pid: string, id: string): AgentFlowDraft | null {
+  return readLocal<AgentFlowDraft | null>(file(pid, 'flow-drafts', id), null)
+}
+/** Create a new Object Flow draft plus its first pending candidate; never writes store.saveFlow. */
+export function createFlowDraft(pid: string, planId: string, stepId: string, base: Flow, patch: Partial<Flow>): AgentFlowCandidate {
+  if (store.getFlow(pid, base.flow_id)) throw new Error('新 Flow 编号已存在，请重试')
+  const candidate = createFlowCandidate(pid, planId, stepId, base, null, patch)
+  persist({ project_id: pid, flow_id: base.flow_id, flow: structuredClone(base), base_revision: null, new_object: true, agent_owned: true, updated_at: new Date().toISOString() })
+  return candidate
+}
 function persist(draft: AgentFlowDraft): void {
   draft.updated_at = new Date().toISOString()
   writeLocal(file(draft.project_id, 'flow-drafts', draft.flow_id), draft)
@@ -116,7 +127,8 @@ export function createFlowCandidate(pid: string, planId: string, stepId: string,
 function apply(candidate: AgentFlowCandidate, choices: Record<string, AgentConflictChoice> = {}, current = getFlowDraft(candidate.project_id, candidate.flow_id).flow, operation: 'apply' | 'restore' = 'apply', source = { base: candidate.base, proposal: candidate.proposal }): AgentFlowCandidate {
   const saved = store.getFlow(candidate.project_id, candidate.flow_id)
   const active = getFlowDraft(candidate.project_id, candidate.flow_id)
-  if ((!saved && !(operation === 'restore' && active.deleted_object)) || (saved ? flowSignature(saved) : null) !== (operation === 'restore' ? active.base_revision : candidate.base_revision)) return review(candidate, 'conflict', '正式 Flow 已变化，需核对最新定义后重新生成提案。')
+  const allowedNewObject = !saved && active.new_object === true && operation === 'apply'
+  if ((!saved && !allowedNewObject && !(operation === 'restore' && active.deleted_object)) || (saved ? flowSignature(saved) : null) !== (operation === 'restore' ? active.base_revision : candidate.base_revision)) return review(candidate, 'conflict', '正式 Flow 已变化，需核对最新定义后重新生成提案。')
   const merged = mergeDefinitions(flowDefinition(source.base), flowDefinition(current), flowDefinition(source.proposal), choices)
   const result: Flow = { ...current, ...merged.result }
   const draft = getFlowDraft(candidate.project_id, candidate.flow_id)
