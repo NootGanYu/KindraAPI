@@ -42,6 +42,9 @@ async function main(): Promise<void> {
     assert.equal(agentCommands.getConnection()!.capability, 'text-only')
     const project = storage.ensureDefaultProject()
     const other = storage.createProjectWithDefaults('另一个项目')
+    const naming = storage.createProjectWithDefaults('命名项目')
+    const namingTitles = [1, 2, 3].map(() => agentCommands.createConversation(naming.project_id).title)
+    assert.deepEqual(namingTitles, ['新会话', '新会话 2', '新会话 3'])
     const conversation = agentCommands.createConversation(project.project_id)
     const events: string[] = []
     const off = onAgentEvent(event => events.push(JSON.stringify(event)))

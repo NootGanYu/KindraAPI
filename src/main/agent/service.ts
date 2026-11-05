@@ -50,10 +50,18 @@ function listConversations(projectId: string): AgentConversation[] {
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir).filter(file => file.endsWith('.json')).map(file => getConversation(projectId, file.slice(0, -5))).sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
+function nextConversationTitle(projectId: string): string {
+  // Titles stay unique per project so selecting a conversation is unambiguous.
+  const titles = new Set(listConversations(projectId).map(item => item.title))
+  if (!titles.has('新会话')) return '新会话'
+  let index = 2
+  while (titles.has(`新会话 ${index}`)) index++
+  return `新会话 ${index}`
+}
 function createConversation(projectId: string): AgentConversation {
   projectDir(projectId)
   const now = new Date().toISOString()
-  const conversation: AgentConversation = { conversation_id: randomUUID(), project_id: projectId, title: '新会话', created_at: now, updated_at: now, status: 'idle', messages: [] }
+  const conversation: AgentConversation = { conversation_id: randomUUID(), project_id: projectId, title: nextConversationTitle(projectId), created_at: now, updated_at: now, status: 'idle', messages: [] }
   persist(conversation)
   return conversation
 }
