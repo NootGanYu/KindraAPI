@@ -29,7 +29,9 @@ import type {
   GlobalVars,
   McpConfig
 } from '@shared/types'
+import { useLocation } from 'react-router-dom'
 import { useApp } from '../store'
+import AgentConnectionSettings from '../components/AgentConnectionSettings'
 import CustomAttributesPanel from '../components/CustomAttributesPanel'
 
 interface VarRow {
@@ -73,6 +75,14 @@ export default function SettingsPage(): JSX.Element {
   const mcpTools = useApp((s) => s.mcpTools)
   const saveMcp = useApp((s) => s.saveMcp)
   const regenerateMcpToken = useApp((s) => s.regenerateMcpToken)
+  const location = useLocation()
+
+  useEffect(() => {
+    const id = location.hash.replace(/^#/, '')
+    if (!id) return
+    const timer = setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
+    return () => clearTimeout(timer)
+  }, [location.hash])
 
   const [envId, setEnvId] = useState(environments[0]?.env_id ?? '')
   const [envName, setEnvName] = useState('')
@@ -278,6 +288,8 @@ export default function SettingsPage(): JSX.Element {
           </div>
         </Space>
       </div>
+
+      <AgentConnectionSettings />
 
       <div className="settings-card">
         <CustomAttributesPanel projectId={project?.project_id} />

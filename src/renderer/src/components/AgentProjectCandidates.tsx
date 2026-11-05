@@ -1,7 +1,8 @@
 import DeletedObjectReview from './DeletedObjectReview'
 import FlowVersionDrawer from './FlowVersionDrawer'
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Card, Drawer, Empty, Space, Tag } from 'antd'
+import { Alert, Button, Card, Drawer, Empty, Space, Tag, Tooltip } from 'antd'
+import { AppstoreOutlined } from '@ant-design/icons'
 import type { ProjectCandidateSummary } from '@shared/agentDraft'
 import AgentCandidates from './AgentCandidates'
 
@@ -20,7 +21,7 @@ export default function AgentProjectCandidates({ projectId }: { projectId: strin
     const off = window.api.agent.onDraftChanged(changed), offFlow = window.api.agent.onFlowDraftChanged(changed)
     return () => { off(); offFlow() }
   }, [load, projectId])
-  return <><Button onClick={() => { setOpen(true); void load() }}>项目候选汇总</Button>
+  return <><Tooltip title="项目候选汇总"><Button aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => { setOpen(true); void load() }} /></Tooltip>
     <Drawer title="项目候选汇总" width={1000} open={open} onClose={() => setOpen(false)}>
       <Alert type="info" message="删除对象的候选和墓碑仍保留在本机。审阅、恢复草稿与正式保存分别进行。" />
       {error && <Alert type="error" message={error} />}
