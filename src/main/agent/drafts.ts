@@ -417,6 +417,13 @@ export function commitTurnUndoApi(pid: string, id: string, target: Target, candi
   emit({ project_id: pid, target_id: id, draft, previous })
 }
 
+/** Stage an agent-owned recovery draft so store.deleteTarget keeps a tombstone even for clean objects. */
+export function stageApiDeletionRecovery(pid: string, id: string): void {
+  const draft = getDraft(pid, id)
+  draft.agent_owned = true
+  persistDraft(draft)
+}
+
 /** Remove only Agent-owned in-memory editors after local history is deleted. */
 export function forgetProjectAgentDrafts(pid: string, ids: string[]): void {
   for (const id of ids) {

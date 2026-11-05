@@ -257,7 +257,11 @@ export function stashAgentFlowDrafts(): number {
 /** Called only by the approved plan dispatcher; not exposed over IPC. */
 export function saveApprovedFlow(pid: string, planId: string, id: string, revision: string | null, candidateIds: string[]): { saved_version: NonNullable<AgentFlowCandidate['saved_version']>; candidate_ids: string[] } {
   const saved = store.readFlowSnapshot(pid, id), current = getFlowDraft(pid, id)
-  if (!revision || saved.revision !== revision || current.base_revision !== revision) throw new Error('正式 Flow revision 或草稿基线已变化，保存已暂停，请重新核对计划')
+  const creating = !saved.flow && current.new_object === true && revision === null
+  if (creating) {
+    if (store.getFlow(pid, id)) throw new Error('正式 Flow 已存在，保存已暂停')
+    if (current.base_revision !== null) throw new Error('新 Flow 草稿基线无效，保存已暂停')
+  } else if (!revision || saved.revision !== revision || current.base_revision !== revision) throw new Error('正式 Flow revision 或草稿基线已变化，保存已暂停，请重新核对计划')
   for (const candidateId of candidateIds) {
     const candidate = readCandidate(pid, candidateId)
     if (candidate.plan_id !== planId || candidate.flow_id !== id) throw new Error('Flow 保存候选超出获批计划')
@@ -266,17 +270,26 @@ export function saveApprovedFlow(pid: string, planId: string, id: string, revisi
   }
   const draft = getFlowDraft(pid, id), before = structuredClone(draft.flow)
   validateFlowPatch({ name: draft.flow.name, description: draft.flow.description, env_id: draft.flow.env_id, events: draft.flow.events })
-  const outcome = store.saveFlowChecked(pid, draft.flow, revision)
-  if (outcome.status !== 'saved') throw new Error('正式 Flow 已变化，保存已暂停')
-  const savedVersion = { version_id: outcome.version.version_id, version: outcome.version.version, revision: outcome.revision, plan_id: planId }
+  let savedFlow: Flow, savedRevision: string, version: NonNullable<ReturnType<typeof store.listFlowVersions>[number]>
+  if (creating) {
+    savedFlow = store.saveFlow(pid, draft.flow)
+    savedRevision = flowSignature(savedFlow)
+    version = store.listFlowVersions(pid, id)[0]
+    if (!version) throw new Error('Flow 保存版本记录缺失')
+  } else {
+    const outcome = store.saveFlowChecked(pid, draft.flow, revision!)
+    if (outcome.status !== 'saved') throw new Error('正式 Flow 已变化，保存已暂停')
+    savedFlow = outcome.flow; savedRevision = outcome.revision; version = outcome.version
+  }
+  const savedVersion = { version_id: version.version_id, version: version.version, revision: savedRevision, plan_id: planId }
   const linked = [...new Set([...candidateIds, ...(draft.candidate_ids ?? [])])].filter(candidateId => readCandidate(pid, candidateId).status === 'applied')
   for (const candidateId of linked) {
     const reviewFile = file(pid, 'flow-candidate-reviews', candidateId)
     writeLocal(reviewFile, { ...readLocal(reviewFile, {}), saved_version: savedVersion })
   }
-  draft.flow = outcome.flow; draft.base_revision = outcome.revision; draft.agent_owned = false; draft.candidate_ids = []
+  draft.flow = savedFlow; draft.base_revision = savedRevision; draft.new_object = false; draft.agent_owned = false; draft.candidate_ids = []
   persist(draft)
-  emit({ project_id: pid, flow_id: id, draft, previous: before, saved_revision: outcome.revision })
+  emit({ project_id: pid, flow_id: id, draft, previous: before, saved_revision: savedRevision })
   return { saved_version: savedVersion, candidate_ids: linked }
 }
 /** Synchronous check and write prevents a late Agent transition from becoming a Run auto-save. */
@@ -296,6 +309,13 @@ export function commitTurnUndoFlow(pid: string, id: string, flow: Flow, candidat
     review(candidate, 'undone', undefined, undefined, { ...candidate.application!, undone: true })
   }
   emit({ project_id: pid, flow_id: id, draft, previous })
+}
+
+/** Stage an agent-owned recovery draft so a clean Flow deletion still keeps a tombstone. */
+export function stageFlowDeletionRecovery(pid: string, id: string): void {
+  const draft = getFlowDraft(pid, id)
+  draft.agent_owned = true
+  persist(draft)
 }
 
 export function forgetProjectAgentFlowDrafts(pid: string, ids: string[]): void {
