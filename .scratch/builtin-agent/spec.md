@@ -1,6 +1,6 @@
 # 内置 Agent 集成
 
-Status: ready-for-agent
+Status: ready-for-agent（原生工具循环已实现；旧计划路径作为 legacy 保留）
 
 ## Problem Statement
 
@@ -8,9 +8,11 @@ Status: ready-for-agent
 
 ## Solution
 
-提供项目内置的连续操作 Agent。用户配置模型连接，在本项目发起会话并批准具体计划；Agent 在授权范围内读取脱敏上下文、处理草稿、执行测试和分析结果。修改有候选版本与冲突审阅，正式保存是计划中的独立步骤。会话和 Agent 工作记录保存在本机，支持恢复、检查和本地撤销。
+提供项目内置的连续操作 Agent。用户配置模型连接，在本项目发起会话；Agent 通过连续工具循环读取脱敏上下文、生成草稿候选、执行测试、正式保存或删除对象，并按风险逐工具等待审批。修改有候选版本与冲突审阅，正式保存与删除是独立的高风险工具。会话、工具活动、候选、执行摘要与配置审计保存在本机，支持恢复、检查和撤销。
 
-这是待实施规格；本地存储、执行器和现有 MCP 能力可复用，但不能假定现有实现已经满足 Agent 的权限、草稿或快照要求。
+当前主路径是**原生工具循环**（`core/loop.ts` + `core/registry.ts` + `skills/*`）：模型每轮可使用全局唯一的 Agent Tool，工具直接复用 Kindra 的 store、草稿/候选、执行快照、文档门禁与脱敏。高风险工具经过 Approval Gate；每轮拥有仅存主进程内存的 unknown、响应捕获与审批前快照。配置写入记录 safeStorage 加密的本机 Config Audit。
+
+旧的计划优先引擎（`plans.ts`、`planCommands` 与旧计划 UI）保留为 **Legacy Plan** 兼容路径：它不再扩展新能力，但 22 个既有票据、计划命令、历史计划与相关测试不删除。新 UI 的主流程是工具时间线，旧计划入口作为次要/折叠入口保留。
 
 ## User Stories
 
@@ -82,6 +84,17 @@ Status: ready-for-agent
 
 ## Implementation Decisions
 
+**当前实现（原生工具循环，阶段 5）：**
+
+- 工具注册表声明工具名、JSON Schema、risk（read / local-write / network-write / irreversible）、readOnly、handler 与审批摘要。全局工具名唯一；本地写工具只产生本机候选/草稿，网络执行复用现有冻结快照与 unknown 语义。
+- 审批矩阵：read 自动；local-write 在 ask 暂停；network-write 与 irreversible 在 ask/auto 暂停，bypass 自动但仍显示风险。审批门绑定项目/会话/原生轮次/活动，记录参数哈希与一次性 nonce；拒绝后的相同调用不再执行。
+- 原生 Turn（`turn_id`）把用户消息、Tool Activity、候选 `plan_id`、整轮撤销与配置审计关联起来。候选 `plan_id` 使用 turn_id，`step_id` 使用工具调用 id。
+- 活动只持久化脱敏摘要、状态与 display；单条工具结果与 display 上限 24KB，历史超过 256KB 时折叠摘要并保留最近尾部。unknown 仅存单轮内存，本轮禁止重发；新用户轮可显式重新发起。
+- 配置工具直接写环境/变量/服务器，变量值与 server URI 在 ledger、活动和结果中以 `***` 掩码；配置 before/after 使用 safeStorage 加密保存为 Config Audit，可通过应用命令按 before 撤销。环境删除后的恢复由审计快照完成。
+- 重启将运行中会话标记 interrupted，未完成 tool_call 补齐错误结果，pending 审批结算为拒绝，不重放 unknown/已发送请求。
+- Legacy Plan 保留原计划授权、槽位、22 票据与计划 UI；它与原生循环共享模型适配、草稿/候选、执行快照、脱敏和正式保存。新能力只注册到原生循环。
+
+
 **产品契约：**
 
 - 按上述范围交付 Agent 会话、计划、执行、草稿和版本审阅；首版不提供字典、MQTT、数据库、shell 或任意文件读写的 Agent 工具，批准计划不会自动扩展业务范围。
@@ -134,6 +147,14 @@ Status: ready-for-agent
 - 部分成功、依赖暂停、独立步骤继续、结果未知不自动重试、取消、切项目、退出提示及重启不重放。
 
 少量 Electron UI 关键旅程覆盖计划授权、Git Diff 风格冲突和待确认提醒、切项目、退出与重启恢复。现有客户端同步、文档校验、调试运行时及 Electron UI smoke 测试提供真实存储、回环请求、取消及隔离 userData 的先例。
+
+
+**阶段 5 加固与回归：**
+
+- 双协议（Chat Completions 与 Responses）覆盖空流、非法/截断工具参数、连续 3 轮失败、同对象同参重复读 3 次、完全相同工具轮次、maxTurns 无工具收尾、取消时未执行 tool_call 补齐结果与历史压缩。
+- 恢复测试覆盖重启 interrupted、pending 审批拒绝、orphan tool_call 错误结果、unknown 不重放和新用户轮显式重试；大小测试覆盖单条结果/display ≤24KB、活动数量上限和会话 JSON 不含完整响应体/未脱敏值。
+- 全量回归同时运行原生循环测试与 Legacy Plan/continuation/effects/flow/execution/save/drafts/connections/chat/UI 测试；旧计划路径不因主路径切换而删除或跳过。
+- 新增 `test:agent-loop-hardening`、`test:agent-loop-config`、`test:agent-config-ui` 等脚本；命令与结果记录在交付说明中。
 
 ## Out of Scope
 
