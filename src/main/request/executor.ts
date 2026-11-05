@@ -47,6 +47,8 @@ export interface RequestExecutionContext {
   globals: ReturnType<typeof store.getGlobalVars>
   resolved: ResolvedRequest
   dependencies: Array<Target | RequestModel>
+  /** Cookie jar captured with the frozen run; never re-read for an approved continuation. */
+  cookieJar?: Record<string, string>
   variables?: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }
 }
 export interface RequestExecutionPolicy {
@@ -55,6 +57,8 @@ export interface RequestExecutionPolicy {
   followRedirects: boolean
   persistVariables: boolean
   onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }): void
+  /** Historical values written by a script, including ones unset before the run ends. */
+  onSensitiveValues?(values: string[]): void
 }
 /** Raw definition dependencies for scope checks; does not re-resolve live model references. */
 export function requestDefinitionDependencies(projectId: string, target: Target): Array<Target | RequestModel> {
@@ -64,9 +68,11 @@ export function captureRequestContext(projectId: string, target: Target, environ
   // Explicit absence means no environment for this captured run, never the manual fallback.
   const env = environmentId ? store.listEnvironments(projectId).find(env => env.env_id === environmentId) : null
   if (environmentId && !env) throw new Error('环境不存在')
+  const resolved = resolveRequest(projectId, target, env ?? null)
   return structuredClone({ projectId, target, settings: store.getSettings(), env: env ?? null,
-    globals: store.getGlobalVars(projectId), resolved: resolveRequest(projectId, target, env ?? null),
-    dependencies: requestDefinitionDependencies(projectId, target) })
+    globals: store.getGlobalVars(projectId), resolved,
+    dependencies: requestDefinitionDependencies(projectId, target),
+    cookieJar: store.getCookieJarForUrl(projectId, resolved.url) })
 }
 
 /** 供代码生成复用的有效请求描述（已完成环境变量/服务前缀替换）。 */
@@ -128,9 +134,19 @@ function getChain(projectId: string, target: Target): Target[] {
   return chain
 }
 
-function resolveRequest(projectId: string, target: Target, env: Environment | null): ResolvedRequest {
-  const chain = getChain(projectId, target) // nearest -> root
-  const root = store.readProjectRequestDefaults(projectId)
+/** Frozen dependencies captured with an approved plan; live reads remain the manual/MCP default. */
+export interface FrozenRequestDefinition {
+  dependencies: Array<Target | RequestModel>
+  bodyModel?: BodyModel
+  cookieJar?: Record<string, string>
+}
+function resolveRequest(projectId: string, target: Target, env: Environment | null, frozen?: FrozenRequestDefinition): ResolvedRequest {
+  const frozenDeps = frozen?.dependencies
+  // The modified target is the nearest node; ancestors stay frozen from the approved snapshot.
+  const chain: Target[] = frozenDeps
+    ? [target, ...frozenDeps.slice(2).filter((item): item is Target => !!item && typeof item === 'object' && 'target_id' in item)]
+    : getChain(projectId, target) // nearest -> root
+  const root: RequestModel = (frozenDeps?.[0] as RequestModel | undefined) ?? store.readProjectRequestDefaults(projectId)
 
   const disabledSystemHeaders: Record<string, boolean> = {}
   for (const request of [root, ...[...chain].reverse().map(node => node.request)]) {
@@ -165,17 +181,24 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
   // 引用了数据模型时，发送前按模型实时重新生成，忽略手改的 raw。
   // 模型失效时保留最近一次生成的 raw，避免发送 "null"。
   if (body?.model_id) {
-    const generated = generateModelExample(projectId, body.model_id)
-    const broken = generated.warnings.some(
-      (warning) => warning.code === 'missing-model' || warning.code === 'invalid-ref'
-    )
-    if (!broken) {
-      body = {
-        ...body,
-        mode: body.mode === 'none' ? 'json' : body.mode,
-        raw: JSON.stringify(generated.value, null, 2)
-      }
+    // A frozen run reuses the example generated when the plan was approved; definition files
+    // continue to store live model ids, but this turn must not re-read a changed model.
+    if (frozen?.bodyModel && frozen.bodyModel.model_id === body.model_id) {
+      body = frozen.bodyModel
       if (bodyMode === 'none') bodyMode = 'json'
+    } else {
+      const generated = generateModelExample(projectId, body.model_id)
+      const broken = generated.warnings.some(
+        (warning) => warning.code === 'missing-model' || warning.code === 'invalid-ref'
+      )
+      if (!broken) {
+        body = {
+          ...body,
+          mode: body.mode === 'none' ? 'json' : body.mode,
+          raw: JSON.stringify(generated.value, null, 2)
+        }
+        if (bodyMode === 'none') bodyMode = 'json'
+      }
     }
   }
 
@@ -233,7 +256,7 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
 
   // Cookie 优先级：全局 jar < 请求 Cookie 参数 < 显式 Cookie 头。
   const mergedCookies: Record<string, string> = {
-    ...store.getCookieJarForUrl(projectId, url)
+    ...(frozen?.cookieJar ?? store.getCookieJarForUrl(projectId, url))
   }
   for (const [key, value] of Object.entries(cookies)) mergedCookies[key] = value
   const explicitCookieHeaders = headers.filter(
@@ -307,6 +330,15 @@ function loadScopes(
 }
 
 /** 为代码生成等场景提供已完成环境替换与 Cookie 合并的请求。 */
+/** Re-resolve an approved continuation target against its frozen dependency/model/cookie snapshot. */
+export function resolveFrozenRequest(context: RequestExecutionContext): ResolvedRequest {
+  return resolveRequest(context.projectId, context.target, context.env, {
+    dependencies: context.dependencies,
+    bodyModel: context.resolved.bodyModel,
+    cookieJar: context.cookieJar
+  })
+}
+
 export function resolveEffectiveRequest(
   projectId: string,
   target: Target,
@@ -550,6 +582,28 @@ export async function sendRequest(
         let responseRef: any = null
         let responseError: Error | null = null
         run.start({
+          // Final variable snapshots cannot see set→log→unset inside one script. The runtime
+          // retains the MutationTracker stream on each result scope; project those historical
+          // values into the per-turn redactor before any report/console/model projection.
+          script: (_error: unknown, _cursor: unknown, scriptResult: any) => {
+            if (!options.policy?.onSensitiveValues || !scriptResult) return
+            const values: string[] = []
+            const collectValue = (value: unknown): void => {
+              if (typeof value === 'string') { if (value) values.push(value); return }
+              if (Array.isArray(value)) { for (const item of value) collectValue(item); return }
+              if (value && typeof value === 'object') for (const item of Object.values(value)) collectValue(item)
+            }
+            for (const scopeName of ['environment', 'globals', '_variables', 'collectionVariables', 'localVariables']) {
+              const tracker = scriptResult?.[scopeName]?.mutations
+              // SET is [key, value, metadata?]; UNSET is [key] and carries no value.
+              // The installed sandbox auto-compacts, so inspect both the stream and the last
+              // mutation retained in `compacted`.
+              for (const mutation of [...(tracker?.stream ?? []), ...Object.values(tracker?.compacted ?? {})]) {
+                if (Array.isArray(mutation) && mutation.length >= 2) collectValue(mutation[1])
+              }
+            }
+            if (values.length) options.policy.onSensitiveValues([...new Set(values)])
+          },
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
             if (options.policy) {
               try { options.policy.beforeRequest(request as any, { environment: environmentScope.toObject(), globals: globalScope.toObject(), local: readLocalValues() }) }
@@ -607,6 +661,19 @@ export async function sendRequest(
             responseError = error
           },
           console: (_cursor: unknown, level: string, ...args: unknown[]) => {
+            // A set→log→unset transient is already compacted away in the final tracker. For
+            // Agent runs, conservatively treat console payload strings as potential secrets so
+            // they can never reach plan/report/model projections. Manual/MCP paths keep output.
+            if (options.policy?.onSensitiveValues) {
+              const values: string[] = []
+              const collectValue = (value: unknown): void => {
+                if (typeof value === 'string') { if (value) values.push(value); return }
+                if (Array.isArray(value)) { for (const item of value) collectValue(item); return }
+                if (value && typeof value === 'object') for (const item of Object.values(value)) collectValue(item)
+              }
+              for (const arg of args) collectValue(arg)
+              if (values.length) options.policy.onSensitiveValues([...new Set(values)])
+            }
             consoleEntries.push({
               time: Date.now(),
               level,

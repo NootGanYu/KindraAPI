@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { Flow, FlowEvent, FlowEventResult } from '@shared/types'
+import type { Flow, FlowEvent, FlowEventResult, SendRecord } from '@shared/types'
 import type { AgentExecutionPermissions } from '@shared/agentPlan'
 import { flowSignature } from '@shared/flowSync'
 import * as store from '../storage/store'
@@ -71,7 +71,7 @@ export async function executeFlowSnapshot(snapshot: FlowExecutionSnapshot, signa
   const { projectId, variables } = snapshot
   const run = await runFlow(projectId, snapshot.flow, variables.environment?.env_id, {
     progress: snapshot.progress, variables: variables.values, environment: variables.environment, globals: variables.globals, signal, checkScope: snapshot.checkScope,
-    executeRequest: event => executeSnapshot(snapshot.requests.get(event.event_id)!, signal)
+    executeRequest: async event => { const result = await executeSnapshot(snapshot.requests.get(event.event_id)!, signal); return { ...result, report: result.report as SendRecord } }
   })
   const flatten = (events: FlowEventResult[]): FlowEventResult[] => events.flatMap(event => [event, ...flatten(event.children ?? [])])
   const events = flatten(run.events)

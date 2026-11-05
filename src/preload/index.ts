@@ -66,10 +66,11 @@ const api = {
     cancelPlan: (projectId: string, id: string) => invoke('agent:cancelPlan', projectId, id),
     proposeEditPlan: (projectId: string, input: unknown) => invoke('agent:proposeEditPlan', projectId, input),
     proposeReadPlan: (projectId: string, input: unknown) => invoke('agent:proposeReadPlan', projectId, input),
+    proposeTaskPlan: (projectId: string, input: unknown) => invoke('agent:proposeTaskPlan', projectId, input),
     getPlan: (projectId: string, id: string) => invoke('agent:getPlan', projectId, id),
     listPlans: (projectId: string) => invoke('agent:listPlans', projectId),
     resumePlan: (projectId: string, id: string, stepIds: string[]) => invoke('agent:resumePlan', projectId, id, stepIds),
-    approvePlan: (projectId: string, id: string) => invoke('agent:approvePlan', projectId, id),
+    approvePlan: (projectId: string, id: string, expectedRevision?: number) => invoke('agent:approvePlan', projectId, id, expectedRevision),
     rejectPlan: (projectId: string, id: string) => invoke('agent:rejectPlan', projectId, id),
     deletePlan: (projectId: string, id: string) => invoke('agent:deletePlan', projectId, id),
     onPlanChanged: (callback: (event: unknown) => void) => subscribe('agent:plan-changed', callback),
@@ -97,7 +98,8 @@ const api = {
     relaunch: () => invoke('app:relaunch'),
     onRequestClose: (callback: () => void) => subscribe('app:request-close', callback),
     onCloseTabShortcut: (callback: () => void) => subscribe('app:close-tab', callback),
-    confirmClose: () => invoke('app:confirm-close')
+    confirmClose: () => invoke('app:confirm-close'),
+    cancelClose: () => invoke('app:cancel-close')
   },
 
   dialog: {

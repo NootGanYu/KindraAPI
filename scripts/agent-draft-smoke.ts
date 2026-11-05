@@ -45,8 +45,14 @@ async function main(): Promise<void> {
     assert.equal(store.getTarget(pid, target.target_id)!.description, '原说明')
     assert(!JSON.stringify(received).includes('local-token'))
     const count = commands.listCandidates(pid, target.target_id).length
-    commands.stashAgentDrafts(); commands.stashAgentDrafts()
-    assert.equal(commands.listCandidates(pid, target.target_id).length, count, 'exit deduplicates existing snapshot')
+    const stashDraft = structuredClone(commands.getDraft(pid, target.target_id).target); stashDraft.description = '退出前未保存草稿'; commands.syncEditorDraft(pid, stashDraft)
+    commands.stashAgentDrafts()
+    assert.equal(commands.listCandidates(pid, target.target_id).length, count + 1, 'exit snapshots the unsaved draft once')
+    commands.stashAgentDrafts()
+    assert.equal(commands.listCandidates(pid, target.target_id).length, count + 1, 'exit deduplicates existing snapshot')
+    const stashCandidate = commands.listCandidates(pid, target.target_id).find(c => c.plan_id === 'exit-stash')!
+    assert.equal(stashCandidate.status, 'pending', 'exit stash must stay awaiting confirmation')
+    assert.equal(stashCandidate.application, undefined, 'exit stash must not record an applied change')
     patch = { description: 'Agent 第二次修改' }
     const second = await commands.proposeEditPlan(pid, { goal: '修改', targetId: target.target_id })
     await commands.approvePlan(pid, second.plan_id)
@@ -68,13 +74,33 @@ async function main(): Promise<void> {
     const masked = await commands.proposeEditPlan(pid, { goal: '检查占位符', targetId: target.target_id })
     assert.equal(masked.status, 'paused')
     assert.equal(commands.listCandidates(pid, target.target_id).length, beforeRejected)
+    // Malformed nested shapes are rejected at the application-command boundary instead of
+    // being coerced into a destructive empty definition.
+    const malformed = [
+      { request: { header: 42 } },
+      { request: { query: { parameter: [{ param_id: 'x', key: 'q', value: 42, is_checked: 1 }] } } },
+      { request: { body: { parameter: 'bad' } } },
+      { response: { example: [{ example_id: 'e', expect: 42 }] } },
+      { cases: [{ case_id: 'c', name: 'n', is_enabled: 1, override: {}, assertions: [{ assertion_id: 'a', kind: 'status', op: 'equals', path: '', expected: '200', is_enabled: 1, unknown: true }] }] }
+    ]
+    for (const bad of malformed) {
+      patch = bad
+      const rejected = await commands.proposeEditPlan(pid, { goal: '畸形嵌套', targetId: target.target_id })
+      assert.equal(rejected.status, 'paused', JSON.stringify(bad))
+      assert.match(rejected.error!, /无效|类型|字段/)
+      assert.equal(commands.listCandidates(pid, target.target_id).length, beforeRejected)
+    }
+    patch = { request: { header: 42 } }
+    const malformedDirect = await commands.proposeEditPlan(pid, { goal: '畸形请求对象', targetId: target.target_id })
+    assert.equal(malformedDirect.status, 'paused')
     patch = { description: '独立的待确认说明' }
     const versionsBefore = store.listTargetVersions(pid, target.target_id).length
     for (let index = 0; index < 102; index++) {
       const next = await commands.proposeEditPlan(pid, { goal: `候选 ${index}`, targetId: target.target_id })
       await commands.approvePlan(pid, next.plan_id)
     }
-    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending').length, 102)
+    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending' && c.plan_id !== 'exit-stash').length, 102)
+    assert.equal(commands.listCandidates(pid, target.target_id).filter(c => c.status === 'pending' && c.plan_id === 'exit-stash').length, 1, 'stash snapshot remains a pending review')
     assert.equal(store.listTargetVersions(pid, target.target_id).length, versionsBefore)
     const projectFiles = fs.readdirSync(path.join(store.getPaths().projectRoot, pid), { recursive: true }).filter(name => typeof name === 'string') as string[]
     for (const name of projectFiles) {

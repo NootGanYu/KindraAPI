@@ -78,7 +78,13 @@
     "test:agent-deletion": "esbuild scripts/agent-deletion-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/deletion-21.cjs && electron node_modules/.tmp/deletion-21.cjs",
     "test:agent-deletion-ui": "node scripts/agent-deletion-ui-smoke.cjs",
     "test:agent-turn-undo": "esbuild scripts/agent-turn-undo-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/turn-22.cjs && electron node_modules/.tmp/turn-22.cjs",
-    "test:agent-turn-undo-ui": "node scripts/agent-turn-undo-ui-smoke.cjs"
+    "test:agent-turn-undo-ui": "node scripts/agent-turn-undo-ui-smoke.cjs",
+    "test:agent-redaction-id": "esbuild scripts/agent-redaction-id-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/redaction-id.cjs && electron node_modules/.tmp/redaction-id.cjs",
+    "test:agent-postman-history": "esbuild scripts/agent-postman-history-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/postman-history.cjs && electron node_modules/.tmp/postman-history.cjs && electron node_modules/.tmp/postman-history.cjs --responses",
+    "test:agent-config-modal-ui": "node scripts/agent-config-modal-ui-smoke.cjs",
+    "test:agent-relaunch-ui": "node scripts/agent-relaunch-ui-smoke.cjs",
+    "test:agent-continuation": "esbuild scripts/agent-continuation-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/continuation.cjs && electron node_modules/.tmp/continuation.cjs && electron node_modules/.tmp/continuation.cjs --responses",
+    "test:agent-continuation-ui": "node scripts/agent-continuation-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

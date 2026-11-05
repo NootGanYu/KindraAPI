@@ -1,3 +1,4 @@
+import { cancelRelaunch, requestRelaunch } from './appLifecycle'
 import { saveFlowEditor } from './agent/flowDrafts'
 import { registerAgentIpc } from './agent/ipc'
 import { app, clipboard, dialog, ipcMain, shell } from 'electron'
@@ -126,17 +127,9 @@ export function registerIpc(): void {
     await shell.openExternal(parsed.toString())
     return true
   })
-  handle('app:relaunch', () => {
-    setTimeout(() => {
-      // 调试端口由设置项决定，重启时丢弃手动附加的启动参数。
-      const args = process.argv
-        .slice(1)
-        .filter((arg) => !arg.startsWith('--remote-debugging-port'))
-      app.relaunch({ args })
-      app.exit(0)
-    }, 300)
-    return true
-  })
+  // 重启同样经过退出确认与 prepareQuit；只有确认后才安排 relaunch。
+  handle('app:relaunch', () => { requestRelaunch(); return true })
+  handle('app:cancel-close', () => { cancelRelaunch(); return true })
 
   handle('debug:get', () => store.getDebugState())
   handle('debug:save', (config: DebugConfig) => store.saveDebugConfig(config))

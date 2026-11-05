@@ -10,6 +10,7 @@ import * as store from '../storage/store'
 import { agentRoot, readLocal, writeLocal } from './store'
 import { nextCandidateNumber, nextApplicationOrder } from './candidateSequence'
 import { mergeDefinitions } from './merge'
+import { fillStablePatchRows } from './patchValidation'
 const listeners = new Set<(event: AgentFlowDraftEvent) => void>()
 export function onFlowDraftEvent(listener: (event: AgentFlowDraftEvent) => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
 onDeletedObject((pid, kind, id) => { if (kind === 'flow') emit({ project_id: pid, flow_id: id }) })
@@ -104,7 +105,7 @@ export function validateFlowPatch(patch: unknown): asserts patch is Partial<Flow
   if ('events' in p) walk(p.events)
 }
 export function createFlowCandidate(pid: string, planId: string, stepId: string, base: Flow, revision: string | null, patch: Partial<Flow>): AgentFlowCandidate {
-  validateFlowPatch(patch)
+  validateFlowPatch(fillStablePatchRows(base, patch))
   const existing = listFlowCandidates(pid).find(c => c.plan_id === planId && c.step_id === stepId)
   if (existing) return existing
   const candidate: AgentFlowCandidate = { kind: 'flow', candidate_id: randomUUID(), number: nextCandidateNumber(pid), project_id: pid, flow_id: base.flow_id, plan_id: planId, step_id: stepId, base_revision: revision, base: structuredClone(base), proposal: { ...structuredClone(base), ...structuredClone(patch) }, created_at: new Date().toISOString(), status: 'pending' }
@@ -235,8 +236,9 @@ export function stashAgentFlowDrafts(): number {
   let added = 0
   for (const project of store.listProjects()) for (const draft of listAgentFlowDrafts(project.project_id)) {
     if (listFlowCandidates(project.project_id, draft.flow_id).some(c => flowSignature(c.merge?.result ?? c.proposal) === flowSignature(draft.flow))) continue
-    const candidate = createFlowCandidate(project.project_id, 'exit-stash', randomUUID(), draft.flow, draft.base_revision, { description: draft.flow.description })
-    review(candidate, 'applied'); added++
+    // ADR-0007: quit/exit snapshots stay awaiting confirmation; they are never applied silently.
+    createFlowCandidate(project.project_id, 'exit-stash', randomUUID(), draft.flow, draft.base_revision, { description: draft.flow.description })
+    added++
   }
   return added
 }

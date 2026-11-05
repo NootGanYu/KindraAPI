@@ -41,6 +41,33 @@ const assertion = shape({ assertion_id: stableId, kind: oneOf(['status', 'durati
 const override = shape({ method: text, url: text, headers: params, query: params, restful: params, body_mode: oneOf(['none', 'raw', 'json', 'urlencoded', 'formdata', 'binary']), body: text, formdata: params, urlencoded: params })
 const apiCase = shape({ case_id: stableId, name: text, description: text, is_enabled: oneOf([0, 1]), override, assertions: identified(assertion, 'assertion_id') }, ['case_id', 'name', 'is_enabled', 'override', 'assertions'])
 const cases = identified(apiCase, 'case_id')
+const stableRowKeys = ['param_id', 'case_id', 'assertion_id', 'example_id', 'event_id']
+/**
+ * A continuation patch can address one row by stable ID and carry only permitted fields. Fill
+ * the stable-ID row from the approved base for shape validation; the actual candidate keeps the
+ * partial patch and merges by ID so unrelated (including hidden) sibling values survive.
+ */
+export function fillStablePatchRows(base: unknown, patch: unknown): any {
+  if (Array.isArray(patch)) {
+    const baseRows = Array.isArray(base) ? base as Obj[] : []
+    const idKey = stableRowKeys.find(key => patch.length > 0 && patch.every((row: any) => row && typeof row === 'object' && typeof row[key] === 'string') && baseRows.every(row => row && typeof row === 'object' && typeof row[key] === 'string'))
+    const partial = idKey ? patch.some((row: any) => { const current = baseRows.find(baseRow => baseRow?.[idKey] === row[idKey]); return !current || Object.keys(current).some(key => key !== 'last_run' && !(key in row)) }) : false
+    if (!idKey || !partial) return structuredClone(patch)
+    return patch.map((row: Obj) => {
+      const current = baseRows.find(baseRow => baseRow?.[idKey] === row[idKey])
+      if (!current) return structuredClone(row)
+      const baseCopy = structuredClone(current)
+      // Runtime-only values never belong to a definition patch.
+      delete baseCopy.last_run
+      return { ...baseCopy, ...fillStablePatchRows(current, row) }
+    })
+  }
+  if (patch && typeof patch === 'object') {
+    return Object.fromEntries(Object.entries(patch as Obj).map(([key, value]) => [key, fillStablePatchRows((base as Obj)?.[key], value)]))
+  }
+  return structuredClone(patch)
+}
+
 /** Runtime patch boundary: optional fields stay partial, supplied groups/rows retain their domain shape. */
 export function validateNestedPatch(patch: Obj): void {
   shape({ name: text, description: text, method: text, url: text, mark_id: text, request, response, custom_attributes: attributes, cases })(patch, 'patch')

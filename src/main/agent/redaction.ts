@@ -2,6 +2,17 @@ import * as store from '../storage/store'
 
 const sensitive = /authorization|cookie|token|secret|password|passwd|api[_-]?key|credential|session|access[_-]?key/i
 const hidden = '[已隐藏]'
+// Stable identifiers are application-generated and are the only contract by which the model
+// can address rows in a later patch. They are projected verbatim even when a short environment
+// value (for example "1") happens to occur as a substring. Actual sensitive values continue to
+// be redacted by their own field names and content.
+const stableIdKeys = new Set([
+  'param_id', 'case_id', 'assertion_id', 'example_id', 'event_id', 'field_id',
+  'target_id', 'flow_id', 'project_id', 'parent_id', 'folder_id', 'model_id',
+  'mark_id', 'version_id', 'deletion_id', 'candidate_id', 'plan_id', 'step_id',
+  'conversation_id', 'connection_id', 'env_id', 'status_id', 'attribute_id',
+  'scene_id', 'schema_id', 'record_id', 'run_id', 'undo_id', 'review_id'
+])
 /** A per-turn redactor: credentials stay in memory and never become model context. */
 export interface ProjectRedactor { <T>(value: T): T; stream(text: string): string }
 export function projectRedactor(projectId: string, extra: string[] = [], objects: unknown[] = []): ProjectRedactor {
@@ -45,7 +56,10 @@ export function projectRedactor(projectId: string, extra: string[] = [], objects
       .replace(/((?:api[_-]?key|token|password|secret|authorization|cookie)\s*[:=]\s*)[^\s"'&,;]+/gi, `$1${hidden}`)
   }
   function visit(value: unknown, key = ''): unknown {
-    if (typeof value === 'string') return sensitive.test(key) && value ? hidden : text(value)
+    if (typeof value === 'string') {
+      if (stableIdKeys.has(key)) return value
+      return sensitive.test(key) && value ? hidden : text(value)
+    }
     if (Array.isArray(value)) return value.map(item => visit(item, key))
     if (value && typeof value === 'object') {
       const record = value as Record<string, unknown>
