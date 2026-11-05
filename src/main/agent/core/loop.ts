@@ -148,6 +148,16 @@ function parseArguments(call: ModelReply['toolCalls'][number]): { input: Record<
 function redactStream(redact: ProjectRedactor | undefined, text: string): string {
   return redact ? redact.stream(text) : text
 }
+/** Sensitive tool arguments never enter the persisted ledger or later model turns. */
+function maskArguments(argumentsText: string, fields: string[] | undefined): string {
+  if (!fields?.length) return argumentsText
+  try {
+    const value = JSON.parse(argumentsText)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return argumentsText
+    for (const field of fields) if (field in value) value[field] = '***'
+    return JSON.stringify(value)
+  } catch { return argumentsText }
+}
 function redactValue<T>(redact: ProjectRedactor | undefined, value: T): T {
   return redact ? redact(value) : value
 }
@@ -281,7 +291,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     ledger.push({
       role: 'assistant',
       content: redactStream(redact, reply.text),
-      tool_calls: reply.toolCalls.map(call => ({ id: call.id, type: 'function' as const, function: { name: call.name, arguments: redactStream(redact, call.arguments) } }))
+      tool_calls: reply.toolCalls.map(call => {
+        const definition = options.tools.find(tool => tool.name === call.name)
+        return { id: call.id, type: 'function' as const, function: { name: call.name, arguments: maskArguments(call.arguments, definition?.maskArgumentFields) } }
+      })
     })
     let executedInTurn = false
     let unusableInTurn = false

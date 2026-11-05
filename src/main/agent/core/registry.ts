@@ -44,6 +44,8 @@ export interface AgentToolDefinition {
   handler: (args: Record<string, unknown>, context: AgentToolContext) => AgentToolResult | Promise<AgentToolResult>
   /** Extra risk/scope text shown on the approval card before execution. */
   describeForApproval?: (args: Record<string, unknown>, context: AgentToolContext) => AgentToolApprovalDetails | Promise<AgentToolApprovalDetails>
+  /** Argument fields (e.g. secret values) replaced with '***' in the persisted ledger. */
+  maskArgumentFields?: string[]
   /** Optional domain projection applied before redaction. */
   projection?: (value: unknown) => unknown
 }

@@ -15,11 +15,13 @@ import { runAgentLoop } from './core/loop'
 import { agentToolRegistry } from './skills'
 import { createApprovalGate, type ApprovalGate } from './approval'
 import { createTurnExecutionState } from './core/runState'
+import { configAuditCommands } from './configAudit'
 import type { AgentPermissionMode } from '@shared/agentPlan'
 
 const SYSTEM_PROMPT = [
   '你是 Kindra 项目内的助手。',
-  '可以读取当前项目，也可以把接口/用例/Flow 修改写成本机候选或草稿；不得声称已经保存正式定义、执行请求或删除对象。',
+  '可以读取当前项目，也可以写接口/用例/Flow 草稿、执行请求、正式保存或删除对象，并修改环境与变量配置；不得声称未实际执行的操作。',
+  '环境/变量配置写入会记录本机加密审计并可撤销；变量值敏感，绝不复述或回显。',
   '项目目录只含编号与名称；接口定义、URL、描述、用例、Flow 事件必须在需要时用读取工具按需获取。',
   '修改前先读取目标与 base_revision；更新候选使用 update_*_draft，采纳草稿使用 apply_*_candidate。候选创建后明确告诉用户“尚未保存正式定义”。',
   '环境与全局变量只提供名称、说明和启用状态，变量值不可用；不要猜测或索要变量值。',
@@ -325,4 +327,4 @@ function deleteProjectAgentRecords(pid: string): boolean {
   return true
 }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, renameConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage, respondToolApproval }
+export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, renameConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage, respondToolApproval, ...configAuditCommands, undoConfigChange: (...args: Parameters<typeof configAuditCommands.undoConfigChange>) => { assertIdle(); return configAuditCommands.undoConfigChange(...args) } }

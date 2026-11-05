@@ -90,6 +90,8 @@ const api = {
     sendMessage: (projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }) => invoke('agent:sendMessage', projectId, id, content, connectionId, options),
     cancelMessage: (projectId: string, id: string) => invoke('agent:cancelMessage', projectId, id),
     respondToolApproval: (projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied') => invoke('agent:respondToolApproval', projectId, conversationId, activityId, decision),
+    listConfigAudits: (projectId: string) => invoke('agent:listConfigAudits', projectId),
+    undoConfigChange: (projectId: string, auditId: string) => invoke('agent:undoConfigChange', projectId, auditId),
     onChanged: (callback: (event: unknown) => void) => subscribe('agent:changed', callback)
   },
   paths: () => invoke('app:paths'),
