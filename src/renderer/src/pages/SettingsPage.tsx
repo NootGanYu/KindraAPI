@@ -31,7 +31,6 @@ import type {
 } from '@shared/types'
 import { useLocation } from 'react-router-dom'
 import { useApp } from '../store'
-import AgentConnectionSettings from '../components/AgentConnectionSettings'
 import CustomAttributesPanel from '../components/CustomAttributesPanel'
 
 interface VarRow {
@@ -288,8 +287,6 @@ export default function SettingsPage(): JSX.Element {
           </div>
         </Space>
       </div>
-
-      <AgentConnectionSettings />
 
       <div className="settings-card">
         <CustomAttributesPanel projectId={project?.project_id} />

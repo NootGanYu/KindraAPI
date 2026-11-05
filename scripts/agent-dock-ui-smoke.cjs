@@ -85,8 +85,14 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.waitForURL(/#\/history/)
   await panel.waitFor()
 
-  await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).fill('把界面接口的说明改为界面已验证')
-  await page.getByRole('button', { name: /发送/ }).click()
+  const goalBox = page.getByRole('textbox', { name: '告诉 Agent 要做什么' })
+  await goalBox.fill('第一行')
+  await goalBox.press('Shift+Enter')
+  await goalBox.type('第二行')
+  assert((await goalBox.inputValue()).includes('\n'), 'Shift+Enter must insert a newline')
+  assert.equal(await page.locator('.agent-plan-card').count(), 0, 'Shift+Enter must not send')
+  await goalBox.fill('把界面接口的说明改为界面已验证')
+  await goalBox.press('Enter')
   const card = page.locator('.agent-plan-card').first()
   await card.waitFor()
   assert.equal(await card.locator('.ant-drawer').count(), 0, 'plans must render inline, not in a nested drawer')
@@ -110,14 +116,13 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.getByText('高风险', { exact: false }).first().waitFor()
   await page.getByRole('button', { name: /取\s*消/ }).click()
 
-  // Connection status jumps to the settings section and closes the panel.
-  await page.getByRole('button', { name: '管理模型连接' }).click()
-  await page.waitForURL(/#\/settings#agent-connections/)
-  await assert.doesNotReject(() => panel.waitFor({ state: 'hidden', timeout: 3000 }))
+  // Settings open inside the same panel from the top-right gear.
+  await page.getByRole('button', { name: 'Agent 设置' }).click()
   await page.locator('#agent-connections').waitFor()
   await page.getByText('Agent 模型连接', { exact: true }).waitFor()
+  assert(await panel.isVisible(), 'settings must render inside the dock panel')
 
-  // Connection CRUD is available on the settings page.
+  // Connection CRUD stays inside the panel.
   await page.getByRole('button', { name: /新增连接/ }).click()
   await page.getByLabel('连接名称', { exact: true }).fill('设置页连接')
   await page.getByLabel('API 地址').fill(`http://127.0.0.1:${server.address().port}/v1`)
@@ -130,6 +135,10 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.getByRole('button', { name: '确认删除', exact: true }).click()
   const remaining = await page.evaluate(() => window.api.agent.listConnections().then(result => result.data.map(item => item.name)))
   assert.deepEqual(remaining, ['界面连接'])
-  assert(await page.locator('#agent-connections').isVisible())
+  await page.getByRole('button', { name: '返回对话', exact: true }).click()
+  await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).waitFor()
+  await page.getByRole('link', { name: '设置' }).click()
+  await page.getByText('项目', { exact: true }).waitFor()
+  assert.equal(await page.locator('#agent-connections').count(), 0, 'settings page must not host Agent settings')
   console.log('PASS dock entry, 40vw unmasked panel, inline plan approval, permission confirmations and settings-hosted connection CRUD')
 })().catch(async error => { if (app) { try { const page = await app.firstWindow(); await page.screenshot({ path: '/tmp/kindra-builtin-agent-context/dock-ui-failure.png' }) } catch {} } console.error(error); process.exitCode = 1 }).finally(async () => { await stop(); server.closeAllConnections(); await new Promise(resolve => server.close(() => resolve())) })

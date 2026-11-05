@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Alert, App as AntApp, Button, Empty, Form, Input, Select, Space, Tag, Typography } from 'antd'
-import { DeleteOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DeleteOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { AgentConnection, AgentConnectionInput } from '@shared/agent'
 import type { Result } from '@shared/types'
 import { useApp } from '../store'
 
 function unwrap<T>(result: Result<T>): T { if (!result.ok) throw new Error(result.error); return result.data }
 
-/** Connection management lives on the settings page; the conversation panel only reads the project default. */
-export default function AgentConnectionSettings(): JSX.Element {
+/** Connection management lives inside the Agent panel; the conversation header only shows the active connection. */
+export default function AgentConnectionSettings({ onClose }: { onClose?: () => void }): JSX.Element {
   const { message, modal } = AntApp.useApp()
   const project = useApp(state => state.project)
   const [connections, setConnections] = useState<AgentConnection[]>([])
@@ -86,10 +86,13 @@ export default function AgentConnectionSettings(): JSX.Element {
       await reload(null)
     } })
   }
-  return <div className="settings-card" id="agent-connections">
-    <div className="section-title">Agent 模型连接</div>
+  return <div className="agent-dock-subview-content" id="agent-connections">
+    <div className="agent-dock-subview-title">
+      <Typography.Title level={5}>Agent 模型连接</Typography.Title>
+      {onClose && <Button size="small" aria-label="返回对话" icon={<ArrowLeftOutlined />} onClick={onClose}>返回对话</Button>}
+    </div>
     <Typography.Paragraph type="secondary">
-      模型连接仅保存在本机凭据存储。对话面板只显示当前项目默认连接；新增、编辑、测试和删除在此管理。
+      模型连接仅保存在本机凭据存储；新增、编辑、测试和删除在此管理。
     </Typography.Paragraph>
     {!project && <Alert type="info" message="请先选择项目，才能设置项目默认连接。" />}
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} style={{ marginBottom: 12 }} />}
@@ -103,7 +106,7 @@ export default function AgentConnectionSettings(): JSX.Element {
       {editingId && <Button danger icon={<DeleteOutlined />} onClick={remove}>删除连接</Button>}
     </Space>
     {!connections.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未配置模型连接" style={{ marginBottom: 16 }} />}
-    <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
+    <Form form={form} layout="vertical" style={{ width: '100%' }}>
       <Form.Item name="name" label="连接名称"><Input /></Form.Item>
       <Form.Item name="base_url" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="填写兼容服务的基础地址，例如 https://example.com/v1"><Input placeholder="https://example.com/v1" /></Form.Item>
       <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}><Input /></Form.Item>

@@ -6,6 +6,7 @@ import type { AgentPermissionMode } from '@shared/agentPlan'
 import type { Result } from '@shared/types'
 import { flushAgentDrafts } from '../agentDraftSync'
 import { useApp } from '../store'
+import AgentConnectionSettings from './AgentConnectionSettings'
 import AgentPlanPanel from './AgentPlanPanel'
 import AgentProjectCandidates from './AgentProjectCandidates'
 import AgentTurnUndoPanel from './AgentTurnUndoPanel'
@@ -18,11 +19,10 @@ const permissionOptions: Array<{ value: AgentPermissionMode; label: string; desc
   { value: 'bypass', label: '跳过权限', description: '所有计划步骤自动批准，包括真实网络执行、正式保存与新建对象。高风险。' }
 ]
 
-export default function AgentConversationPanel({ projectId, projectName, open, onOpenSettings, onClose }: {
+export default function AgentConversationPanel({ projectId, projectName, open, onClose }: {
   projectId: string
   projectName: string
   open: boolean
-  onOpenSettings: () => void
   onClose: () => void
 }): JSX.Element {
   const { modal } = AntApp.useApp()
@@ -34,7 +34,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const [text, setText] = useState('')
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>('ask')
   const [busy, setBusy] = useState(false)
-  const [view, setView] = useState<'chat' | 'undo' | 'candidates'>('chat')
+  const [view, setView] = useState<'chat' | 'undo' | 'candidates' | 'settings'>('chat')
   const [error, setError] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const conversation = conversations.find(item => item.conversation_id === selected)
@@ -69,7 +69,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         const list = unwrap(all)
         const fallback = unwrap(preferred)
         setConnections(list)
-        setConnection(current => list.find(item => item.connection_id === current?.connection_id) ?? fallback ?? list[0] ?? null)
+        setConnection(current => list.find(item => item.connection_id === current?.connection_id) ?? fallback ?? null)
       } catch (e) { setConnection(null); setConnectionError((e as Error).message) }
     }).catch(e => mounted && setConnectionError(e.message))
     return () => { mounted = false }
@@ -128,6 +128,16 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     try { await create() } catch (e) { setError((e as Error).message) }
   }
   function selectConnection(id: string): void { setConnection(connections.find(item => item.connection_id === id) ?? null) }
+  async function refreshConnections(): Promise<void> {
+    try {
+      const [all, preferred] = await Promise.all([window.api.agent.listConnections(), window.api.agent.getProjectConnection(projectId)])
+      const list = unwrap(all)
+      const fallback = unwrap(preferred)
+      setConnections(list)
+      setConnection(current => list.find(item => item.connection_id === current?.connection_id) ?? fallback ?? null)
+    } catch (e) { setConnectionError((e as Error).message) }
+  }
+  function closeSettings(): void { setView('chat'); void refreshConnections() }
 
   return <div className="agent-dock-panel">
     <header className="agent-dock-header">
@@ -138,6 +148,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
       <Space wrap size={8}>
         <Tooltip title="整轮撤销与记录"><Button size="small" type={view === 'undo' ? 'primary' : 'default'} aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={() => setView(view === 'undo' ? 'chat' : 'undo')} /></Tooltip>
         <Tooltip title="项目候选汇总"><Button size="small" type={view === 'candidates' ? 'primary' : 'default'} aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => setView(view === 'candidates' ? 'chat' : 'candidates')} /></Tooltip>
+        <Tooltip title="Agent 设置"><Button size="small" type={view === 'settings' ? 'primary' : 'default'} aria-label="Agent 设置" icon={<SettingOutlined />} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')} /></Tooltip>
         <Tooltip title="收起面板"><Button size="small" aria-label="收起面板" icon={<CloseOutlined />} onClick={onClose} /></Tooltip>
       </Space>
     </header>
@@ -152,7 +163,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {connection?.capability === 'text-only' && <Alert type="info" message="仅文本对话；自然语言计划与工具操作不可用。" />}
     {connection?.capability === 'unchecked' && <Alert type="info" message="尚未检测工具能力。可在设置页测试连接；当前仅进行文本对话。" />}
-    {!connection && <Alert type="warning" showIcon message="请先在设置页配置 Agent 模型连接。" action={<Button size="small" onClick={onOpenSettings}>去设置</Button>} />}
+    {!connection && <Alert type="warning" showIcon message="请先配置 Agent 模型连接。" action={<Button size="small" onClick={() => setView('settings')}>去设置</Button>} />}
     {running && conversation?.connection && <Alert type="info" message={`本轮固定连接：${conversation.connection.name} · ${conversation.connection.model}；修改配置不影响本轮。`} />}
     {view === 'chat' ? <>
       <div className="agent-messages" role="log" aria-label="Agent 会话消息">
@@ -169,22 +180,22 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         <div ref={end} />
       </div>
       <div className="agent-compose">
-        <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send() } }} />
+        <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
         <div className="agent-compose-bar">
           <Space size={4} wrap>
             <Tooltip title={permission.description}>
               <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 96 }} />
             </Tooltip>
             <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 230 }} />
-            <Tooltip title="管理模型连接"><Button type="text" size="small" aria-label="管理模型连接" icon={<SettingOutlined />} onClick={onOpenSettings} /></Tooltip>
           </Space>
           <Space size={8}>
-            <Typography.Text type="secondary">⌘ / Ctrl + Enter</Typography.Text>
             {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
           </Space>
         </div>
       </div>
-    </> : <div className="agent-dock-subview">
+    </> : view === 'settings' ? <div className="agent-dock-subview">
+      <AgentConnectionSettings onClose={closeSettings} />
+    </div> : <div className="agent-dock-subview">
       {view === 'undo'
         ? <AgentTurnUndoPanel projectId={projectId} inline onClose={() => setView('chat')} />
         : <AgentProjectCandidates projectId={projectId} inline onClose={() => setView('chat')} />}

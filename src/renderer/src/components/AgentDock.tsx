@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Drawer, Empty } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
 import { useApp } from '../store'
 import AgentConversationPanel from './AgentConversationPanel'
 import '../pages/agent.css'
@@ -10,11 +9,6 @@ import '../pages/agent.css'
 export default function AgentDock(): JSX.Element {
   const project = useApp(state => state.project)
   const [open, setOpen] = useState(false)
-  const navigate = useNavigate()
-  function openSettings(): void {
-    setOpen(false)
-    navigate('/settings#agent-connections')
-  }
   return <>
     {!open && <button className="agent-dock-fab" aria-label="打开 Agent" onClick={() => setOpen(true)}>
       <RobotOutlined />
@@ -35,7 +29,7 @@ export default function AgentDock(): JSX.Element {
       styles={{ body: { padding: 0 }, header: { display: 'none' } }}
     >
       {project
-        ? <AgentConversationPanel key={project.project_id} projectId={project.project_id} projectName={project.name} open={open} onOpenSettings={openSettings} onClose={() => setOpen(false)} />
+        ? <AgentConversationPanel key={project.project_id} projectId={project.project_id} projectName={project.name} open={open} onClose={() => setOpen(false)} />
         : <Empty description="请先选择项目" style={{ marginTop: 80 }} />}
     </Drawer>
   </>
