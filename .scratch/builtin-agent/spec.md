@@ -1,6 +1,6 @@
 # 内置 Agent 集成
 
-Status: ready-for-agent（原生工具循环已实现；旧计划路径作为 legacy 保留）
+Status: resolved（原生工具循环已实现并验收；旧计划路径作为 legacy 保留）
 
 ## Problem Statement
 
@@ -167,3 +167,15 @@ Status: ready-for-agent（原生工具循环已实现；旧计划路径作为 le
 - 测试先例：客户端同步 smoke、文档校验 smoke、调试运行时 smoke、Electron UI smoke。
 
 - 测试边界于 2026-11-03 确认：真实应用命令入口集成测试为主，辅以少量 Electron UI 关键旅程。
+
+## Answer
+
+2026-11-06 完成原生 Agent 工具循环并通过最终验收。
+
+- 主路径：`src/main/agent/core/loop.ts` + `core/registry.ts` + `skills/*`。模型可连续调用全局唯一 Agent Tool，观察结果后继续；工具直接复用 Kindra 的 store、草稿/候选、执行快照、文档门禁、脱敏与整轮撤销，不经过外部 MCP。
+- 工具覆盖：只读（接口、用例、Flow、环境/变量、发送记录）、local-write（接口/用例/Flow 草稿、候选采纳、环境/变量/server 配置）、network-write（execute_api/case/flow）、irreversible（save_api/flow/response、delete_api/flow、删除环境/变量/server）。
+- 审批：Approval Gate 按 ask/auto/bypass 与工具风险暂停；一次性 nonce、参数哈希、项目/会话/活动绑定、审批后重校验。拒绝后相同调用不重试。
+- 安全与恢复：单条工具结果 ≤24KB；历史 >256KB 折叠摘要；活动 ≤500；unknown 同轮不重发；重启标记 interrupted、补齐未完成 tool_call、拒绝 pending 审批、不重放；配置审计 before/after 使用 safeStorage 加密并可撤销。
+- 验收：集成树 `typecheck`、`build` 通过；58 个 `test:agent-*`（含双协议核心、全部 legacy 与 UI 旅程）串行 58/58 PASS；真实模型（deepseek-v4.1-flash）端到端完成 get_api → get_api → update_api_draft → apply_api_candidate，B 草稿更新、正式定义不变。
+- 决策记录：`docs/adr/0009-native-agent-tool-loop.md`；术语见 `GLOSSARY.md` 的 Agent Tool / Tool Activity / Approval Gate / Turn / Legacy Plan / Config Audit / Execution Unknown。
+- 已知限制：Flow 执行需先正式保存；配置撤销为整体快照恢复；Linux safeStorage 退化为 basic_text 时配置写入 fail closed；`save_api_response` 保存执行层脱敏响应；`delete_api` 不删除目录；原生轮次在会话删除后撤销显示 UUID 名称。
