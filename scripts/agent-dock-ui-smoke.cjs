@@ -82,6 +82,9 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   assert.equal(await page.locator('.agent-dock-controls').getByRole('combobox', { name: '权限模式' }).count(), 0, 'permission selector must sit in the bottom bar')
   assert(await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).isVisible())
   await panel.getByText('界面连接', { exact: false }).waitFor()
+  const projectBox = await panel.locator('.agent-dock-project').boundingBox()
+  const sessionBox = await panel.locator('.agent-dock-controls .ant-select').first().boundingBox()
+  assert(projectBox && sessionBox && Math.abs((projectBox.y + projectBox.height / 2) - (sessionBox.y + sessionBox.height / 2)) < 12, 'project and session selectors must share a row')
 
   // Main interface stays operable while the unmasked panel is open.
   await page.getByRole('link', { name: '最近' }).click()

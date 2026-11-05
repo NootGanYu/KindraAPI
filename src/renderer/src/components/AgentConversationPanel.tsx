@@ -140,10 +140,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
 
   return <div className="agent-dock-panel">
     <header className="agent-dock-header">
-      <div>
-        <Typography.Title level={5}>项目 Agent</Typography.Title>
-        <Typography.Text type="secondary">{projectName}</Typography.Text>
-      </div>
+      <Typography.Title level={5} className="agent-dock-title">项目 Agent</Typography.Title>
       <Space wrap size={8}>
         <Tooltip title="整轮撤销与记录"><Button size="small" type={view === 'undo' ? 'primary' : 'default'} aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={() => setView(view === 'undo' ? 'chat' : 'undo')} /></Tooltip>
         <Tooltip title="项目候选汇总"><Button size="small" type={view === 'candidates' ? 'primary' : 'default'} aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => setView(view === 'candidates' ? 'chat' : 'candidates')} /></Tooltip>
@@ -153,7 +150,8 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     </header>
     <div className="agent-dock-controls">
       <Space wrap size={8}>
-        <Select aria-label="Agent 会话" size="small" style={{ minWidth: 160, maxWidth: 240 }} placeholder="选择会话" value={selected ?? undefined} onChange={setSelected} options={conversations.map(item => ({ value: item.conversation_id, label: item.title }))} />
+        <Typography.Text type="secondary" className="agent-dock-project">{projectName}</Typography.Text>
+        <Select aria-label="Agent 会话" size="small" style={{ minWidth: 140, maxWidth: 200 }} placeholder="选择会话" value={selected ?? undefined} onChange={setSelected} options={conversations.map(item => ({ value: item.conversation_id, label: item.title }))} />
         <Tooltip title="新建会话"><Button size="small" aria-label="新建会话" icon={<PlusOutlined />} onClick={() => void newConversation()} /></Tooltip>
         <Tooltip title="删除会话"><Button size="small" aria-label="删除会话" icon={<DeleteOutlined />} disabled={!conversation || running} onClick={remove} /></Tooltip>
       </Space>
