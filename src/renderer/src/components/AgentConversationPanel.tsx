@@ -100,6 +100,13 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     setConversations(previous => [created, ...previous.filter(item => item.conversation_id !== created.conversation_id)])
     return created
   }
+  async function respondApproval(activityId: string, decision: 'approved' | 'denied'): Promise<void> {
+    if (!conversation) return
+    setError('')
+    try {
+      unwrap(await window.api.agent.respondToolApproval(projectId, conversation.conversation_id, activityId, decision))
+    } catch (e) { setError((e as Error).message) }
+  }
   async function send(): Promise<void> {
     if (!text.trim() || busy || running) return
     setBusy(true); setError('')
@@ -204,8 +211,8 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     {running && conversation?.connection && <Alert type="info" message={`本轮固定连接：${conversation.connection.name} · ${conversation.connection.model}；修改配置不影响本轮。`} />}
     {view === 'chat' ? <>
       <div className="agent-messages" role="log" aria-label="Agent 会话消息">
-        {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会连续读取项目对象，把每次工具调用展示在时间线上；只读工具无需逐步确认。</Typography.Text></Empty>}
-        {conversation && <AgentTimeline conversation={conversation} />}
+        {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会连续读取项目对象，把每次工具调用展示在时间线上；只读工具自动执行，本机草稿修改按权限模式等待允许。</Typography.Text></Empty>}
+        {conversation && <AgentTimeline conversation={conversation} onApproval={(activityId, decision) => void respondApproval(activityId, decision)} />}
         {legacyPlanMode && <AgentPlanPanel projectId={projectId} />}
         {conversation?.error && <Alert type="warning" message={conversation.error} />}
         {conversation?.status === 'interrupted' && <Alert type="info" message="上次回复已中断。你可以继续发消息，不会自动重发。" />}

@@ -71,3 +71,7 @@ button.agent-session-title:hover { text-decoration: underline; }
 .agent-tool-error { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-tool-output { max-height: 220px; overflow: auto; margin: 8px 0 4px; padding: 8px; border-radius: 8px; background: rgba(0,0,0,.035); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
 .agent-tool-cursor { font-size: 12px; }
+
+.agent-tool-card.awaiting-approval { border-color: rgba(250,173,20,.7); background: rgba(250,173,20,.06); }
+.agent-tool-diff { border: 1px dashed rgba(160,125,70,.35); background: rgba(160,125,70,.05); }
+.agent-tool-card .ant-btn { margin-top: 2px; }

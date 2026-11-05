@@ -49,12 +49,15 @@ function MessageBody({ message }: { message: AgentMessage }): JSX.Element {
 }
 
 /** Renders one user turn, its ordered tool cards, then the final answer. */
-export default function AgentTimeline({ conversation }: { conversation: AgentConversation }): JSX.Element {
+export default function AgentTimeline({ conversation, onApproval }: {
+  conversation: AgentConversation
+  onApproval?: (activityId: string, decision: 'approved' | 'denied') => void
+}): JSX.Element {
   return <div className="agent-timeline" aria-label="Agent 时间线">
     {groupTurns(conversation).map(turn => <Fragment key={turn.turn_id}>
       {turn.user && <article className="agent-message user"><MessageBody message={turn.user} /></article>}
       {turn.activities.length > 0 && <section className="agent-timeline-tools" aria-label="工具调用">
-        {turn.activities.map(activity => <AgentToolCard key={activity.activity_id} activity={activity} />)}
+        {turn.activities.map(activity => <AgentToolCard key={activity.activity_id} activity={activity} onApproval={onApproval} />)}
       </section>}
       {turn.assistant && <article className={`agent-message ${turn.assistant.role}`}><MessageBody message={turn.assistant} /></article>}
     </Fragment>)}
