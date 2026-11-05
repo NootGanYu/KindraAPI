@@ -4,6 +4,7 @@ import type { MenuProps } from 'antd'
 import {
   ApiOutlined,
   DownOutlined,
+  FolderAddOutlined,
   FolderOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -12,6 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../store'
 import { useRefreshFeedback } from '../useRefreshFeedback'
+import ProjectImportModal from './ProjectImportModal'
 
 export default function TopBar(): JSX.Element {
   const { message } = AntApp.useApp()
@@ -28,6 +30,7 @@ export default function TopBar(): JSX.Element {
   const saveMcp = useApp((s) => s.saveMcp)
 
   const [projectModal, setProjectModal] = useState(false)
+  const [importModal, setImportModal] = useState(false)
   const [newName, setNewName] = useState('')
   const { refreshing, run: runRefreshFeedback } = useRefreshFeedback()
 
@@ -72,7 +75,7 @@ export default function TopBar(): JSX.Element {
     })),
     { type: 'divider' as const },
     { key: '__new', label: '新建项目' },
-    { key: '__import', label: '导入项目（后续支持）' }
+    { key: '__import', label: '导入项目', icon: <FolderAddOutlined /> }
   ]
 
   return (
@@ -84,9 +87,23 @@ export default function TopBar(): JSX.Element {
           </span>
           <span>KindraAPI</span>
         </div>
-        <button className="new-project" onClick={() => setProjectModal(true)}>
-          <PlusOutlined style={{ fontSize: 11 }} /> 新建/导入项目
-        </button>
+        <Dropdown
+          trigger={['click']}
+          menu={{
+            items: [
+              { key: 'new', label: '新建项目', icon: <PlusOutlined /> },
+              { key: 'import', label: '导入项目', icon: <FolderAddOutlined /> }
+            ],
+            onClick: ({ key }) => {
+              if (key === 'new') setProjectModal(true)
+              if (key === 'import') setImportModal(true)
+            }
+          }}
+        >
+          <button className="new-project">
+            <PlusOutlined style={{ fontSize: 11 }} /> 新建/导入项目
+          </button>
+        </Dropdown>
       </div>
 
       <div className="top-center">
@@ -96,7 +113,7 @@ export default function TopBar(): JSX.Element {
             items: projectItems,
             onClick: ({ key }) => {
               if (key === '__new') setProjectModal(true)
-              else if (key === '__import') message.info('导入项目将在后续里程碑支持')
+              else if (key === '__import') setImportModal(true)
               else void selectProject(key).catch((error: Error) => message.error(error.message))
             }
           }}
@@ -165,9 +182,11 @@ export default function TopBar(): JSX.Element {
           onPressEnter={() => void submitProject()}
         />
         <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-          导入已有项目数据将在后续里程碑支持。
+          创建空白项目；如需导入 Postman / OpenAPI 数据，请使用“导入项目”。
         </div>
       </Modal>
+
+      <ProjectImportModal open={importModal} onClose={() => setImportModal(false)} />
     </header>
   )
 }

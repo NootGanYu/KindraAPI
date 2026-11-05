@@ -15,6 +15,8 @@ import type {
   McpStatus,
   McpToolInfo,
   Project,
+  ProjectImportRequest,
+  ProjectImportResult,
   ResponseExample,
   Result,
   SendRecord,
@@ -72,6 +74,7 @@ interface AppState {
   selectProject: (projectId: string) => Promise<void>
   createProject: (name: string) => Promise<void>
   createProjectOnly: (name: string) => Promise<Project>
+  importProject: (input: ProjectImportRequest) => Promise<ProjectImportResult>
   previewTargetTransfer: (
     id: string,
     destinationProjectId: string,
@@ -412,6 +415,19 @@ export const useApp = create<AppState>((set, get) => ({
     const projects = unwrap(await window.api.projects.list())
     set({ projects })
     return project
+  },
+
+  importProject: async (input) => {
+    const result = unwrap(await window.api.projects.importFile(input))
+    const projects = unwrap(await window.api.projects.list())
+    set({ projects })
+    if (get().project?.project_id === result.project.project_id) {
+      set({ project: result.project })
+      await get().reloadTargets()
+    } else {
+      await get().selectProject(result.project.project_id)
+    }
+    return result
   },
 
   previewTargetTransfer: async (id, destinationProjectId, mode) => {

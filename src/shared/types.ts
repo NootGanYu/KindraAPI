@@ -349,6 +349,39 @@ export interface Project {
   default_api_status_id?: string
 }
 
+/** 项目导入支持的外部格式。 */
+export type ProjectImportFormat = 'openapi' | 'postman'
+
+export interface ProjectImportInspection {
+  format: ProjectImportFormat
+  format_label: string
+  /** 文件规范里的标题，用于默认项目名。 */
+  title: string
+  suggested_name: string
+  api_count: number
+  folder_count: number
+  warnings: string[]
+}
+
+export interface ProjectImportRequest {
+  mode: 'new' | 'existing'
+  file_path: string
+  /** mode=new 时的项目名；留空使用文件名或文档标题。 */
+  name?: string
+  /** mode=existing 时的目标项目。 */
+  project_id?: string
+}
+
+export interface ProjectImportResult {
+  project: Project
+  format: ProjectImportFormat
+  format_label: string
+  created_project: boolean
+  api_count: number
+  folder_count: number
+  warnings: string[]
+}
+
 export interface EnvVar {
   current_value: string
   initial_value: string

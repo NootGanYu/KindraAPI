@@ -46,7 +46,10 @@ const api = {
     create: (name: string) => invoke('project:create', name),
     save: (project: unknown) => invoke('project:save', project),
     saveApiStatuses: (projectId: string, statuses: unknown, defaultId: string) => invoke('project:api-statuses', projectId, statuses, defaultId),
-    ensureDefault: () => invoke('project:ensureDefault')
+    ensureDefault: () => invoke('project:ensureDefault'),
+    pickImportFile: () => invoke('project:import:pick'),
+    inspectImport: (filePath: string) => invoke('project:import:inspect', filePath),
+    importFile: (input: unknown) => invoke('project:import', input)
   },
 
   targets: {

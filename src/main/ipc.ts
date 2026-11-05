@@ -25,6 +25,7 @@ import type {
   ModelSchema,
   ModelType,
   Project,
+  ProjectImportRequest,
   RequestModel,
   Result,
   SendRecord,
@@ -32,6 +33,7 @@ import type {
   Target
 } from '@shared/types'
 import * as store from './storage/store'
+import { inspectProjectImport, importProjectFile } from './project/importer'
 import { withTargetChanges } from './storage/changes'
 import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
@@ -143,6 +145,23 @@ export function registerIpc(): void {
   handle('project:save', (project: Project) => store.saveProject(project))
   handle('project:api-statuses', (projectId: string, statuses: ApiStatus[], defaultId: string) => store.saveApiStatuses(projectId, statuses, defaultId), true)
   handle('project:ensureDefault', () => store.ensureDefaultProject())
+  handle('project:import:pick', async () => {
+    const picked = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'API 导入文件', extensions: ['json'] }]
+    })
+    const filePath = picked.canceled ? undefined : picked.filePaths[0]
+    if (!filePath) return null
+    let size = 0
+    try {
+      size = fs.statSync(filePath).size
+    } catch {
+      size = 0
+    }
+    return { path: filePath, name: path.basename(filePath), size }
+  })
+  handle('project:import:inspect', (filePath: string) => inspectProjectImport(filePath))
+  handle('project:import', (input: ProjectImportRequest) => importProjectFile(input), true)
 
   handle('target:list', (projectId: string) => store.listTargets(projectId))
   handle('target:get', (projectId: string, targetId: string) => store.getTarget(projectId, targetId))

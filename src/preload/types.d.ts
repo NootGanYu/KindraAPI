@@ -43,6 +43,9 @@ import type {
   ModelSchema,
   ModelSummary,
   Project,
+  ProjectImportInspection,
+  ProjectImportRequest,
+  ProjectImportResult,
   RequestModel,
   Result,
   SendRecord,
@@ -116,6 +119,9 @@ export interface ApiBridge {
     save(project: Project): Promise<Result<Project>>
     saveApiStatuses(projectId: string, statuses: ApiStatus[], defaultId: string): Promise<Result<Project>>
     ensureDefault(): Promise<Result<Project>>
+    pickImportFile(): Promise<Result<SelectedFile | null>>
+    inspectImport(filePath: string): Promise<Result<ProjectImportInspection>>
+    importFile(input: ProjectImportRequest): Promise<Result<ProjectImportResult>>
   }
   targets: {
     onChanged(callback: (event: TargetChangeEvent) => void): () => void

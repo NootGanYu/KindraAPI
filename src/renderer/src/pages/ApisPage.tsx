@@ -50,6 +50,7 @@ import ApiDescriptionDialog from '../components/ApiDescriptionDialog'
 import TargetVersionDrawer from '../components/TargetVersionDrawer'
 import CodeGenDialog from '../components/CodeGenDialog'
 import EnvironmentModal from '../components/EnvironmentModal'
+import ProjectImportModal from '../components/ProjectImportModal'
 import { TargetEditScope, useTargetEditLock } from '../components/TargetEditScope'
 
 const ENTRIES = [
@@ -93,6 +94,7 @@ export default function ApisPage(): JSX.Element {
   const syncNotice = useApp(s => s.syncNotice)
 
   const [creating, setCreating] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('调试')
   const [splitDir, setSplitDir] = useState<SplitDir>('vertical')
   const [debugToolbar, setDebugToolbar] = useState<HTMLDivElement | null>(null)
@@ -564,7 +566,10 @@ export default function ApisPage(): JSX.Element {
                 </>}
             </div> : null}
             {!active ? (
-              <Welcome onCreate={() => void handleCreate('0', 'api')} />
+              <Welcome
+                onCreate={() => void handleCreate('0', 'api')}
+                onImport={() => setImportOpen(true)}
+              />
             ) : active.target_type === 'folder' ? (
               <FolderInfo key={editorKey} target={active} />
             ) : (
@@ -823,6 +828,7 @@ export default function ApisPage(): JSX.Element {
           setEnvModalInitial(undefined)
         }}
       />
+      <ProjectImportModal open={importOpen} onClose={() => setImportOpen(false)} />
     </div></TargetEditScope>
   )
 }
@@ -858,7 +864,7 @@ function ModePlaceholder({ mode, draft }: { mode: Exclude<Mode, '调试'>; draft
   )
 }
 
-function Welcome({ onCreate }: { onCreate: () => void }): JSX.Element {
+function Welcome({ onCreate, onImport }: { onCreate: () => void; onImport: () => void }): JSX.Element {
   const { message } = AntApp.useApp()
   return (
     <div className="surface welcome">
@@ -874,11 +880,11 @@ function Welcome({ onCreate }: { onCreate: () => void }): JSX.Element {
             <div
               key={entry.label}
               className="entry"
-              onClick={() =>
-                entry.label === 'HTTP'
-                  ? onCreate()
-                  : message.info(`${entry.label} 将在后续里程碑支持`)
-              }
+              onClick={() => {
+                if (entry.label === 'HTTP') onCreate()
+                else if (entry.label === '导入项目') onImport()
+                else message.info(`${entry.label} 将在后续里程碑支持`)
+              }}
             >
               <span className="entry-icon" style={{ background: entry.color }}>
                 {entry.icon}
