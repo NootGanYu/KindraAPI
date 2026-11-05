@@ -50,12 +50,31 @@ export interface AgentPlanStep {
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'paused' | 'unknown' | 'cancelled' | 'awaiting_approval'
   result?: unknown
 }
+export type AgentPermissionMode = 'ask' | 'auto' | 'bypass'
+export type AgentSelectionSource = 'auto' | 'explicit'
+export interface AgentProposedEffects {
+  extra_requests?: Array<{ method: string; url: string; maxCalls?: number }>
+  write_variables?: boolean
+  save_response?: boolean
+  save_definitions?: boolean
+}
+export interface AgentSelectedObject {
+  kind: 'api' | 'flow' | 'case'
+  id: string
+  case_id?: string
+}
 export interface AgentPlan {
   can_resume?: boolean
   /** Entry preset used for legacy static plans; never a runtime dispatch gate. */
   mode?: string
   /** Continuation plans bind read-derived values after approval. */
   continuation?: boolean
+  /** How the objects included in this plan were chosen. */
+  selection_source?: AgentSelectionSource
+  /** Server-enforced permission mode selected for this turn. */
+  permission_mode?: AgentPermissionMode
+  /** Side effects proposed by the model and authorized by plan approval. */
+  proposed_effects?: AgentProposedEffects
   /** Incremented whenever unapproved scope is requested; stale approvals are rejected. */
   approval_revision?: number
   plan_id: string
@@ -66,7 +85,7 @@ export interface AgentPlan {
   target_ids?: string[]
   flow_ids?: string[]
   flows?: Array<{ flow_id: string; name: string }>
-  targets?: Array<{ target_id: string; name: string; source: 'draft' | 'saved' }>
+  targets?: Array<{ target_id: string; name: string; source: 'draft' | 'saved'; new_object?: boolean }>
   environment_id: string | null
   environment_name: string
   goal: string
@@ -84,8 +103,14 @@ export interface AgentPlanEvent { project_id: string; plan_id: string; plan: Age
 export interface TaskPlanInput {
   goal: string
   connectionId?: string
-  targetIds: string[]
+  /** Explicit selection remains supported; auto selection asks the model to choose from the directory. */
+  targetIds?: string[]
   flowIds?: string[]
+  selection?: AgentSelectionSource
+  permission_mode?: AgentPermissionMode
+  allowCreate?: boolean
+  /** Currently open object, provided only as an id; never a definition. */
+  activeTargetId?: string
   environmentId?: string
   execution?: AgentExecutionPermissions
   drafts?: Record<string, Target>

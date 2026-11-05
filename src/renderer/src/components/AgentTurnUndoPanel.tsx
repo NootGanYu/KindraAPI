@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Drawer, Radio, Space, Tag } from 'antd'
+import { Alert, App, Button, Card, Drawer, Radio, Space, Tag, Tooltip } from 'antd'
+import { UndoOutlined } from '@ant-design/icons'
 import type { AgentTurnUndo, AgentTurnSummary } from '@shared/agentTurnUndo'
 import type { AgentConflictChoice } from '@shared/agentDraft'
 import type { Result } from '@shared/types'
@@ -16,7 +17,7 @@ export default function AgentTurnUndoPanel({ projectId }: { projectId: string })
   async function preview(planId: string): Promise<void> { setBusy(true);try { await flushAgentDrafts();setReview(unwrap(await window.api.agent.previewTurnUndo(projectId,planId)));setChoices({});setError('');await load() }catch(e){setError((e as Error).message)}finally{setBusy(false)} }
   async function apply(): Promise<void> { if(!review)return;setBusy(true);try { await flushAgentDrafts();setReview(unwrap(await window.api.agent.applyTurnUndo(projectId,review.undo_id,review.review_id,choices)));setChoices({});setError('');await load() }catch(e){setError((e as Error).message)}finally{setBusy(false)} }
   function remove(): void { modal.confirm({title:'删除本项目全部 Agent 记录？',content:'会话、计划、工具结果、Agent 报告、候选、Agent 草稿、墓碑和撤销审计将从本机删除。正式接口、Flow、手动运行报告、纯人工草稿及模型连接保留。已删除记录无法恢复。',okText:'删除全部 Agent 记录',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{ await flushAgentDrafts();unwrap(await window.api.agent.deleteProjectAgentRecords(projectId));setOpen(false) }}) }
-  return <><Button onClick={()=>setOpen(true)}>整轮撤销与记录</Button><Drawer title="整轮本地撤销" width="92vw" open={open} onClose={()=>setOpen(false)}>
+  return <><Tooltip title="整轮撤销与记录"><Button aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={()=>setOpen(true)} /></Tooltip><Drawer title="整轮本地撤销" width="92vw" open={open} onClose={()=>setOpen(false)}>
     <Alert type="warning" message="仅撤销本地草稿修改，不会隐式正式保存。远端请求及外部副作用无法撤销；逐对象处理，不保证整批原子回滚。" />
     <Space wrap style={{margin:'16px 0'}}><Button danger onClick={remove}>删除本项目 Agent 记录</Button><Button onClick={()=>void load()}>刷新记录</Button></Space>
     {error&&<Alert type="error" message={error}/>}

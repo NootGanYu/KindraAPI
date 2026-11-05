@@ -1,20 +1,28 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel, closeAgentPanel, submitAgentGoal } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-case-ui-'))
 let app, pid, targetId, originalVersion, saveOnly = false
 const apiCase = { case_id: 'ui-case', name: '订单成功用例', is_enabled: 1, override: { url: 'https://example.invalid/agent' }, assertions: [{ assertion_id: 'status', kind: 'status', op: 'equals', expected: '201', is_enabled: 1 }] }
 const server = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
-  const body = JSON.parse(raw), probe = body.tools?.[0]?.function.name === 'kindra_capability_probe'
-  const call = probe ? { name: 'kindra_capability_probe', args: { token: 'kindra-probe' } } : saveOnly ? { name: 'save_api', args: { project_id: pid, target_id: targetId } } : { name: 'propose_api_change', args: { project_id: pid, target_id: targetId, patch: { cases: [apiCase] } } }
-  const message = body.tools ? { tool_calls: [{ id: 'case', type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }] } : { content: saveOnly ? '用例正式保存完成。' : '用例候选已创建，正式定义未保存。' }
+  const body = JSON.parse(raw), tools = (body.tools ?? []).map(tool => tool.function?.name)
+  let message
+  if (tools.includes('kindra_capability_probe')) message = { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] }
+  else if (tools.includes('propose_task_plan')) {
+    const planned = saveOnly
+      ? { selected_objects: [{ kind: 'api', id: targetId }], proposed_effects: { save_definitions: true }, steps: [{ step_id: 'save', operation: 'save_api', binding: 'static', target_id: targetId, depends_on: [] }] }
+      : { selected_objects: [{ kind: 'api', id: targetId }], steps: [{ step_id: 'case-edit', operation: 'propose_api_change', binding: 'deferred', target_id: targetId, depends_on: [], intent: '修改用例覆盖与断言', allowed_changes: ['cases'] }] }
+    message = { tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify(planned) } }] }
+  } else if (!saveOnly && tools.includes('propose_api_change')) message = { tool_calls: [{ id: 'case', type: 'function', function: { name: 'propose_api_change', arguments: JSON.stringify({ project_id: pid, target_id: targetId, step_id: 'case-edit', depends_on: [], patch: { cases: [apiCase] } }) } }] }
+  else message = { content: saveOnly ? '用例正式保存完成。' : '用例候选已创建，正式定义未保存。' }
   res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
 })
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   app = await _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData, KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1' } })
-  const page = await app.firstWindow(); await page.getByRole('link', { name: 'Agent' }).waitFor()
+  const page = await app.firstWindow(); await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   ;({ pid, targetId, originalVersion } = await page.evaluate(async ({ base, apiCase }) => {
     const p = (await window.api.projects.ensureDefault()).data
     const target = (await window.api.targets.create(p.project_id, '0', 'api')).data
@@ -25,17 +33,14 @@ const server = http.createServer(async (req, res) => {
     await window.api.agent.saveConnection({ name: '用例审阅', base_url: base, model: 'case-ui', protocol: 'chat-completions' }); await window.api.agent.testConnection()
     return { pid: p.project_id, targetId: target.target_id, originalVersion }
   }, { base: `http://127.0.0.1:${server.address().port}/v1`, apiCase }))
-  await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('link', { name: /APIs$/ }).click()
+  await openAgentPanel(page); await page.getByRole('link', { name: /APIs$/ }).click()
   await page.getByText('用例审阅接口', { exact: true }).first().click()
-  await page.getByRole('link', { name: 'Agent' }).click()
-  await page.getByRole('button', { name: '修改草稿', exact: true }).click()
-  await page.getByLabel('计划目标').fill('把订单用例覆盖地址改为 agent，状态断言改为201')
-  await page.getByRole('button', { name: '生成草稿修改计划', exact: true }).click()
+  await submitAgentGoal(page, '把订单用例覆盖地址改为 agent，状态断言改为201')
   await page.getByRole('button', { name: '批准修改计划', exact: true }).click()
   await page.getByText('用例候选已创建，正式定义未保存。', { exact: true }).waitFor()
   const before = await page.evaluate(async ({ pid, targetId }) => (await window.api.targets.get(pid, targetId)).data, { pid, targetId })
   assert.equal(before.cases[0].assertions[0].expected, '200')
-  await page.locator('.ant-drawer-close').click(); await page.getByRole('link', { name: /APIs$/ }).click()
+  await closeAgentPanel(page); await page.getByRole('link', { name: /APIs$/ }).click()
   await page.getByText('接口用例', { exact: true }).click()
   await page.getByPlaceholder('URL（留空继承）').fill('https://example.invalid/human')
   await page.getByPlaceholder('URL（留空继承）').press('Tab')
@@ -51,12 +56,10 @@ const server = http.createServer(async (req, res) => {
   assert.equal(await page.getByPlaceholder('URL（留空继承）').inputValue(), 'https://example.invalid/agent')
   assert.equal(await page.getByPlaceholder('期望值').inputValue(), '201')
   saveOnly = true
-  await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('button', { name: '修改并保存', exact: true }).click()
-  await page.getByLabel('计划目标').fill('保存已解决冲突的用例')
-  await page.getByRole('button', { name: '生成修改与保存计划', exact: true }).click()
+  await submitAgentGoal(page, '保存已解决冲突的用例')
   await page.getByRole('button', { name: '批准修改与保存计划', exact: true }).click()
   await page.getByText('用例正式保存完成。', { exact: true }).waitFor()
-  await page.locator('.ant-drawer-close').click(); await page.getByRole('link', { name: /APIs$/ }).click()
+  await closeAgentPanel(page); await page.getByRole('link', { name: /APIs$/ }).click()
   await page.evaluate(async ({ pid, targetId }) => {
     const target = (await window.api.targets.get(pid, targetId)).data
     target.custom_attributes = { owner: '新负责人', later: '恢复后移除' }

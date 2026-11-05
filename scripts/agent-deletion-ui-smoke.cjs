@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-deletion-ui-'))
 let app, pid, targetId, flowId
 const server = http.createServer(async (req, res) => {
@@ -12,7 +13,7 @@ const server = http.createServer(async (req, res) => {
 const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData, KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1' } })
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  app = await launch(); let page = await app.firstWindow(); await page.getByRole('link', { name: 'Agent' }).waitFor()
+  app = await launch(); let page = await app.firstWindow(); await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   const seed = await page.evaluate(async base => {
     const p = (await window.api.projects.ensureDefault()).data
     const target = (await window.api.targets.create(p.project_id, '0', 'api')).data
@@ -22,7 +23,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   }, `http://127.0.0.1:${server.address().port}/v1`)
   pid = seed.pid; targetId = seed.targetId
   await page.evaluate(async ({pid, targetId}) => { const p = await window.api.agent.proposeEditPlan(pid, {goal:'修改说明',targetId}); if (!p.ok) throw new Error(p.error); const a = await window.api.agent.approvePlan(pid,p.data.plan_id); if (!a.ok) throw new Error(a.error) }, seed)
-  await page.getByRole('link', { name: 'Agent' }).click()
+  await openAgentPanel(page)
   await page.getByRole('button', { name: '项目候选汇总', exact: true }).click()
   await page.getByText('已正式保存', { exact: true }).waitFor()
   await page.evaluate(async ({pid,targetId}) => { const r = await window.api.targets.delete(pid,targetId); if (!r.ok) throw new Error(r.error) },seed)
@@ -33,7 +34,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   await page.getByRole('button', { name: '不采纳', exact: true }).click()
   await page.getByText('未采纳', { exact: true }).waitFor()
   await app.evaluate(({app}) => app.exit(0)); app = await launch(); page = await app.firstWindow()
-  await page.getByRole('link', { name: 'Agent' }).click()
+  await openAgentPanel(page)
   await page.getByRole('button', { name: '项目候选汇总', exact: true }).click()
   await page.getByRole('button', { name: '审阅候选', exact: true }).click()
   await page.getByText('未采纳', { exact: true }).waitFor()

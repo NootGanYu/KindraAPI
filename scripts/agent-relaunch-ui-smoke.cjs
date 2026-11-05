@@ -5,6 +5,7 @@ const os = require('node:os')
 const path = require('node:path')
 const http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-relaunch-ui-'))
 const marker = path.join(userData, 'relaunch.json')
 let app
@@ -23,7 +24,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   let page = await launch()
-  await page.getByRole('link', { name: 'Agent' }).waitFor()
+  await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   await page.evaluate(async base => {
     const project = (await window.api.projects.ensureDefault()).data
     const connection = (await window.api.agent.createConnection({ name: '回环', base_url: base, model: 'loop', protocol: 'chat-completions' })).data

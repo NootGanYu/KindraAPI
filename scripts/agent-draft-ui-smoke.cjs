@@ -1,18 +1,24 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel, closeAgentPanel, submitAgentGoal } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-draft-ui-'))
 let app, pid, targetId, manualId, hold = false
 const server = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
-  const body = JSON.parse(raw), name = body.tools?.[0]?.function.name
-  if (hold && !name) { res.setHeader('Content-Type', 'text/event-stream'); res.write('data: {"choices":[{"delta":{"content":"进行中"}}]}\n\n'); return }
-  const message = name ? { tool_calls: [{ id: 'one', type: 'function', function: { name, arguments: JSON.stringify(name === 'kindra_capability_probe' ? { token: 'kindra-probe' } : { project_id: pid, target_id: targetId, patch: { description: 'Agent 候选说明', request: { query: { parameter: [{ param_id: 'second', key: 'duplicate', value: '', is_checked: 1 }] } } } }) } }] } : { content: '修改提案已创建，等待审阅。' }
+  const body = JSON.parse(raw), tools = (body.tools ?? []).map(tool => tool.function?.name)
+  const patch = { description: 'Agent 候选说明', request: { query: { parameter: [{ param_id: 'second', key: 'duplicate', value: '', is_checked: 1 }] } } }
+  if (hold && !tools.length) { res.setHeader('Content-Type', 'text/event-stream'); res.write('data: {"choices":[{"delta":{"content":"进行中"}}]}\n\n'); return }
+  let message
+  if (tools.includes('kindra_capability_probe')) message = { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] }
+  else if (tools.includes('propose_task_plan')) message = { tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify({ selected_objects: [{ kind: 'api', id: targetId }], steps: [{ step_id: 'edit', operation: 'propose_api_change', binding: 'deferred', target_id: targetId, depends_on: [], intent: '修改说明', allowed_changes: ['description', 'request.query.parameter'] }] }) } }] }
+  else if (tools.includes('propose_api_change')) message = { tool_calls: [{ id: 'one', type: 'function', function: { name: 'propose_api_change', arguments: JSON.stringify({ project_id: pid, target_id: targetId, step_id: 'edit', depends_on: [], patch }) } }] }
+  else message = { content: '修改提案已创建，等待审阅。' }
   res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
 })
 async function launch() {
   app = await _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData, KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1' } })
-  const page = await app.firstWindow(); await page.getByRole('link', { name: 'Agent' }).waitFor(); return page
+  const page = await app.firstWindow(); await page.getByRole('button', { name: '打开 Agent' }).waitFor(); return page
 }
 async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); app = null } }
 ;(async () => {
@@ -48,16 +54,10 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.locator('.project-switch').filter({ hasText: info.originalName }).waitFor()
   await page.evaluate(async ({ pid, backgroundId }) => window.api.agent.cancelMessage(pid, backgroundId), { pid, backgroundId })
   hold = false
-  await page.getByRole('link', { name: 'Agent' }).click()
-  await page.getByRole('button', { name: '修改草稿', exact: true }).click()
-  await page.getByLabel('计划目标').fill('把接口说明改为 Agent 候选说明')
-  await page.getByRole('combobox', { name: '计划接口' }).click()
-  await page.locator('.ant-select-item-option').filter({ hasText: 'Agent 验收接口' }).click()
-  await page.getByRole('combobox', { name: '计划接口' }).press('Escape')
-  await page.getByRole('button', { name: '生成草稿修改计划', exact: true }).click()
+  await submitAgentGoal(page, '把 Agent 验收接口的说明改为 Agent 候选说明')
   await page.getByRole('button', { name: '批准修改计划', exact: true }).click()
   await page.getByText('修改提案已创建，等待审阅。', { exact: true }).waitFor()
-  await page.locator('.ant-drawer-close').click()
+  await closeAgentPanel(page)
   await page.getByRole('link', { name: /APIs$/ }).click()
   await page.getByText('Agent 验收接口', { exact: true }).first().click()
   await page.getByRole('button', { name: '审阅 Agent 版本', exact: true }).click()

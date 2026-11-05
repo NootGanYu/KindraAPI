@@ -329,7 +329,8 @@ async function main(): Promise<void> {
     store.saveFlow(pid, flow)
     planSteps = [{ step_id: 'read-flow', operation: 'read_flow', binding: 'static', flow_id: flow.flow_id, depends_on: [] }]
     const flowPlan = await commands.proposeTaskPlan(pid, { goal: '读取 Flow 快照', targetIds: [], flowIds: [flow.flow_id], environmentId: env.env_id })
-    const flowDone = await commands.approvePlan(pid, flowPlan.plan_id, flowPlan.approval_revision ?? 1)
+    // Ask mode auto-executes read-only plans; write plans still use the explicit approval path.
+    const flowDone = flowPlan.status === 'completed' ? flowPlan : await commands.approvePlan(pid, flowPlan.plan_id, flowPlan.approval_revision ?? 1)
     assert.equal(flowDone.status, 'completed', JSON.stringify(flowDone.steps.map(step => ({ id: step.step_id, status: step.status, error: step.error }))))
     assert.equal((flowDone.steps[0].result as any).flow.events[0].name, '等待节点')
     console.log(protocol, 'PASS read_flow returns the approved frozen Flow snapshot')
