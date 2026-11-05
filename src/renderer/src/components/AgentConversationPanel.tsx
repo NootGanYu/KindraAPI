@@ -39,7 +39,6 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const end = useRef<HTMLDivElement>(null)
   const conversation = conversations.find(item => item.conversation_id === selected)
   const running = conversation?.status === 'running'
-  const permission = permissionOptions.find(option => option.value === permissionMode)!
 
   useEffect(() => {
     let mounted = true
@@ -183,9 +182,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
         <div className="agent-compose-bar">
           <Space size={4} wrap>
-            <Tooltip title={permission.description}>
-              <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 96 }} />
-            </Tooltip>
+            <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 96 }} />
             <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 230 }} />
           </Space>
           <Space size={8}>

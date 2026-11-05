@@ -75,6 +75,9 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
     assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, `legacy mode button ${name} must be removed`)
   }
   assert(await page.locator('.agent-compose-bar').getByRole('combobox', { name: '权限模式' }).isVisible())
+  await page.locator('.agent-compose-bar .ant-select').filter({ hasText: '询问权限' }).locator('.ant-select-selector').hover()
+  await page.waitForTimeout(250)
+  assert.equal(await page.locator('.ant-tooltip').filter({ hasText: '仅全只读计划自动执行' }).count(), 0, 'permission hover must not cover the dropdown')
   assert(await page.locator('.agent-compose-bar').getByRole('combobox', { name: '模型连接' }).isVisible())
   assert.equal(await page.locator('.agent-dock-controls').getByRole('combobox', { name: '权限模式' }).count(), 0, 'permission selector must sit in the bottom bar')
   assert(await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).isVisible())
