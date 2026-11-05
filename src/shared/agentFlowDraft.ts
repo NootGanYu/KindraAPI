@@ -16,6 +16,6 @@ export interface AgentFlowCandidate extends Omit<AgentCandidate, 'patch' | 'targ
   base: Flow
   proposal: Flow
   merge?: Omit<AgentCandidateMerge, 'base' | 'proposal' | 'current' | 'result'> & { base?: Flow; proposal?: Flow; current: Flow; result: Flow }
-  application?: { before: Flow; after: Flow; undone?: boolean }
+  application?: { before: Flow; after: Flow; undone?: boolean; order?: number }
 }
-export interface AgentFlowDraftEvent { project_id: string; flow_id: string; draft?: AgentFlowDraft; previous?: Flow; saved_revision?: string }
+export interface AgentFlowDraftEvent { records_deleted?: boolean; project_id: string; flow_id: string; draft?: AgentFlowDraft; previous?: Flow; saved_revision?: string }

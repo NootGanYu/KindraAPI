@@ -18,6 +18,12 @@ const subscribe = (
 
 const api = {
   agent: {
+    cancelTurnUndo: (pid: string, id: string) => invoke('agent:cancelTurnUndo', pid, id),
+    listUndoTurns: (pid: string) => invoke('agent:listUndoTurns', pid),
+    listTurnUndos: (pid: string) => invoke('agent:listTurnUndos', pid),
+    previewTurnUndo: (pid: string, planId: string) => invoke('agent:previewTurnUndo', pid, planId),
+    applyTurnUndo: (pid: string, id: string, reviewId: string, choices: unknown) => invoke('agent:applyTurnUndo', pid, id, reviewId, choices),
+    deleteProjectAgentRecords: (pid: string) => invoke('agent:deleteProjectAgentRecords', pid),
     getDeletedObject: (pid: string, kind: 'api' | 'flow', id: string) => invoke('agent:getDeletedObject', pid, kind, id),
     restoreDeletedApiDraft: (pid: string, id: string, deletionId: string) => invoke('agent:restoreDeletedApiDraft', pid, id, deletionId),
     saveDeletedApiDraft: (pid: string, id: string, deletionId: string, signature: string) => invoke('agent:saveDeletedApiDraft', pid, id, deletionId, signature),

@@ -1,3 +1,4 @@
+import type { AgentTurnUndo, AgentTurnSummary } from '@shared/agentTurnUndo'
 import type { DeletedObject } from '@shared/agentDeletion'
 import type { FlowVersion } from '@shared/flowSync'
 import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
@@ -94,6 +95,12 @@ export interface SelectedFile {
 
 export interface ApiBridge {
   agent: {
+    cancelTurnUndo(pid: string, id: string): Promise<Result<AgentTurnUndo>>
+    listUndoTurns(pid: string): Promise<Result<AgentTurnSummary[]>>
+    listTurnUndos(pid: string): Promise<Result<AgentTurnUndo[]>>
+    previewTurnUndo(pid: string, planId: string): Promise<Result<AgentTurnUndo>>
+    applyTurnUndo(pid: string, id: string, reviewId: string, choices: Record<string, Record<string, AgentConflictChoice>>): Promise<Result<AgentTurnUndo>>
+    deleteProjectAgentRecords(pid: string): Promise<Result<boolean>>
     getDeletedObject(pid: string, kind: 'api' | 'flow', id: string): Promise<Result<DeletedObject | null>>
     restoreDeletedApiDraft(pid: string, id: string, deletionId: string): Promise<Result<AgentDraft>>
     saveDeletedApiDraft(pid: string, id: string, deletionId: string, signature: string): Promise<Result<AgentDraft>>

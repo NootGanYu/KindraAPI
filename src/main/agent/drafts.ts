@@ -1,6 +1,6 @@
 import { onCaptureDeletedDraft, onDeletedObject } from '../storage/deletedObjects'
 import { listFlowCandidates, getFlowDraft } from './flowDrafts'
-import { nextCandidateNumber } from './candidateSequence'
+import { nextCandidateNumber, nextApplicationOrder } from './candidateSequence'
 import { validateNestedPatch, validateSystemParameterOrigins } from './patchValidation'
 import { validateAgentApiDocumentation } from './apiDocumentation'
 import { mergeDefinitions } from './merge'
@@ -156,7 +156,7 @@ function applyMergedCandidate(candidate: AgentCandidate, current: Target, merge:
     const preview = buildMerge(inverse, current, merge.saved_revision)
     before = buildMerge(inverse, current, merge.saved_revision, Object.fromEntries(preview.conflicts.map(conflict => [conflict.id, 'current' as const]))).result
   }
-  const application = { before, after: merge.result }
+  const application = { before, after: merge.result, order: nextApplicationOrder(candidate.project_id) }
   const result = review(candidate, merge.conflicts.length ? 'conflict' : 'applied', merge.conflicts.length ? '仅冲突字段需要确认，其他字段已合并到草稿。解决前不能正式保存。' : undefined, merge, application)
   emit({ project_id: candidate.project_id, target_id: candidate.target_id, draft, previous: current })
   return result
@@ -371,3 +371,25 @@ export function saveManualDraftOnQuit(pid: string, target: Target, revision: str
 }
 
 export const draftCommands = { getDeletedObject: store.getDeletedObject, restoreDeletedApiDraft, saveDeletedApiDraft, saveManualDraftOnQuit, getDraft, syncEditorDraft, releaseEditorDraft, listAgentDrafts, listCandidates, listProjectCandidates, applyCandidate, restoreCandidate, rejectCandidate, undoCandidate, resolveCandidateUndo, resolveCandidate, stashAgentDrafts }
+
+/** Internal turn undo commit. Validation and conflict choices are checked by the turn command. */
+export function commitTurnUndoApi(pid: string, id: string, target: Target, candidateIds: string[]): void {
+  const draft = getDraft(pid, id), previous = draft.target
+  const saved = store.readTargetSnapshot(pid, id)
+  draft.target = preserveCaseRuns(target, saved.target ?? previous); draft.agent_owned = true; draft.base_revision = saved.revision
+  persistDraft(draft)
+  for (const candidateId of candidateIds) {
+    const candidate = readCandidate(pid, candidateId)
+    review(candidate, 'undone', undefined, undefined, { ...candidate.application!, undone: true })
+  }
+  emit({ project_id: pid, target_id: id, draft, previous })
+}
+
+/** Remove only Agent-owned in-memory editors after local history is deleted. */
+export function forgetProjectAgentDrafts(pid: string, ids: string[]): void {
+  for (const id of ids) {
+    mirrors.delete(`${pid}:${id}`)
+    const saved = store.readTargetSnapshot(pid, id)
+    emit({ project_id: pid, target_id: id, records_deleted: true, ...(saved.target ? { draft: { project_id: pid, target_id: id, target: saved.target, base_revision: saved.revision, agent_owned: false, updated_at: new Date().toISOString() }, saved_revision: saved.revision!, saved_target: saved.target } : {}) })
+  }
+}

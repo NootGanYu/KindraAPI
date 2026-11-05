@@ -368,6 +368,7 @@ export async function shutdownPlans(): Promise<void> {
   const failure = results.find(result => result.status === 'rejected')
   if (failure?.status === 'rejected') throw failure.reason
 }
+export function hasActivePlanOperations(): boolean { return operations.size > 0 }
 export function activePlanCount(): number { return contexts.size }
 const proposeCreateApiPlan = (projectId: string, input: CreateApiPlanInput): Promise<AgentPlan> => {
   planDir(projectId)

@@ -34,6 +34,12 @@ export function connectAgentDraftSync(): () => void {
   })
   const offEvent = window.api.agent.onDraftChanged(event => {
     const state = useApp.getState()
+    if (event.records_deleted && event.project_id === state.project?.project_id && !event.draft) {
+      projectingMain = true
+      try { const drafts = { ...state.drafts }; delete drafts[event.target_id]; useApp.setState({ drafts, tabs: state.tabs.filter(tab => tab.id !== event.target_id) }) }
+      finally { projectingMain = false }
+      return
+    }
     if (!event.draft || event.project_id !== state.project?.project_id || !state.drafts[event.target_id]) return
     const current = state.drafts[event.target_id]
     if (event.previous && stableJson(targetDefinition(current)) !== stableJson(targetDefinition(event.previous))) {

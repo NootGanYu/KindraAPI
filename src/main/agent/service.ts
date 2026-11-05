@@ -1,6 +1,8 @@
-import { flowDraftCommands, stashAgentFlowDrafts } from './flowDrafts'
-import { draftCommands, stashAgentDrafts } from './drafts'
-import { activePlanCount } from './plans'
+import { turnUndoCommands } from './turnUndo'
+import { flowDraftCommands, stashAgentFlowDrafts, listAgentFlowDrafts, forgetProjectAgentFlowDrafts, retainManualFlowDrafts } from './flowDrafts'
+import { draftCommands, stashAgentDrafts, listAgentDrafts, forgetProjectAgentDrafts } from './drafts'
+import * as planLifecycle from './plans'
+import { activePlanCount, hasActivePlanOperations } from './plans'
 import { projectRedactor } from './redaction'
 import { planCommands, shutdownPlans } from './plans'
 import fs from 'node:fs'
@@ -133,5 +135,24 @@ export async function shutdownAgent(): Promise<void> {
   for (const controller of active.values()) controller.abort()
   await Promise.all([shutdownPlans(), ...tasks])
 }
+function assertIdle(): void {
+  if (active.size || tasks.size || activePlanCount() || hasActivePlanOperations()) throw new Error('请先停止或结束活动会话和计划后再操作 Agent 记录')
+}
+function deleteProjectAgentRecords(pid: string): boolean {
+  assertIdle()
+  projectDir(pid)
+  const apiIds = listAgentDrafts(pid).map(d=>d.target_id), flowIds = listAgentFlowDrafts(pid).map(d=>d.flow_id)
+  const retainManual = retainManualFlowDrafts(pid)
+  const conversations = listConversations(pid), plans = planCommands.listPlans(pid)
+  for (const plan of plans) planCommands.deletePlan(pid, plan.plan_id)
+  // The lifecycle service also drops paused resumable contexts when available.
+  ;(planLifecycle as typeof planLifecycle & { clearProjectPlanContexts?: (pid: string) => void }).clearProjectPlanContexts?.(pid)
+  fs.rmSync(path.join(agentRoot(), 'projects', pid), { recursive: true, force: true })
+  retainManual()
+  forgetProjectAgentDrafts(pid, apiIds); forgetProjectAgentFlowDrafts(pid, flowIds)
+  for (const conversation of conversations) for (const listener of listeners) listener({ project_id: pid, conversation_id: conversation.conversation_id, conversation: null })
+  for (const listener of listeners) listener({ project_id: pid, conversation_id: '', conversation: null, records_deleted: true })
+  return true
+}
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

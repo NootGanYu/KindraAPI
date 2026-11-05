@@ -39,6 +39,7 @@ export interface AgentConversation {
   error?: string
 }
 export interface AgentEvent {
+  records_deleted?: boolean
   project_id: string
   conversation_id: string
   conversation: AgentConversation | null
