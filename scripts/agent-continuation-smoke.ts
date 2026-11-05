@@ -10,7 +10,7 @@ import * as store from '../src/main/storage/store'
 import { agentCommands as commands } from '../src/main/agent/service'
 import { onPlanEvent } from '../src/main/agent/plans'
 import { decodeModelRequest, respondModel } from './agent-model-fixture'
-import { createRequest } from '../src/shared/factories'
+import { createFlow, createFlowEvent, createRequest } from '../src/shared/factories'
 
 const protocol = process.argv.includes('--responses') ? 'responses' : 'chat-completions'
 const steps = (targets: { a: string; b: string; bParam: string }) => [
@@ -321,6 +321,18 @@ async function main(): Promise<void> {
     assert.equal(store.listTargetVersions(pid, n.target_id).length, versionsBefore + 1, 'one approved save creates one formal version')
     assert(commands.listCandidates(pid, n.target_id).some(candidate => candidate.step_id === 'derive-b' && candidate.saved_version), 'saved candidate stays linked')
     console.log(protocol, 'PASS independent save slot persists one version without extra approval')
+
+    // read_flow uses the approved frozen Flow snapshot.
+    scenario = 'core'
+    const flow = createFlow(pid, '连续读取 Flow')
+    flow.events = [{ ...createFlowEvent('wait'), name: '等待节点', wait_ms: 5 }]
+    store.saveFlow(pid, flow)
+    planSteps = [{ step_id: 'read-flow', operation: 'read_flow', binding: 'static', flow_id: flow.flow_id, depends_on: [] }]
+    const flowPlan = await commands.proposeTaskPlan(pid, { goal: '读取 Flow 快照', targetIds: [], flowIds: [flow.flow_id], environmentId: env.env_id })
+    const flowDone = await commands.approvePlan(pid, flowPlan.plan_id, flowPlan.approval_revision ?? 1)
+    assert.equal(flowDone.status, 'completed', JSON.stringify(flowDone.steps.map(step => ({ id: step.step_id, status: step.status, error: step.error }))))
+    assert.equal((flowDone.steps[0].result as any).flow.events[0].name, '等待节点')
+    console.log(protocol, 'PASS read_flow returns the approved frozen Flow snapshot')
   } finally { off(); api.closeAllConnections(); model.closeAllConnections(); await new Promise<void>(resolve => api.close(() => resolve())); await new Promise<void>(resolve => model.close(() => resolve())) }
 }
 main().then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1) })
