@@ -51,10 +51,15 @@ export function fillStablePatchRows(base: unknown, patch: unknown): any {
   if (Array.isArray(patch)) {
     const baseRows = Array.isArray(base) ? base as Obj[] : []
     const idKey = stableRowKeys.find(key => patch.length > 0 && patch.every((row: any) => row && typeof row === 'object' && typeof row[key] === 'string') && baseRows.every(row => row && typeof row === 'object' && typeof row[key] === 'string'))
-    if (!idKey) return structuredClone(patch)
+    const partial = idKey ? patch.some((row: any) => { const current = baseRows.find(baseRow => baseRow?.[idKey] === row[idKey]); return !current || Object.keys(current).some(key => key !== 'last_run' && !(key in row)) }) : false
+    if (!idKey || !partial) return structuredClone(patch)
     return patch.map((row: Obj) => {
       const current = baseRows.find(baseRow => baseRow?.[idKey] === row[idKey])
-      return current ? { ...structuredClone(current), ...fillStablePatchRows(current, row) } : structuredClone(row)
+      if (!current) return structuredClone(row)
+      const baseCopy = structuredClone(current)
+      // Runtime-only values never belong to a definition patch.
+      delete baseCopy.last_run
+      return { ...baseCopy, ...fillStablePatchRows(current, row) }
     })
   }
   if (patch && typeof patch === 'object') {

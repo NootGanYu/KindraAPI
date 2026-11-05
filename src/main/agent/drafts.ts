@@ -135,7 +135,8 @@ function mergePatch(base: unknown, patch: unknown): any {
       patch.every(row => row && typeof row === 'object' && typeof row[key] === 'string' && row[key]) &&
       baseRows.every(row => row && typeof row === 'object' && typeof row[key] === 'string' && row[key])
     )
-    if (idKey) {
+    const partial = idKey ? patch.some(row => { const current = baseRows.find(baseRow => baseRow?.[idKey] === (row as any)[idKey]); return !current || Object.keys(current).some(key => key !== 'last_run' && !(key in (row as any))) }) : false
+    if (idKey && partial) {
       // Partial rows addressed by stable ID preserve unrelated/hidden sibling fields and order.
       const source = new Map(baseRows.map(row => [String(row[idKey]), row]))
       for (const row of patch) {
