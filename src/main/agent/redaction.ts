@@ -45,7 +45,9 @@ export function projectRedactor(projectId: string, extra: string[] = [], objects
   }
   for (const environment of store.listEnvironments(projectId)) for (const variable of Object.values(environment.env_var_list)) { collect(variable.current_value, true); collect(variable.initial_value, true) }
   for (const variable of Object.values(store.getGlobalVars(projectId).vars)) { collect(variable.current_value, true); collect(variable.initial_value, true) }
-  collect(store.getCookieJar(projectId), true)
+  // Only cookie payloads are secret. Collecting the whole jar also treated project_id
+  // (and timestamps) as secrets, which corrupted stable revision strings shown to the model.
+  for (const domain of store.getCookieJar(projectId).domains) collect(domain.cookies, true)
   collect(store.getGlobalParams(projectId))
   objects.forEach(object => collect(object))
   const sorted = [...secrets].sort((a, b) => b.length - a.length)
