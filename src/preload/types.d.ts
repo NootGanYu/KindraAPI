@@ -175,6 +175,7 @@ export interface ApiBridge {
     onRequestClose(callback: () => void): () => void
     onCloseTabShortcut(callback: () => void): () => void
     confirmClose(): Promise<Result<boolean>>
+    cancelClose(): Promise<Result<boolean>>
   }
   dialog: {
     openFiles(multiple?: boolean): Promise<Result<SelectedFile[]>>

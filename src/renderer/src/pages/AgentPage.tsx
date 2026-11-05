@@ -166,7 +166,7 @@ function ProjectAgent({ projectId, projectName }: { projectId: string; projectNa
         <Space><Typography.Text type="secondary">⌘ / Ctrl + Enter 发送</Typography.Text>{running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(error => setError(error.message))}>停止回复</Button> : <Button type="primary" disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}</Space>
       </div>
     </section>
-    <Modal title="配置模型连接" open={configOpen} onCancel={() => { setConfigOpen(false); form.resetFields() }} footer={<Space>{editingId && <Button danger onClick={removeConnection}>删除连接</Button>}<Button type="primary" loading={busy} onClick={() => void saveConfig()}>保存连接</Button></Space>}>
+    <Modal title="配置模型连接" open={configOpen} style={{ top: 24 }} styles={{ body: { maxHeight: 'calc(100vh - 170px)', overflowY: 'auto' } }} onCancel={() => { setConfigOpen(false); form.resetFields() }} footer={<Space>{editingId && <Button danger onClick={removeConnection}>删除连接</Button>}<Button type="primary" loading={busy} onClick={() => void saveConfig()}>保存连接</Button></Space>}>
       <Space style={{ marginBottom: 16 }}>
         <Select aria-label="管理模型连接" style={{ minWidth: 200 }} placeholder="新连接" value={editingId ?? undefined} options={connections.map(item => ({ value: item.connection_id, label: item.name }))} onChange={id => openConfig(connections.find(item => item.connection_id === id) ?? null)} />
         <Button onClick={() => openConfig(null)}>新增连接</Button>

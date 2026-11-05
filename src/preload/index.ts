@@ -97,7 +97,8 @@ const api = {
     relaunch: () => invoke('app:relaunch'),
     onRequestClose: (callback: () => void) => subscribe('app:request-close', callback),
     onCloseTabShortcut: (callback: () => void) => subscribe('app:close-tab', callback),
-    confirmClose: () => invoke('app:confirm-close')
+    confirmClose: () => invoke('app:confirm-close'),
+    cancelClose: () => invoke('app:cancel-close')
   },
 
   dialog: {

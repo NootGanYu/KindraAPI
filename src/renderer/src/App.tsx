@@ -56,7 +56,7 @@ function QuitGuard(): JSX.Element {
           if (!activity.ok) throw new Error(activity.error)
           if (activity.data.running) {
             const confirmed = await new Promise<boolean>(resolve => modal.confirm({ title: '退出将停止 Agent 任务', content: `当前有 ${activity.data.running} 个 Agent 任务。退出仅暂存 Agent 草稿，不保存定义；重启不会自动重放请求。`, okText: '停止并退出', cancelText: '继续工作', onOk: () => resolve(true), onCancel: () => resolve(false) }))
-            if (!confirmed) { closing.current = false; return }
+            if (!confirmed) { await window.api.app.cancelClose(); closing.current = false; return }
           }
           const prepared = await window.api.agent.prepareQuit()
           if (!prepared.ok) throw new Error(prepared.error)
@@ -70,6 +70,7 @@ function QuitGuard(): JSX.Element {
           await window.api.app.confirmClose()
         } catch (error) {
           // 保存失败时不退出，避免丢失未保存内容；用户可修正后再次关闭。
+          await window.api.app.cancelClose()
           closing.current = false
           message.error(`自动保存失败，窗口保持打开：${(error as Error).message}`)
         }
