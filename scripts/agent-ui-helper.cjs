@@ -18,8 +18,14 @@ async function closeAgentPanel(page) {
   await panel.waitFor({ state: 'hidden' })
 }
 
-async function submitAgentGoal(page, goal) {
+async function submitAgentGoal(page, goal, options = {}) {
   const panel = await openAgentPanel(page)
+  if (!options.native) {
+    // Legacy plan journeys opt into the secondary plan engine; the default UI
+    // send path is the continuous tool timeline.
+    const toggle = page.getByRole('button', { name: '旧计划模式' })
+    if (await toggle.getAttribute('aria-pressed') !== 'true') await toggle.click()
+  }
   await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).fill(goal)
   await panel.locator('.agent-compose').getByRole('button', { name: /发送/ }).click()
 }

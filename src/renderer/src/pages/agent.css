@@ -60,3 +60,14 @@ button.agent-session-title:hover { text-decoration: underline; }
 .agent-compose { display: flex; flex-direction: column; gap: 8px; }
 .agent-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .agent-compose-bar .ant-select-selector { padding-inline: 6px !important; }
+.agent-timeline { display: flex; flex-direction: column; }
+.agent-timeline-tools { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px 8%; padding-left: 12px; border-left: 2px solid rgba(160,125,70,.25); }
+.agent-tool-card { border: 1px solid var(--border, #e6dfd4); border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.55); }
+.agent-tool-card.running { border-color: rgba(22,119,255,.35); }
+.agent-tool-card.failed { border-color: rgba(207,19,34,.35); }
+.agent-tool-card.cancelled { opacity: .75; }
+.agent-tool-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agent-tool-summary { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary, #666); font-size: 12px; }
+.agent-tool-error { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-tool-output { max-height: 220px; overflow: auto; margin: 8px 0 4px; padding: 8px; border-radius: 8px; background: rgba(0,0,0,.035); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
+.agent-tool-cursor { font-size: 12px; }
