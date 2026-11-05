@@ -74,6 +74,25 @@ async function main(): Promise<void> {
     const masked = await commands.proposeEditPlan(pid, { goal: '检查占位符', targetId: target.target_id })
     assert.equal(masked.status, 'paused')
     assert.equal(commands.listCandidates(pid, target.target_id).length, beforeRejected)
+    // Malformed nested shapes are rejected at the application-command boundary instead of
+    // being coerced into a destructive empty definition.
+    const malformed = [
+      { request: { header: 42 } },
+      { request: { query: { parameter: [{ param_id: 'x', key: 'q', value: 42, is_checked: 1 }] } } },
+      { request: { body: { parameter: 'bad' } } },
+      { response: { example: [{ example_id: 'e', expect: 42 }] } },
+      { cases: [{ case_id: 'c', name: 'n', is_enabled: 1, override: {}, assertions: [{ assertion_id: 'a', kind: 'status', op: 'equals', path: '', expected: '200', is_enabled: 1, unknown: true }] }] }
+    ]
+    for (const bad of malformed) {
+      patch = bad
+      const rejected = await commands.proposeEditPlan(pid, { goal: '畸形嵌套', targetId: target.target_id })
+      assert.equal(rejected.status, 'paused', JSON.stringify(bad))
+      assert.match(rejected.error!, /无效|类型|字段/)
+      assert.equal(commands.listCandidates(pid, target.target_id).length, beforeRejected)
+    }
+    patch = { request: { header: 42 } }
+    const malformedDirect = await commands.proposeEditPlan(pid, { goal: '畸形请求对象', targetId: target.target_id })
+    assert.equal(malformedDirect.status, 'paused')
     patch = { description: '独立的待确认说明' }
     const versionsBefore = store.listTargetVersions(pid, target.target_id).length
     for (let index = 0; index < 102; index++) {

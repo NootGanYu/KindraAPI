@@ -142,7 +142,7 @@ export interface FlowExecutionPolicy {
   globals: GlobalVars
   signal: AbortSignal
   checkScope(): void
-  executeRequest(event: FlowEvent): Promise<{ record: SendRecord; status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; error?: string; retryable: boolean }>
+  executeRequest(event: FlowEvent): Promise<{ record: SendRecord; report?: SendRecord; status: 'succeeded' | 'failed' | 'unknown' | 'cancelled'; error?: string; retryable: boolean }>
 }
 
 class FlowRuntime {
@@ -644,7 +644,10 @@ async function runRequestEvent(
     const record = execution ? execution.record : await sendRequest(projectId, prepared!, flow.env_id || undefined)
     if (!runtime.policy) store.addSendRecord(projectId, record)
     runtime.lastResponse = toFlowResponse(record)
-    for (const entry of record.console) runtime.consoleEntries.push(entry)
+    // Agent reports are already redacted; never copy raw console/request projections from the
+    // main-process record into a model-facing Flow result.
+    const projected = runtime.policy && execution?.report ? execution.report : record
+    for (const entry of projected.console) runtime.consoleEntries.push(entry)
 
     const assertions = (event.assertions ?? []).map((assertion) =>
       evalAssertion(assertion, runtime.lastResponse)
@@ -660,17 +663,17 @@ async function runRequestEvent(
     return result(event, status, startedAt, {
       detail,
       request: {
-        method: record.request.method,
-        url: record.request.url,
-        headers: record.request.headers,
+        method: projected.request.method,
+        url: projected.request.url,
+        headers: projected.request.headers,
         body:
-          typeof record.request.body === 'string'
-            ? record.request.body
-            : record.request.body
-              ? JSON.stringify(record.request.body)
+          typeof projected.request.body === 'string'
+            ? projected.request.body
+            : projected.request.body
+              ? JSON.stringify(projected.request.body)
               : undefined
       },
-      response: runtime.lastResponse ?? undefined,
+      response: (runtime.policy && execution?.report ? projected.response : runtime.lastResponse) ?? undefined,
       assertions,
       retryable: execution?.retryable,
       error: execution?.error ?? record.error?.message

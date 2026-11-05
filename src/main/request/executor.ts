@@ -55,6 +55,8 @@ export interface RequestExecutionPolicy {
   followRedirects: boolean
   persistVariables: boolean
   onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }): void
+  /** Historical values written by a script, including ones unset before the run ends. */
+  onSensitiveValues?(values: string[]): void
 }
 /** Raw definition dependencies for scope checks; does not re-resolve live model references. */
 export function requestDefinitionDependencies(projectId: string, target: Target): Array<Target | RequestModel> {
@@ -550,6 +552,28 @@ export async function sendRequest(
         let responseRef: any = null
         let responseError: Error | null = null
         run.start({
+          // Final variable snapshots cannot see set→log→unset inside one script. The runtime
+          // retains the MutationTracker stream on each result scope; project those historical
+          // values into the per-turn redactor before any report/console/model projection.
+          script: (_error: unknown, _cursor: unknown, scriptResult: any) => {
+            if (!options.policy?.onSensitiveValues || !scriptResult) return
+            const values: string[] = []
+            const collectValue = (value: unknown): void => {
+              if (typeof value === 'string') { if (value) values.push(value); return }
+              if (Array.isArray(value)) { for (const item of value) collectValue(item); return }
+              if (value && typeof value === 'object') for (const item of Object.values(value)) collectValue(item)
+            }
+            for (const scopeName of ['environment', 'globals', '_variables', 'collectionVariables', 'localVariables']) {
+              const tracker = scriptResult?.[scopeName]?.mutations
+              // SET is [key, value, metadata?]; UNSET is [key] and carries no value.
+              // The installed sandbox auto-compacts, so inspect both the stream and the last
+              // mutation retained in `compacted`.
+              for (const mutation of [...(tracker?.stream ?? []), ...Object.values(tracker?.compacted ?? {})]) {
+                if (Array.isArray(mutation) && mutation.length >= 2) collectValue(mutation[1])
+              }
+            }
+            if (values.length) options.policy.onSensitiveValues([...new Set(values)])
+          },
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
             if (options.policy) {
               try { options.policy.beforeRequest(request as any, { environment: environmentScope.toObject(), globals: globalScope.toObject(), local: readLocalValues() }) }
@@ -607,6 +631,19 @@ export async function sendRequest(
             responseError = error
           },
           console: (_cursor: unknown, level: string, ...args: unknown[]) => {
+            // A set→log→unset transient is already compacted away in the final tracker. For
+            // Agent runs, conservatively treat console payload strings as potential secrets so
+            // they can never reach plan/report/model projections. Manual/MCP paths keep output.
+            if (options.policy?.onSensitiveValues) {
+              const values: string[] = []
+              const collectValue = (value: unknown): void => {
+                if (typeof value === 'string') { if (value) values.push(value); return }
+                if (Array.isArray(value)) { for (const item of value) collectValue(item); return }
+                if (value && typeof value === 'object') for (const item of Object.values(value)) collectValue(item)
+              }
+              for (const arg of args) collectValue(arg)
+              if (values.length) options.policy.onSensitiveValues([...new Set(values)])
+            }
             consoleEntries.push({
               time: Date.now(),
               level,

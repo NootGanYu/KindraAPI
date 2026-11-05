@@ -98,12 +98,14 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
     return entry
   }
   let dispatched = 0
+  const historySecrets = new Set<string>()
   const remaining = [{ method: snapshot.method, url: snapshot.url, maxCalls: 1 }, ...snapshot.requests].map(r => ({ ...r }))
   const { context } = snapshot
   let caseResult: CaseRunResult | undefined
   const options: NonNullable<Parameters<typeof sendRequest>[3]> = {
     context, signal, policy: {
       followRedirects: false, persistVariables: false,
+      onSensitiveValues: values => { for (const value of values) historySecrets.add(value) },
       onVariables: values => { snapshot.variables.values.environment = values.environment; snapshot.variables.values.globals = values.globals; snapshot.variables.values.local = values.local },
       // Pre-send helpers can read before beforeRequest, so file access is denied independently.
       fileResolver: {
@@ -161,6 +163,6 @@ export async function executeSnapshot(snapshot: ExecutionSnapshot, signal: Abort
   if (record.error) record.status = 'failed'
   const status = record.error ? unknown ? 'unknown' : signal.aborted ? 'cancelled' : 'failed' : 'succeeded'
   const error = status === 'unknown' ? '远端结果未知：请求可能已到达服务，禁止自动重发；请先人工核实。' : record.error?.message
-  const redact = projectRedactor(context.projectId, Object.values(context.variables?.environment ?? {}).concat(Object.values(context.variables?.globals ?? {}), Object.values(context.variables?.local ?? {})).map(String), [context, record, snapshot.requests])
+  const redact = projectRedactor(context.projectId, [...historySecrets, ...Object.values(context.variables?.environment ?? {}), ...Object.values(context.variables?.globals ?? {}), ...Object.values(context.variables?.local ?? {})].map(String), [context, record, snapshot.requests])
   return { record, status, retryable: dispatched === 0 && started === 0 && status !== 'succeeded', response: status === 'succeeded' ? redact(record.response) : undefined, report: redact({ ...record, ...(caseResult ? { case_id: snapshot.apiCase!.case_id, case_name: snapshot.apiCase!.name, case_result: { ...caseResult, ...(record.error ? { status: record.error.type === 'assertion' ? 'failed' : 'error', error } : {}) } } : {}), network_attempts: remaining.map((request, index) => ({ method: request.method, url: request.url, count: (index === 0 ? 1 : snapshot.requests[index - 1].maxCalls) - request.maxCalls })), outcome: status, error: error ? { type: status, message: error } : null }), error: error ? redact(error) : undefined }
 }
