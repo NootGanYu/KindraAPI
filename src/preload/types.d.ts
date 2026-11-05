@@ -166,6 +166,7 @@ export interface ApiBridge {
     deleteConversation(projectId: string, id: string): Promise<Result<boolean>>
     sendMessage(projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }): Promise<Result<AgentConversation>>
     cancelMessage(projectId: string, id: string): Promise<Result<boolean>>
+    respondToolApproval(projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied'): Promise<Result<boolean>>
     onChanged(callback: (event: AgentEvent) => void): () => void
   }
   paths(): Promise<Result<AppPaths>>

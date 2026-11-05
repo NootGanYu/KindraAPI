@@ -4,8 +4,8 @@ import { caseTools } from './case'
 import { configTools } from './config'
 import { flowTools } from './flow'
 
-/** Stage 1 registers read-only tools only. Mutating skills land in later stages. */
-export const readOnlyToolRegistry = new AgentToolRegistry()
+/** Read tools plus stage-2 local draft/candidate tools. Execution/save tools land later. */
+export const agentToolRegistry = new AgentToolRegistry()
   .registerAll(apiTools)
   .registerAll(caseTools)
   .registerAll(flowTools)

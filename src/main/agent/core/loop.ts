@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { AgentActivity, AgentActivityStatus } from '@shared/agent'
+import type { AgentActivity, AgentActivityStatus, AgentToolRisk } from '@shared/agent'
+import type { ApprovalDecision, ApprovalRequestInput } from '../approval'
 import { completeModel, type ModelConnection, type ModelMessage, type ModelReply, type ModelTool } from '../model'
 import type { ProjectRedactor } from '../redaction'
 import type { AgentToolDefinition, AgentToolExecution } from './registry'
@@ -35,6 +36,11 @@ export interface AgentLoopOptions {
   onText?: (text: string) => void
   /** Called once when an activity starts and again when it settles. */
   onActivity?: (activity: AgentActivity) => void
+  /** Pauses before local/network/irreversible tools according to the permission matrix. */
+  approval?: {
+    requires(risk: AgentToolRisk): boolean
+    request(input: ApprovalRequestInput): Promise<ApprovalDecision>
+  }
 }
 export type AgentLoopStatus = 'completed' | 'turn-limit' | 'cancelled' | 'error'
 export interface AgentLoopResult {
@@ -105,10 +111,25 @@ function dedupeKey(name: string, input: Record<string, unknown>): string {
   const ordered = Object.fromEntries(Object.keys(input).sort().map(key => [key, input[key]]))
   return `${name}\0${JSON.stringify(ordered)}`
 }
+function schemaAcceptsNull(schema: unknown): boolean {
+  if (!schema || typeof schema !== 'object') return false
+  const value = schema as { type?: unknown; nullable?: unknown; enum?: unknown; anyOf?: unknown; oneOf?: unknown }
+  if (value.nullable === true || value.type === 'null') return true
+  if (Array.isArray(value.type) && value.type.includes('null')) return true
+  if (Array.isArray(value.enum) && value.enum.includes(null)) return true
+  return [value.anyOf, value.oneOf].some(branch => Array.isArray(branch) && branch.some(schemaAcceptsNull))
+}
 function missingRequired(tool: AgentToolDefinition, input: Record<string, unknown>): string[] {
   const required = tool.parameters.required
   if (!Array.isArray(required)) return []
-  return required.filter(field => typeof field === 'string' && (input[field] === undefined || input[field] === null))
+  const properties = tool.parameters.properties
+  return required.filter(field => {
+    if (typeof field !== 'string') return false
+    if (input[field] === undefined) return true
+    if (input[field] !== null) return false
+    const schema = properties && typeof properties === 'object' && !Array.isArray(properties) ? (properties as Record<string, unknown>)[field] : undefined
+    return !schemaAcceptsNull(schema)
+  })
 }
 function parseArguments(call: ModelReply['toolCalls'][number]): { input: Record<string, unknown> } | { error: string } {
   const raw = typeof call.arguments === 'string' ? call.arguments.trim() : ''
@@ -129,8 +150,10 @@ function redactValue<T>(redact: ProjectRedactor | undefined, value: T): T {
 }
 function resultContent(execution: AgentToolExecution, redact: ProjectRedactor | undefined): string {
   const output = redactValue(redact, execution.output)
+  const decision = execution.isError && output && typeof output === 'object' && 'decision' in output ? (output as { decision?: unknown }).decision : undefined
+  const reason = execution.isError && output && typeof output === 'object' && 'reason' in output ? (output as { reason?: unknown }).reason : undefined
   const payload = execution.isError
-    ? { ok: false, error: output }
+    ? { ok: false, error: output, ...(decision === 'denied' ? { decision, ...(reason !== undefined ? { reason } : {}) } : {}) }
     : { ok: true, result: output, ...(execution.cursor ? { next_cursor: execution.cursor } : {}) }
   const content = redactStream(redact, JSON.stringify(payload))
   if (utf8Size(content) <= MAX_TOOL_RESULT_BYTES) return content
@@ -143,6 +166,7 @@ function resultContent(execution: AgentToolExecution, redact: ProjectRedactor | 
   }))
 }
 function displayContent(execution: AgentToolExecution, redact: ProjectRedactor | undefined): string | undefined {
+  if (execution.display) return truncateBytes(redactStream(redact, execution.display), MAX_TOOL_RESULT_BYTES)
   if (execution.output === undefined) return undefined
   const output = redactValue(redact, execution.output)
   const value = execution.isError ? { error: output } : output
@@ -153,13 +177,14 @@ function executionError(execution: AgentToolExecution): string {
   if (output && typeof output === 'object' && 'error' in output) return String((output as { error: unknown }).error)
   return execution.summary ?? '工具执行失败'
 }
-async function executeDefinition(definition: AgentToolDefinition, args: Record<string, unknown>, projectId: string, redact?: ProjectRedactor): Promise<AgentToolExecution> {
+async function executeDefinition(definition: AgentToolDefinition, args: Record<string, unknown>, options: AgentLoopOptions, callId: string, turnId: string): Promise<AgentToolExecution> {
   try {
-    const result = await definition.handler(args, { projectId, redact })
+    const result = await definition.handler(args, { projectId: options.projectId, turnId, stepId: callId, redact: options.redact })
     return {
       isError: false,
       output: definition.projection ? definition.projection(result.output) : result.output,
       summary: result.summary,
+      display: result.display,
       cursor: result.cursor
     }
   } catch (error) {
@@ -184,7 +209,7 @@ function startActivity(turnId: string, callId: string, toolName: string, definit
 function finishActivity(activity: AgentActivity, status: AgentActivityStatus, execution: AgentToolExecution, redact: ProjectRedactor | undefined, onActivity?: (activity: AgentActivity) => void): void {
   activity.status = status
   activity.finished_at = new Date().toISOString()
-  if (!execution.isError && execution.summary) activity.summary = redactStream(redact, execution.summary)
+  if (execution.summary) activity.summary = redactStream(redact, execution.summary)
   else if (status === 'failed') activity.summary = `工具 ${activity.tool} 执行失败`
   if (execution.isError) activity.error = redactStream(redact, executionError(execution))
   if (execution.cursor) activity.cursor = execution.cursor
@@ -203,6 +228,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   let ledger: ModelMessage[] = (options.history ?? []).map(message => ({ ...message }))
   if (options.userMessage) ledger.push({ role: 'user', content: options.userMessage })
   const activities: AgentActivity[] = []
+  const turnId = options.turnId ?? randomUUID()
   const system = options.context ? `${options.system}\n\n${options.context}` : options.system
   let turns = 0
   let finalizing = false
@@ -211,6 +237,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   let allErrorTurns = 0
   let inputFailureTurns = 0
   const readCounts = new Map<string, number>()
+  const deniedCalls = new Set<string>()
 
   const cancelled = (): AgentLoopResult => ({ status: 'cancelled', text: '', messages: ledger, activities, retryable: true })
   const failure = (error: string, retryable = true): AgentLoopResult => ({ status: 'error', text: '', messages: ledger, activities, error, retryable })
@@ -249,7 +276,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       content: redactStream(redact, reply.text),
       tool_calls: reply.toolCalls.map(call => ({ id: call.id, type: 'function' as const, function: { name: call.name, arguments: redactStream(redact, call.arguments) } }))
     })
-    const turnId = options.turnId ?? randomUUID()
     let executedInTurn = false
     let unusableInTurn = false
     let allFailed = true
@@ -305,9 +331,48 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           break
         }
       }
+      const callKey = dedupeKey(definition.name, parsed.input)
+      if (deniedCalls.has(callKey)) {
+        const execution: AgentToolExecution = { isError: true, output: { decision: 'denied', reason: '该调用此前已被拒绝，不能重试。' }, summary: '该调用此前已被拒绝，不能重试' }
+        activity.approval = 'denied'
+        finishActivity(activity, 'failed', execution, redact, options.onActivity)
+        const content = resultContent(execution, redact)
+        ledger.push({ role: 'tool', tool_call_id: call.id, content })
+        turnOutputs.push(content)
+        turnInputs.push([call.name, parsed.input])
+        continue
+      }
+      if (options.approval?.requires(definition.risk)) {
+        let decision: ApprovalDecision
+        try {
+          const pending = options.approval.request({ activity_id: activity.activity_id, call_id: call.id, tool: call.name, risk: definition.risk, args: parsed.input })
+          activity.approval = 'pending'
+          options.onActivity?.(activity)
+          decision = await pending
+        } catch (error) {
+          decision = { decision: 'denied', reason: error instanceof Error ? error.message : '审批不可用' }
+        }
+        if (signal?.aborted) {
+          activity.approval = 'denied'
+          finishActivity(activity, 'cancelled', { isError: true, output: { error: '本轮已取消' } }, redact, options.onActivity)
+          return cancelledWithPending(ledger, reply.toolCalls, index, activities)
+        }
+        activity.approval = decision.decision
+        options.onActivity?.(activity)
+        if (decision.decision === 'denied') {
+          deniedCalls.add(callKey)
+          const execution: AgentToolExecution = { isError: true, output: { decision: 'denied', reason: decision.reason ?? '用户拒绝此工具调用' }, summary: '用户拒绝此工具调用' }
+          finishActivity(activity, 'failed', execution, redact, options.onActivity)
+          const content = resultContent(execution, redact)
+          ledger.push({ role: 'tool', tool_call_id: call.id, content })
+          turnOutputs.push(content)
+          turnInputs.push([call.name, parsed.input])
+          continue
+        }
+      }
       executedInTurn = true
       turnInputs.push([call.name, parsed.input])
-      const execution = await executeDefinition(definition, parsed.input, options.projectId, redact)
+      const execution = await executeDefinition(definition, parsed.input, options, call.id, turnId)
       if (signal?.aborted) {
         finishActivity(activity, 'cancelled', execution, redact, options.onActivity)
         return cancelledWithPending(ledger, reply.toolCalls, index, activities)

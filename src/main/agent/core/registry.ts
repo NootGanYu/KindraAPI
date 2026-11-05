@@ -4,6 +4,10 @@ import type { ProjectRedactor } from '../redaction'
 
 export interface AgentToolContext {
   projectId: string
+  /** Groups candidates with the user turn for one-click turn undo. */
+  turnId: string
+  /** Stable call id used as the proposal step id. */
+  stepId: string
   /** Handlers that pre-serialize a large section redact it before stringifying. */
   redact?: ProjectRedactor
 }
@@ -11,6 +15,8 @@ export interface AgentToolResult {
   output: unknown
   /** Human-facing redacted summary for the timeline. */
   summary?: string
+  /** Readable redacted diff/preview; overrides the generic JSON display. */
+  display?: string
   /** Continuation cursor when the result is paged or truncated. */
   cursor?: string
 }
@@ -70,6 +76,7 @@ export class AgentToolRegistry {
         isError: false,
         output: definition.projection ? definition.projection(result.output) : result.output,
         summary: result.summary,
+        display: result.display,
         cursor: result.cursor
       }
     } catch (error) {

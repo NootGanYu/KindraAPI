@@ -89,6 +89,7 @@ const api = {
     deleteConversation: (projectId: string, id: string) => invoke('agent:deleteConversation', projectId, id),
     sendMessage: (projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }) => invoke('agent:sendMessage', projectId, id, content, connectionId, options),
     cancelMessage: (projectId: string, id: string) => invoke('agent:cancelMessage', projectId, id),
+    respondToolApproval: (projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied') => invoke('agent:respondToolApproval', projectId, conversationId, activityId, decision),
     onChanged: (callback: (event: unknown) => void) => subscribe('agent:changed', callback)
   },
   paths: () => invoke('app:paths'),

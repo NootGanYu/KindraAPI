@@ -12,20 +12,25 @@ import { agentRoot, getConnection, saveConnection, createConnection, listConnect
 import { completeModel, type ModelMessage } from './model'
 import { buildProjectContext } from './context'
 import { runAgentLoop } from './core/loop'
-import { readOnlyToolRegistry } from './skills'
+import { agentToolRegistry } from './skills'
+import { createApprovalGate, type ApprovalGate } from './approval'
+import type { AgentPermissionMode } from '@shared/agentPlan'
 
 const SYSTEM_PROMPT = [
   '你是 Kindra 项目内的助手。',
-  '只能使用提供的只读工具读取当前项目，不得声称已经修改、保存、执行或删除任何对象。',
+  '可以读取当前项目，也可以把接口/用例/Flow 修改写成本机候选或草稿；不得声称已经保存正式定义、执行请求或删除对象。',
   '项目目录只含编号与名称；接口定义、URL、描述、用例、Flow 事件必须在需要时用读取工具按需获取。',
+  '修改前先读取目标与 base_revision；更新候选使用 update_*_draft，采纳草稿使用 apply_*_candidate。候选创建后明确告诉用户“尚未保存正式定义”。',
   '环境与全局变量只提供名称、说明和启用状态，变量值不可用；不要猜测或索要变量值。',
   '工具结果已经脱敏。若工具返回分页 cursor，请继续读取需要的部分；不要重复读取相同对象与相同参数。',
-  '完成任务后直接用中文给出简洁、基于已读取内容的最终回答。'
+  '需要审批的工具会暂停等待用户允许或拒绝；被拒绝后不得用相同参数重试。',
+  '完成任务后直接用中文给出简洁、基于已读取内容和候选状态的最终回答。'
 ].join('\n')
 const INTERRUPTED_TOOL_RESULT = '上次运行已中断，该工具未执行或结果已丢弃；不会自动重放。'
 const MAX_ACTIVITIES = 500
 
 const active = new Map<string, AbortController>()
+const approvalGates = new Map<string, ApprovalGate>()
 const tasks = new Set<Promise<void>>()
 const listeners = new Set<(event: AgentEvent) => void>()
 export function onAgentEvent(listener: (event: AgentEvent) => void): () => void {
@@ -59,6 +64,7 @@ function repairInterruptedConversation(conversation: AgentConversation): void {
     if (activity.status !== 'running') continue
     activity.status = 'cancelled'
     activity.finished_at = new Date().toISOString()
+    if (activity.approval === 'pending') activity.approval = 'denied'
     activity.error = activity.error ?? '运行时应用退出，该工具不会自动重放。'
   }
   if (!conversation.ledger?.length) return
@@ -137,7 +143,7 @@ export interface SendMessageOptions {
   activeTargetId?: string
   activeFlowId?: string
   activeEnvId?: string
-  permissionMode?: string
+  permissionMode?: AgentPermissionMode
 }
 function historyForTools(conversation: AgentConversation): ModelMessage[] {
   if (conversation.ledger?.length) return conversation.ledger.map(({ role, content, tool_call_id, tool_calls }) => ({ role, content, ...(tool_call_id ? { tool_call_id } : {}), ...(tool_calls ? { tool_calls } : {}) }))
@@ -189,6 +195,16 @@ async function sendMessage(projectId: string, id: string, content: string, conne
     void (async () => {
       try {
         if (toolsEnabled) {
+          const mode: AgentPermissionMode = options.permissionMode === 'auto' || options.permissionMode === 'bypass' ? options.permissionMode : 'ask'
+          const gate = createApprovalGate({
+            projectId,
+            conversationId: id,
+            turnId,
+            mode,
+            signal: controller.signal,
+            projectExists: () => !!getProject(projectId)
+          })
+          approvalGates.set(id, gate)
           const context = buildProjectContext({
             projectId,
             active: { targetId: options.activeTargetId, flowId: options.activeFlowId, envId: options.activeEnvId },
@@ -202,14 +218,22 @@ async function sendMessage(projectId: string, id: string, content: string, conne
             context,
             history,
             userMessage: userText,
-            tools: readOnlyToolRegistry.list(),
+            tools: agentToolRegistry.list(),
             signal: controller.signal,
             redact,
             onText: text => {
               reply.content = redact.stream(text)
               emit(conversation)
             },
-            onActivity: activity => upsertActivity(conversation, activity)
+            onActivity: activity => {
+              upsertActivity(conversation, activity)
+              // Pending approval and its decision must survive a renderer reload while the turn runs.
+              if (activity.approval) persist(conversation)
+            },
+            approval: {
+              requires: risk => gate.requires(risk),
+              request: input => gate.request(input)
+            }
           })
           conversation.ledger = result.messages
           if (result.status === 'cancelled') {
@@ -249,6 +273,8 @@ async function sendMessage(projectId: string, id: string, content: string, conne
         reply.status = interrupted ? 'interrupted' : 'error'
         conversation.error = redact(error instanceof Error ? error.message : '模型请求失败')
       } finally {
+        approvalGates.get(id)?.dispose()
+        approvalGates.delete(id)
         active.delete(id)
         try { persist(conversation); finish() } catch (error) { fail(error) }
         finally { tasks.delete(task) }
@@ -256,6 +282,15 @@ async function sendMessage(projectId: string, id: string, content: string, conne
     })()
     return conversation
   } catch (error) { active.delete(id); tasks.delete(task); finish(); throw error }
+}
+function respondToolApproval(projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied'): boolean {
+  const conversation = getConversation(projectId, conversationId)
+  const activity = conversation.activities?.find(item => item.activity_id === activityId)
+  if (!activity) throw new Error('审批活动不存在')
+  if (activity.approval !== 'pending') throw new Error('审批已失效或已处理')
+  const gate = approvalGates.get(conversationId)
+  if (!gate) throw new Error('审批已过期，请重新发起本轮工具调用')
+  return gate.respond(projectId, conversationId, activityId, decision)
 }
 function cancelMessage(projectId: string, id: string): boolean {
   getConversation(projectId, id)
@@ -285,4 +320,4 @@ function deleteProjectAgentRecords(pid: string): boolean {
   return true
 }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, renameConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, renameConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage, respondToolApproval }

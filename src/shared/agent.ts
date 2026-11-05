@@ -30,6 +30,7 @@ export interface AgentMessage {
 }
 export type AgentToolRisk = 'read' | 'local-write' | 'network-write' | 'irreversible'
 export type AgentActivityStatus = 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type AgentApprovalState = 'pending' | 'approved' | 'denied'
 /** A redacted, UI-oriented record of one executed tool call. Full results stay local. */
 export interface AgentActivity {
   activity_id: string
@@ -38,9 +39,11 @@ export interface AgentActivity {
   tool: string
   risk: AgentToolRisk
   status: AgentActivityStatus
+  /** Approval state for tools that require confirmation in the current mode. */
+  approval?: AgentApprovalState
   /** Short redacted human summary shown on the card. */
   summary: string
-  /** Redacted result excerpt for the timeline; omitted for empty results. */
+  /** Redacted result excerpt or readable before/after diff for the timeline. */
   display?: string
   /** Tool-specific continuation cursor when the result was paged or truncated. */
   cursor?: string
