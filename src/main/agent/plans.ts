@@ -468,7 +468,7 @@ function resolveTaskSelection(projectId: string, input: TaskPlanInput, source: A
       const draft = supplied ?? managed.target
       revisions.set(targetId, suppliedRevision !== undefined ? suppliedRevision : supplied ? managed.base_revision : snapshot.revision)
       targets.set(targetId, structuredClone(draft))
-      targetEntries.push({ target_id: targetId, name: redact(draft.name), source: supplied ? 'draft' : 'saved' })
+      targetEntries.push({ target_id: targetId, name: redact(draft.name), source: supplied || draftSignature(draft) !== draftSignature(snapshot.target) ? 'draft' : 'saved' })
     }
     for (const id of flowIds) {
       if (!store.getFlow(projectId, id)) throw new Error('当前项目中不存在该 Flow')
@@ -493,7 +493,11 @@ function resolveTaskSelection(projectId: string, input: TaskPlanInput, source: A
         if (!store.getFlow(projectId, item.id)) throw new Error('所选 Flow 不存在或不属于本项目')
         selectedFlowIds.push(item.id)
       } else {
-        if (!store.getTarget(projectId, item.id)) throw new Error('所选接口不存在或不属于本项目')
+        if (!store.getTarget(projectId, item.id)) {
+          let uncreated: ReturnType<typeof getDraft> | undefined
+          try { uncreated = getDraft(projectId, item.id) } catch { /* Missing object. */ }
+          if (!uncreated?.new_object) throw new Error('所选接口不存在或不属于本项目')
+        }
         if (!selectedApiIds.includes(item.id)) selectedApiIds.push(item.id)
         if (item.kind === 'case') {
           const selectedTarget = getDraft(projectId, item.id).target
@@ -527,11 +531,18 @@ function resolveTaskSelection(projectId: string, input: TaskPlanInput, source: A
     for (const targetId of targetIds) {
       if (newTargetIds.has(targetId)) continue
       const snapshot = store.readTargetSnapshot(projectId, targetId)
-      if (!snapshot.target || snapshot.target.target_type !== 'api') throw new Error('所选接口不存在或不属于本项目')
       const managed = getDraft(projectId, targetId)
+      if (!snapshot.target) {
+        if (!managed.new_object) throw new Error('所选接口不存在或不属于本项目')
+        revisions.set(targetId, managed.base_revision)
+        targets.set(targetId, structuredClone(managed.target))
+        targetEntries.unshift({ target_id: targetId, name: redact(managed.target.name), source: 'draft', new_object: true })
+        continue
+      }
+      if (snapshot.target.target_type !== 'api') throw new Error('所选接口不存在或不属于本项目')
       revisions.set(targetId, managed.new_object ? managed.base_revision : snapshot.revision)
       targets.set(targetId, structuredClone(managed.target))
-      targetEntries.unshift({ target_id: targetId, name: redact(managed.target.name), source: managed.agent_owned ? 'draft' : 'saved' })
+      targetEntries.unshift({ target_id: targetId, name: redact(managed.target.name), source: managed.agent_owned || draftSignature(managed.target) !== draftSignature(snapshot.target) ? 'draft' : 'saved' })
     }
     for (const flowId of flowIds) {
       const draft = getFlowDraft(projectId, flowId)
@@ -613,6 +624,43 @@ async function proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise
     const tempToTarget = resolved.tempToTarget
     const allowedTargets = new Set(resolved.targetIds)
     const allowedFlows = new Set(resolved.flowIds)
+    const permissions: AgentExecutionPermissions = {
+      ...(input.execution ?? {}),
+      ...(proposedEffects?.extra_requests ? { requests: proposedEffects.extra_requests } : {}),
+      ...(proposedEffects?.write_variables !== undefined ? { writeVariables: proposedEffects.write_variables } : {}),
+      ...(proposedEffects?.save_response !== undefined ? { saveResponse: proposedEffects.save_response } : {})
+    }
+    context.permissions = permissions
+    // Freeze execution snapshots only for objects whose planned steps actually execute.
+    const executionNeeds: Array<{ targetId: string; caseId?: string }> = []
+    const flowNeeds = new Set<string>()
+    for (const raw of rawSteps) {
+      const operation = raw?.operation as AgentPlanOperation
+      if (!taskOperationValues.includes(operation)) continue
+      const flowOperation = operation.includes('flow') || raw.kind === 'flow'
+      if (flowOperation) { if (operation === 'execute_flow') flowNeeds.add(String(raw.flow_id ?? '')); continue }
+      const id = tempToTarget.get(String(raw.target_id ?? '')) ?? String(raw.target_id ?? '')
+      if (operation === 'execute_api' || operation === 'execute_api_case') executionNeeds.push({ targetId: id, ...(operation === 'execute_api_case' ? { caseId: String(raw.case_id ?? '') } : {}) })
+    }
+    const preparedExecutions = new Set<string>()
+    for (const need of executionNeeds) {
+      const key = executionKey(need.targetId, need.caseId)
+      if (preparedExecutions.has(key) || resolved.newTargetIds.has(need.targetId)) continue
+      const target = targets.get(need.targetId)
+      if (!target) continue
+      const apiCase = need.caseId ? target.cases?.find(item => item.case_id === need.caseId) : undefined
+      executions.set(key, prepareExecution(projectId, target, input.environmentId, permissions, apiCase))
+      preparedExecutions.add(key)
+    }
+    for (const flowId of flowNeeds) {
+      const flow = flows.get(flowId)
+      if (flow) flowExecutions.set(flowId, prepareFlowExecution(projectId, flow, input.environmentId, permissions))
+    }
+    const sharedVariables = executions.values().next().value?.variables ?? flowExecutions.values().next().value?.variables
+    if (sharedVariables) {
+      for (const execution of executions.values()) { execution.variables = sharedVariables; execution.context.variables = sharedVariables.values }
+      for (const execution of flowExecutions.values()) { execution.variables = sharedVariables; for (const request of execution.requests.values()) { request.variables = sharedVariables; request.context.variables = sharedVariables.values } }
+    }
     const seen = new Set<string>()
     for (const raw of rawSteps) {
       if (!raw || typeof raw !== 'object' || typeof raw.step_id !== 'string' || !/^[\w-]{1,100}$/.test(raw.step_id) || seen.has(raw.step_id)) throw new Error('槽位编号缺失或重复')
@@ -653,6 +701,19 @@ async function proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise
       if (operation === 'execute_flow') { const flowExecution = flowExecutions.get(flowId); if (flowExecution) step.execution = redact({ method: 'FLOW', url: flowId, effects: flowExecution.effects }) }
       plan.steps.push(step)
     }
+    if (proposedEffects?.save_response) {
+      for (const execution of [...plan.steps].filter(step => step.operation === 'execute_api')) {
+        const stepId = `save-response-${randomUUID()}`
+        context.slots.set(stepId, { step_id: stepId, operation: 'save_api_response', binding: 'static', kind: 'api', target_id: execution.target_id, depends_on: [execution.step_id], source_steps: [execution.step_id], allowed_changes: [], intent: '保存获批执行响应示例' })
+        plan.steps.push({
+          step_id: stepId, operation: 'save_api_response', binding: 'static', kind: 'api',
+          target_id: execution.target_id, target_name: execution.target_name,
+          depends_on: [execution.step_id], source_steps: [execution.step_id],
+          dependencies_explicit: true, status: 'pending',
+          changes: { scope: '仅保存响应示例；保留其他未保存草稿；仍检查字段文档与并发基线' }
+        })
+      }
+    }
     plan.target_ids = [...resolved.targetIds]
     plan.flow_ids = [...resolved.flowIds]
     plan.targets = resolved.targetEntries
@@ -661,22 +722,6 @@ async function proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise
     plan.target_name = plan.targets[0]?.name ?? plan.flows[0]?.name ?? ''
     plan.source = plan.targets[0]?.source ?? 'draft'
     plan.proposed_effects = proposedEffects
-    const permissions: AgentExecutionPermissions = {
-      ...(input.execution ?? {}),
-      ...(proposedEffects?.extra_requests ? { requests: proposedEffects.extra_requests } : {}),
-      ...(proposedEffects?.write_variables !== undefined ? { writeVariables: proposedEffects.write_variables } : {}),
-      ...(proposedEffects?.save_response !== undefined ? { saveResponse: proposedEffects.save_response } : {})
-    }
-    context.permissions = permissions
-    // Freeze snapshots only after selection validation; preparation never persists anything.
-    // New objects have no definition/URL yet, so they only gain an execution snapshot after creation.
-    for (const [id, target] of targets) if (!resolved.newTargetIds.has(id)) executions.set(id, prepareExecution(projectId, target, input.environmentId, permissions))
-    for (const [id, flow] of flows) flowExecutions.set(id, prepareFlowExecution(projectId, flow, input.environmentId, permissions))
-    const sharedVariables = executions.values().next().value?.variables ?? flowExecutions.values().next().value?.variables
-    if (sharedVariables) {
-      for (const execution of executions.values()) { execution.variables = sharedVariables; execution.context.variables = sharedVariables.values }
-      for (const execution of flowExecutions.values()) { execution.variables = sharedVariables; for (const request of execution.requests.values()) { request.variables = sharedVariables; request.context.variables = sharedVariables.values } }
-    }
     // Every business-operation tool call after approval is matched to exactly one of these slots.
     plan.status = 'pending'
   } catch (error) {
@@ -926,6 +971,17 @@ function addExpansion(plan: AgentPlan, context: PlanContext, call: PlannedCall, 
     plan.flows = [...(plan.flows ?? []), { flow_id: flowId, name: context.redact(draft.flow.name) }]
     context.flowExecutions.set(flowId, prepareFlowExecution(plan.project_id, context.flows.get(flowId)!, plan.environment_id ?? undefined, context.permissions))
   }
+  if ((operation === 'execute_api' || operation === 'execute_api_case') && !context.executions.has(executionKey(targetId, caseId))) {
+    const target = context.targets.get(targetId)
+    if (target) {
+      const apiCase = caseId ? target.cases?.find(item => item.case_id === caseId) : undefined
+      context.executions.set(executionKey(targetId, caseId), prepareExecution(plan.project_id, target, plan.environment_id ?? undefined, context.permissions, apiCase))
+    }
+  }
+  if (operation === 'execute_flow' && !context.flowExecutions.has(flowId)) {
+    const flow = context.flows.get(flowId)
+    if (flow) context.flowExecutions.set(flowId, prepareFlowExecution(plan.project_id, flow, plan.environment_id ?? undefined, context.permissions))
+  }
   const dependsOn = Array.isArray(args.depends_on) ? args.depends_on.filter((id: unknown) => typeof id === 'string') : plan.steps.map(step => step.step_id)
   const sourceSteps = typeof args.source_step === 'string' ? [args.source_step] : Array.isArray(args.source_steps) ? args.source_steps.filter((id: unknown) => typeof id === 'string') : []
   const base = context.targets.get(targetId)
@@ -1072,7 +1128,7 @@ async function approvePlan(projectId: string, id: string, expectedRevision?: num
     for (const step of plan.steps) if (step.status === 'pending' || step.status === 'running') { step.retryable = step.status === 'pending'; step.status = 'paused'; step.error = plan.error }
   } finally {
     // Keep the frozen context while a new approval revision or conflict review is still pending.
-    const needsContinuation = context.continuation && (plan.status === 'paused' || plan.status === 'interrupted') && plan.steps.some(step => step.status === 'awaiting_approval' || (step.retryable && step.status === 'paused'))
+    const needsContinuation = context.continuation && (plan.status === 'paused' || plan.status === 'interrupted') && plan.steps.some(step => step.status === 'awaiting_approval' || (step.retryable && ['paused', 'cancelled', 'pending'].includes(step.status)))
     if (needsContinuation) resumableContexts.set(id, context)
     else {
       contexts.delete(id)

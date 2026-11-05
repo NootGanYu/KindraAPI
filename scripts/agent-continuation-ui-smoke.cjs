@@ -6,6 +6,7 @@ const path = require('node:path')
 const http = require('node:http')
 const crypto = require('node:crypto')
 const { _electron } = require('playwright-core')
+const { openAgentPanel, submitAgentGoal } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-continuation-ui-'))
 let app
 let pid = '', aId = '', bId = '', cId = '', tagB = '', aValue = '', aParam = ''
@@ -23,7 +24,7 @@ const model = http.createServer(async (req, res) => {
       { step_id: 'apply-b', operation: 'apply_candidate', kind: 'api', binding: 'static', target_id: bId, depends_on: ['derive-b'], source_steps: ['derive-b'] },
       { step_id: 'test-b', operation: 'execute_api', binding: 'static', target_id: bId, depends_on: ['apply-b'], source_steps: ['apply-b'] }
     ]
-    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify({ steps }) } }] } }] })); return
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify({ selected_objects: [{ kind: 'api', id: aId }, { kind: 'api', id: bId }], steps }) } }] } }] })); return
   }
   if (tools.includes('propose_api_change')) {
     const toolMessage = body.messages.filter(message => message.role === 'tool').map(message => { try { return JSON.parse(message.content) } catch { return null } }).filter(Boolean).find(value => Array.isArray(value.tool_results))
@@ -49,8 +50,8 @@ const api = http.createServer((req, res) => {
 async function launch() {
   app = await _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData } })
   const page = await app.firstWindow()
-  await page.getByRole('link', { name: 'Agent' }).waitFor()
-  await page.getByRole('link', { name: 'Agent' }).click()
+  await page.getByRole('button', { name: '打开 Agent' }).waitFor()
+  await openAgentPanel(page)
   return page
 }
 async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); app = null } }
@@ -82,14 +83,9 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   const revisionB = await page.evaluate(async ({ pid, b }) => (await window.api.targets.read(pid, b)).data.revision, { pid, b: bId })
   // Reload the Agent view so the tested project connection/capability is reflected.
   await page.reload()
-  await page.getByRole('link', { name: 'Agent' }).click()
+  await openAgentPanel(page)
   // The UI journey keeps the expansion call in the same batch as the approved derived patch.
-  await page.getByRole('button', { name: '连续任务', exact: true }).click()
-  await page.getByLabel('计划目标').fill('读取 A/B，把 A 的 tag 值加 -checked 复制给 B 并测试，不保存')
-  await page.getByRole('combobox', { name: '计划接口' }).click()
-  for (const name of ['来源 UI', '目标 UI']) await page.locator('.ant-select-item-option').filter({ hasText: name }).click()
-  await page.getByRole('combobox', { name: '计划接口' }).press('Escape')
-  await page.getByRole('button', { name: '生成连续任务计划', exact: true }).click()
+  await submitAgentGoal(page, '读取 A/B，把 A 的 tag 值加 -checked 复制给 B 并测试，不保存')
   await page.getByRole('button', { name: /批准/ }).first().waitFor()
   assert.equal(hits.length, 0, 'approval gate must precede any target HTTP')
   assert.equal(await page.getByText('读取后生成', { exact: false }).count() > 0, true)

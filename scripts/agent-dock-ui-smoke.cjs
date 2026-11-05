@@ -5,6 +5,7 @@ const os = require('node:os')
 const path = require('node:path')
 const http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-dock-ui-'))
 let app, pid = '', targetId = ''
 const server = http.createServer(async (req, res) => {

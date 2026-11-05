@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-turn-undo-ui-'))
 let app, pid, targetId, flowId
 const server = http.createServer(async (req, res) => {
@@ -16,7 +17,7 @@ const server = http.createServer(async (req, res) => {
 const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData, KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1' } })
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  app = await launch(); let page = await app.firstWindow(); await page.getByRole('link', { name: 'Agent' }).waitFor()
+  app = await launch(); let page = await app.firstWindow(); await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   const info = await page.evaluate(async base => {
     const unwrap = r => { if (!r.ok) throw new Error(r.error); return r.data }
     const pid = unwrap(await window.api.projects.ensureDefault()).project_id
@@ -34,7 +35,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
     if (u(await window.api.agent.applyFlowCandidate(pid, flow.candidate_id)).status !== 'applied') throw new Error('Flow candidate not applied')
     u(await window.api.agent.createConversation(pid))
   }, info)
-  await page.getByRole('link', { name: 'Agent' }).click()
+  await openAgentPanel(page)
   await page.getByRole('button', { name: '整轮撤销与记录', exact: true }).click()
   await page.getByRole('button', { name: '预览整轮撤销', exact: true }).first().click()
   let review = page.getByLabel('整轮撤销审阅')
@@ -43,7 +44,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   await review.getByRole('button', { name: '放弃本次撤销' }).click()
   await page.getByLabel('撤销审计').getByText(/已放弃/).first().waitFor()
   assert.equal(await page.evaluate(async ({ pid, targetId }) => (await window.api.agent.getDraft(pid, targetId)).data.target.description, info), 'Agent 说明')
-  await page.locator('.ant-drawer-body').evaluate(el => el.scrollTo(0, 0))
+  await page.locator('.ant-drawer-content-wrapper').filter({ hasText: '整轮本地撤销' }).locator('.ant-drawer-body').evaluate(el => el.scrollTo(0, 0))
   await page.getByText('预览整轮撤销', { exact: true }).first().click()
   await review.getByText('接口 / 用例 · 整轮接口').waitFor()
   await review.getByRole('button', { name: '确认整轮撤销到草稿' }).click()
@@ -61,7 +62,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   for (const value of ['Agent 说明', '人工后续说明', '原说明', '等待选择']) await conflict.getByText(value, { exact: false }).waitFor()
   assert.equal(await review.getByRole('button', { name: '确认整轮撤销到草稿' }).isDisabled(), true)
   await app.evaluate(({ app }) => app.exit(0)); app = await launch(); page = await app.firstWindow()
-  await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('button', { name: '整轮撤销与记录' }).click()
+  await openAgentPanel(page); await page.getByRole('button', { name: '整轮撤销与记录' }).click()
   await page.getByLabel('撤销审计').getByRole('button', { name: /待审阅/ }).last().click()
   conflict = page.getByLabel('撤销冲突 /description'); await conflict.getByRole('radio', { name: '保留当前' }).check()
   await conflict.getByText('人工后续说明', { exact: false }).first().waitFor()

@@ -1,8 +1,9 @@
 # 组件：LeftNav.tsx
 
 - 源码：`src/renderer/src/components/LeftNav.tsx`
-- 行数：72
-- 静态统计：JSX 24 / 提示 1 / 菜单 5 / Tooltip 2 / Placeholder 0 / IPC 0
+- 行数：71
+- 静态统计：JSX 23 / 提示 1 / 菜单 5 / Tooltip 2 / Placeholder 0 / IPC 0
+- 导航不包含 Agent 项；Agent 通过主界面右下角悬浮按钮打开右侧面板。
 
 ## JSX 控件（含行号）
 

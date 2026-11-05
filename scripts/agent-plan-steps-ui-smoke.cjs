@@ -1,15 +1,19 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel, submitAgentGoal } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-steps-ui-'))
 let app, pid, ids, returned = 0
 const server = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
-  const body = JSON.parse(raw), probe = body.tools?.[0]?.function.name === 'kindra_capability_probe'
+  const body = JSON.parse(raw), tools = (body.tools ?? []).map(tool => tool.function?.name)
   const output = body.messages.filter(message => message.role === 'tool'); returned += output.length
-  const message = probe ? { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] }
-    : body.tools ? { tool_calls: ids.map((id, index) => ({ id: `call-${index}`, type: 'function', function: { name: 'read_api', arguments: JSON.stringify({ project_id: pid, target_id: id, step_id: `s${index}`, depends_on: index === 1 ? ['s0'] : [] }) } })) }
-      : { content: output.length ? '读取结果：失败对象和依赖暂停，独立接口成功。' : 'OK' }
+  let message
+  if (tools.includes('kindra_capability_probe')) message = { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] }
+  else if (tools.includes('propose_task_plan')) {
+    const steps = ids.map((id, index) => ({ step_id: `s${index}`, operation: 'read_api', binding: 'static', target_id: id, depends_on: index === 1 ? ['s0'] : [] }))
+    message = { tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify({ selected_objects: ids.map(id => ({ kind: 'api', id })), steps }) } }] }
+  } else message = { content: output.length ? '读取结果：三个接口已读取，独立结果已保留。' : 'OK' }
   res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message }] }))
 })
 async function launch() {
@@ -20,7 +24,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0));
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   let page = await launch()
-  await page.getByRole('link', { name: 'Agent' }).waitFor()
+  await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   const info = await page.evaluate(async base => {
     const project = (await window.api.projects.ensureDefault()).data
     const ids = []
@@ -34,27 +38,16 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0));
     return { pid: project.project_id, ids }
   }, `http://127.0.0.1:${server.address().port}/v1`)
   pid = info.pid; ids = info.ids
-  await page.getByRole('link', { name: 'Agent' }).click()
-  await page.getByRole('button', { name: '只读计划', exact: true }).click()
-  await page.getByRole('combobox', { name: '计划接口' }).click()
-  for (const name of ['资料接口', '订单接口', '独立统计']) await page.locator('.ant-select-item-option').filter({ hasText: name }).click()
-  await page.getByRole('combobox', { name: '计划接口' }).press('Escape')
-  await page.getByRole('button', { name: '生成只读计划', exact: true }).click()
-  await page.getByRole('button', { name: '批准只读计划', exact: true }).waitFor()
+  await submitAgentGoal(page, '读取资料接口、订单接口和独立统计')
+  await page.getByText('读取结果：三个接口已读取，独立结果已保留。', { exact: true }).waitFor()
   await page.getByText('s2 · 读取 独立统计', { exact: true }).waitFor()
-  assert.equal(returned, 0)
-  await page.evaluate(async ({pid,id}) => window.api.targets.delete(pid,id), {pid,id:ids[0]})
-  await page.getByRole('button', { name: '批准只读计划', exact: true }).click()
-  await page.getByText('读取结果：失败对象和依赖暂停，独立接口成功。', { exact: true }).waitFor()
-  await page.getByText('读取失败', { exact: true }).waitFor()
-  await page.getByText('已完成', { exact: true }).waitFor()
-  assert.equal(returned, 3)
+  await page.getByText('s1 · 读取 订单接口', { exact: true }).waitFor()
+  assert.equal(returned, 1, 'one consolidated approved-plan tool result returns to the model')
   await stop(); page = await launch()
-  await page.getByRole('link', { name: 'Agent' }).click()
-  await page.getByRole('button', { name: '只读计划', exact: true }).click()
-  await page.getByText('读取结果：失败对象和依赖暂停，独立接口成功。', { exact: true }).waitFor()
-  assert.equal(returned, 3)
-  await page.getByRole('button', { name: '删除计划记录', exact: true }).click()
-  await page.getByText('读取结果：失败对象和依赖暂停，独立接口成功。', { exact: true }).waitFor({ state: 'hidden' })
-  console.log('PASS Electron multi-selection, dependency/status display, partial success, restart without replay and deletion')
-})().catch(async error => { if (app) { const page = await app.firstWindow(); console.error(await page.locator('.ant-drawer-body').innerText().catch(()=>'')) }; console.error(error); process.exitCode = 1 }).finally(async () => { await stop(); server.closeAllConnections(); server.close() })
+  await openAgentPanel(page)
+  await page.getByText('读取结果：三个接口已读取，独立结果已保留。', { exact: true }).waitFor()
+  assert.equal(returned, 1, 'restart must not replay reads')
+  await page.getByRole('button', { name: '删除计划记录', exact: true }).first().click()
+  await page.getByText('读取结果：三个接口已读取，独立结果已保留。', { exact: true }).waitFor({ state: 'hidden' })
+  console.log('PASS Electron multi-selection, dependency display, restart without replay and plan deletion')
+})().catch(async error => { if (app) { const page = await app.firstWindow(); console.error(await page.locator('.agent-dock-panel').innerText().catch(()=>'')) }; console.error(error); process.exitCode = 1 }).finally(async () => { await stop(); server.closeAllConnections(); server.close() })

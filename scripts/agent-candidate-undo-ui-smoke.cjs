@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-undo-ui-'))
 let app, pid, targetId
 const server = http.createServer(async (req, res) => {
@@ -12,7 +13,7 @@ const server = http.createServer(async (req, res) => {
 const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData, KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1' } })
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  app = await launch(); let page = await app.firstWindow(); await page.getByRole('link', { name: 'Agent' }).waitFor()
+  app = await launch(); let page = await app.firstWindow(); await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   ;({ pid, targetId } = await page.evaluate(async base => {
     const p = (await window.api.projects.ensureDefault()).data
     const target = (await window.api.targets.create(p.project_id, '0', 'api')).data
@@ -21,7 +22,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
     return { pid: p.project_id, targetId: target.target_id }
   }, `http://127.0.0.1:${server.address().port}/v1`))
   await page.evaluate(async ({ pid, targetId }) => { const plan = (await window.api.agent.proposeEditPlan(pid, { goal: '修改地址', targetId })).data; await window.api.agent.approvePlan(pid, plan.plan_id) }, { pid, targetId })
-  await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('link', { name: /APIs$/ }).click()
+  await openAgentPanel(page); await page.getByRole('link', { name: /APIs$/ }).click()
   await page.getByText('撤销验收接口', { exact: true }).first().click()
   await page.getByRole('button', { name: '审阅 Agent 版本', exact: true }).click()
   await page.getByRole('button', { name: '不采纳', exact: true }).click({ timeout: 5000 })

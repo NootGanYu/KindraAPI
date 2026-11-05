@@ -1,9 +1,10 @@
 # 设置
 
 - 路由：`/settings`
-- 用途：环境与请求前缀、全局变量、发送设置、MCP 服务、调试设置。
+- 用途：项目信息、Agent 模型连接、环境与请求前缀、全局变量、发送设置、MCP 服务、调试设置。
 - 采集状态：8 个；DOM/AX 元素合计：446
-- 主要源码：`src/renderer/src/pages/SettingsPage.tsx`
+- 主要源码：`src/renderer/src/pages/SettingsPage.tsx`、`src/renderer/src/components/AgentConnectionSettings.tsx`
+- Agent 连接区块：`#agent-connections`；支持新增、编辑、测试、删除和设为项目默认，支持 `/settings#agent-connections` 深链定位。
 
 ## 状态截图
 
@@ -81,6 +82,11 @@
 
 | 组件 | 文案 | 关键属性 | 位置 |
 | --- | --- | --- | --- |
+| Button | 新增连接 | icon=plus | `src/renderer/src/components/AgentConnectionSettings.tsx` |
+| Button | 测试连接 | icon=thunderbolt | `src/renderer/src/components/AgentConnectionSettings.tsx` |
+| Button | 设为项目默认 |  | `src/renderer/src/components/AgentConnectionSettings.tsx` |
+| Button | 删除连接 | danger icon=delete | `src/renderer/src/components/AgentConnectionSettings.tsx` |
+| Button | 保存连接 | type=primary | `src/renderer/src/components/AgentConnectionSettings.tsx` |
 | Button | 保存环境 | type=primary | `src/renderer/src/pages/SettingsPage.tsx`:302 |
 | Button | 保存全局变量 | type=primary | `src/renderer/src/pages/SettingsPage.tsx`:315 |
 | Button | 保存发送设置 | type=primary | `src/renderer/src/pages/SettingsPage.tsx`:373 |

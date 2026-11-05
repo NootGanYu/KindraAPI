@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http')
 const { _electron } = require('playwright-core')
+const { openAgentPanel, closeAgentPanel } = require('./agent-ui-helper.cjs')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kindra-agent-merge-ui-'))
 let app, pid, targetId
 const server = http.createServer(async (req, res) => {
@@ -12,7 +13,7 @@ const server = http.createServer(async (req, res) => {
 ;(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   app = await _electron.launch({ args: [path.resolve(__dirname, '../out/main/index.js')], env: { ...process.env, KINDRAAPI_USER_DATA: userData, KINDRAAPI_DISABLE_SINGLE_INSTANCE: '1' } })
-  let page = await app.firstWindow(); await page.getByRole('link', { name: 'Agent' }).waitFor()
+  let page = await app.firstWindow(); await page.getByRole('button', { name: '打开 Agent' }).waitFor()
   const info = await page.evaluate(async base => {
     const p = (await window.api.projects.ensureDefault()).data
     const target = (await window.api.targets.create(p.project_id, '0', 'api')).data
@@ -21,7 +22,7 @@ const server = http.createServer(async (req, res) => {
     return { pid: p.project_id, targetId: target.target_id }
   }, `http://127.0.0.1:${server.address().port}/v1`)
   ;({ pid, targetId } = info)
-  await page.getByRole('link', { name: 'Agent' }).click(); await page.getByRole('link', { name: /APIs$/ }).click()
+  await openAgentPanel(page); await page.getByRole('link', { name: /APIs$/ }).click()
   await page.getByText('合并验收接口', { exact: true }).first().click()
   await page.getByLabel('请求 URL', { exact: true }).fill('https://example.invalid/discarded')
   await page.getByLabel('请求 URL', { exact: true }).press('Tab')
@@ -48,6 +49,7 @@ const server = http.createServer(async (req, res) => {
   for (const text of ['基线', '当前内容', 'Agent 内容', '合并结果']) await review.getByText(text, { exact: true }).waitFor()
   assert.equal(await review.getByRole('radio').count(), 3)
   await page.locator('.ant-drawer-close').click()
+  await closeAgentPanel(page)
   await page.locator('.save-btn').click()
   await page.getByText('该接口存在未解决的 Agent 候选冲突，请先在版本入口处理后保存', { exact: true }).waitFor()
   const saved = await page.evaluate(async ({ pid, targetId }) => (await window.api.targets.get(pid, targetId)).data, { pid, targetId })
