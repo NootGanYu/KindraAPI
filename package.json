@@ -87,7 +87,9 @@
     "test:agent-continuation-ui": "node scripts/agent-continuation-ui-smoke.cjs",
     "test:agent-autoselect": "esbuild scripts/agent-autoselect-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-autoselect.cjs && electron node_modules/.tmp/agent-autoselect.cjs && electron node_modules/.tmp/agent-autoselect.cjs --responses",
     "test:agent-permission-modes": "esbuild scripts/agent-permission-modes-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-permission-modes.cjs && electron node_modules/.tmp/agent-permission-modes.cjs && electron node_modules/.tmp/agent-permission-modes.cjs --responses",
-    "test:agent-dock-ui": "node scripts/agent-dock-ui-smoke.cjs"
+    "test:agent-dock-ui": "node scripts/agent-dock-ui-smoke.cjs",
+    "test:agent-loop": "esbuild scripts/agent-loop-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-loop-smoke.cjs && electron node_modules/.tmp/agent-loop-smoke.cjs && electron node_modules/.tmp/agent-loop-smoke.cjs --responses",
+    "test:agent-timeline-ui": "node scripts/agent-timeline-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
