@@ -87,7 +87,7 @@ const api = {
     listConversations: (projectId: string) => invoke('agent:listConversations', projectId),
     getConversation: (projectId: string, id: string) => invoke('agent:getConversation', projectId, id),
     deleteConversation: (projectId: string, id: string) => invoke('agent:deleteConversation', projectId, id),
-    sendMessage: (projectId: string, id: string, content: string, connectionId?: string) => invoke('agent:sendMessage', projectId, id, content, connectionId),
+    sendMessage: (projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }) => invoke('agent:sendMessage', projectId, id, content, connectionId, options),
     cancelMessage: (projectId: string, id: string) => invoke('agent:cancelMessage', projectId, id),
     onChanged: (callback: (event: unknown) => void) => subscribe('agent:changed', callback)
   },

@@ -6,10 +6,24 @@ import { projectRedactor } from './redaction'
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { AgentConversation, AgentEvent, AgentConnectionTest } from '@shared/agent'
+import type { AgentActivity, AgentConversation, AgentEvent, AgentConnectionTest, AgentLedgerMessage, AgentMessage } from '@shared/agent'
 import { getProject } from '../storage/store'
 import { agentRoot, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, connectionSnapshot, recordCapability, readLocal, writeLocal } from './store'
-import { completeModel } from './model'
+import { completeModel, type ModelMessage } from './model'
+import { buildProjectContext } from './context'
+import { runAgentLoop } from './core/loop'
+import { readOnlyToolRegistry } from './skills'
+
+const SYSTEM_PROMPT = [
+  '你是 Kindra 项目内的助手。',
+  '只能使用提供的只读工具读取当前项目，不得声称已经修改、保存、执行或删除任何对象。',
+  '项目目录只含编号与名称；接口定义、URL、描述、用例、Flow 事件必须在需要时用读取工具按需获取。',
+  '环境与全局变量只提供名称、说明和启用状态，变量值不可用；不要猜测或索要变量值。',
+  '工具结果已经脱敏。若工具返回分页 cursor，请继续读取需要的部分；不要重复读取相同对象与相同参数。',
+  '完成任务后直接用中文给出简洁、基于已读取内容的最终回答。'
+].join('\n')
+const INTERRUPTED_TOOL_RESULT = '上次运行已中断，该工具未执行或结果已丢弃；不会自动重放。'
+const MAX_ACTIVITIES = 500
 
 const active = new Map<string, AbortController>()
 const tasks = new Set<Promise<void>>()
@@ -19,7 +33,9 @@ export function onAgentEvent(listener: (event: AgentEvent) => void): () => void 
   return () => { listeners.delete(listener) }
 }
 function emit(conversation: AgentConversation): void {
-  const event: AgentEvent = { project_id: conversation.project_id, conversation_id: conversation.conversation_id, conversation: structuredClone(conversation) }
+  // The ledger is a local persistence detail; renderers only need messages and activities.
+  const { ledger: _ledger, ...view } = conversation
+  const event: AgentEvent = { project_id: conversation.project_id, conversation_id: conversation.conversation_id, conversation: structuredClone(view) as AgentConversation }
   for (const listener of listeners) listener(event)
 }
 function projectDir(projectId: string): string {
@@ -35,12 +51,35 @@ function persist(conversation: AgentConversation): void {
   writeLocal(conversationFile(conversation.project_id, conversation.conversation_id), conversation)
   emit(conversation)
 }
+/** A process boundary: close streaming UI state, keep tool pairs valid, never replay. */
+function repairInterruptedConversation(conversation: AgentConversation): void {
+  conversation.status = 'interrupted'
+  for (const message of conversation.messages) if (message.status === 'streaming') message.status = 'interrupted'
+  for (const activity of conversation.activities ?? []) {
+    if (activity.status !== 'running') continue
+    activity.status = 'cancelled'
+    activity.finished_at = new Date().toISOString()
+    activity.error = activity.error ?? '运行时应用退出，该工具不会自动重放。'
+  }
+  if (!conversation.ledger?.length) return
+  const answered = new Set(conversation.ledger.filter(message => message.role === 'tool' && message.tool_call_id).map(message => message.tool_call_id))
+  const repaired: AgentLedgerMessage[] = []
+  for (const message of conversation.ledger) {
+    repaired.push(message)
+    if (message.role !== 'assistant' || !message.tool_calls?.length) continue
+    for (const call of message.tool_calls) {
+      if (answered.has(call.id)) continue
+      answered.add(call.id)
+      repaired.push({ role: 'tool', tool_call_id: call.id, content: INTERRUPTED_TOOL_RESULT })
+    }
+  }
+  conversation.ledger = repaired
+}
 function getConversation(projectId: string, id: string): AgentConversation {
   const conversation = readLocal<AgentConversation | null>(conversationFile(projectId, id), null)
   if (!conversation || conversation.project_id !== projectId) throw new Error('会话不存在')
   if (conversation.status === 'running' && !active.has(id)) {
-    conversation.status = 'interrupted'
-    for (const message of conversation.messages) if (message.status === 'streaming') message.status = 'interrupted'
+    repairInterruptedConversation(conversation)
     persist(conversation)
   }
   return conversation
@@ -94,7 +133,33 @@ async function testConnection(connectionId?: string): Promise<AgentConnectionTes
   recordCapability(snapshot, capability)
   return { capability, message: capability === 'tools' ? '连接成功，支持文本和工具调用' : '连接成功，仅文本对话；连续工具操作不可用' }
 }
-async function sendMessage(projectId: string, id: string, content: string, connectionId?: string): Promise<AgentConversation> {
+export interface SendMessageOptions {
+  activeTargetId?: string
+  activeFlowId?: string
+  activeEnvId?: string
+  permissionMode?: string
+}
+function historyForTools(conversation: AgentConversation): ModelMessage[] {
+  if (conversation.ledger?.length) return conversation.ledger.map(({ role, content, tool_call_id, tool_calls }) => ({ role, content, ...(tool_call_id ? { tool_call_id } : {}), ...(tool_calls ? { tool_calls } : {}) }))
+  return conversation.messages
+    .filter(message => message.status === 'complete' && message.content)
+    .map(({ role, content }) => ({ role, content }))
+}
+function messageHistory(conversation: AgentConversation): ModelMessage[] {
+  return conversation.messages
+    .filter(message => message.status === 'complete' && message.content)
+    .map(({ role, content }) => ({ role, content }))
+}
+function upsertActivity(conversation: AgentConversation, activity: AgentActivity): void {
+  const list = conversation.activities ?? (conversation.activities = [])
+  const index = list.findIndex(item => item.activity_id === activity.activity_id)
+  const copy = structuredClone(activity)
+  if (index >= 0) list[index] = copy
+  else list.push(copy)
+  if (list.length > MAX_ACTIVITIES) conversation.activities = list.slice(-MAX_ACTIVITIES)
+  emit(conversation)
+}
+async function sendMessage(projectId: string, id: string, content: string, connectionId?: string, options: SendMessageOptions = {}): Promise<AgentConversation> {
   if (typeof content !== 'string' || !content.trim() || content.length > 100_000) throw new Error('消息不能为空且不能超过 100000 字符')
   const conversation = getConversation(projectId, id)
   if (active.has(id)) throw new Error('当前会话仍在回复中')
@@ -112,27 +177,76 @@ async function sendMessage(projectId: string, id: string, content: string, conne
     const now = new Date().toISOString()
     const redact = projectRedactor(projectId, [snapshot.api_key])
     const userText = redact(content.trim())
+    const toolsEnabled = snapshot.capability === 'tools'
+    const history = toolsEnabled ? historyForTools(conversation) : messageHistory(conversation)
     if (!conversation.messages.length) conversation.title = userText.slice(0, 40)
-    conversation.messages.push({ message_id: randomUUID(), role: 'user', content: userText, status: 'complete', created_at: now })
-    const modelMessages = conversation.messages.filter(message => message.status === 'complete').map(({ role, content }) => ({ role, content }))
-    const reply = { message_id: randomUUID(), role: 'assistant' as const, content: '', status: 'streaming' as const, created_at: now }
+    const turnId = randomUUID()
+    conversation.messages.push({ message_id: randomUUID(), role: 'user', content: userText, status: 'complete', created_at: now, turn_id: turnId })
+    const reply: AgentMessage = { message_id: randomUUID(), role: 'assistant', content: '', status: 'streaming', created_at: now, turn_id: turnId }
     conversation.messages.push(reply)
     conversation.status = 'running'; delete conversation.error
     persist(conversation)
     void (async () => {
       try {
-        await completeModel(snapshot, [{ role: 'system', content: '你是 Kindra 项目内的助手。当前只提供文本对话，不具备读取项目、修改或执行接口的工具。不要声称已经执行操作。' }, ...modelMessages], {
-          signal: controller.signal,
-          onText: text => {
-            conversation.messages[conversation.messages.length - 1].content = redact.stream(text)
-            emit(conversation)
+        if (toolsEnabled) {
+          const context = buildProjectContext({
+            projectId,
+            active: { targetId: options.activeTargetId, flowId: options.activeFlowId, envId: options.activeEnvId },
+            redact
+          })
+          const result = await runAgentLoop({
+            model: snapshot,
+            projectId,
+            turnId,
+            system: SYSTEM_PROMPT,
+            context,
+            history,
+            userMessage: userText,
+            tools: readOnlyToolRegistry.list(),
+            signal: controller.signal,
+            redact,
+            onText: text => {
+              reply.content = redact.stream(text)
+              emit(conversation)
+            },
+            onActivity: activity => upsertActivity(conversation, activity)
+          })
+          conversation.ledger = result.messages
+          if (result.status === 'cancelled') {
+            conversation.status = 'interrupted'
+            reply.status = 'interrupted'
+          } else if (result.status === 'error') {
+            conversation.status = 'error'
+            reply.status = 'error'
+            conversation.error = redact(result.error ?? '模型请求失败')
+          } else {
+            conversation.status = 'idle'
+            reply.status = 'complete'
+            reply.content = result.text || '已完成读取。'
+            if (result.status === 'turn-limit') conversation.error = '已达到工具调用轮数上限，已给出当前可用回答；可重新发送继续。'
           }
-        }).then(result => { conversation.messages[conversation.messages.length - 1].content = redact(result.text) })
-        conversation.status = 'idle'
-        conversation.messages[conversation.messages.length - 1].status = 'complete'
+          for (const activity of conversation.activities ?? []) {
+            if (activity.status !== 'running') continue
+            activity.status = 'cancelled'
+            activity.finished_at = new Date().toISOString()
+          }
+        } else {
+          const result = await completeModel(snapshot, [
+            { role: 'system', content: '你是 Kindra 项目内的助手。当前只提供文本对话，不具备读取项目、修改或执行接口的工具。不要声称已经执行操作。' },
+            ...history,
+            { role: 'user', content: userText }
+          ], {
+            signal: controller.signal,
+            onText: text => { reply.content = redact.stream(text); emit(conversation) }
+          })
+          reply.content = redact(result.text)
+          reply.status = 'complete'
+          conversation.status = 'idle'
+        }
       } catch (error) {
-        conversation.status = controller.signal.aborted ? 'interrupted' : 'error'
-        conversation.messages[conversation.messages.length - 1].status = controller.signal.aborted ? 'interrupted' : 'error'
+        const interrupted = controller.signal.aborted
+        conversation.status = interrupted ? 'interrupted' : 'error'
+        reply.status = interrupted ? 'interrupted' : 'error'
         conversation.error = redact(error instanceof Error ? error.message : '模型请求失败')
       } finally {
         active.delete(id)
