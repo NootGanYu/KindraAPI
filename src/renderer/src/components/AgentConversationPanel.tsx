@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Empty, Input, Select, Space, Tag, Tooltip, Typography } from 'antd'
-import { CloseOutlined, DeleteOutlined, PlusOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, CloseOutlined, DeleteOutlined, PlusOutlined, SendOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
 import type { AgentConnection, AgentConversation } from '@shared/agent'
 import type { AgentPermissionMode } from '@shared/agentPlan'
 import type { Result } from '@shared/types'
@@ -33,6 +33,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const [text, setText] = useState('')
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>('ask')
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState<'chat' | 'undo' | 'candidates'>('chat')
   const [error, setError] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const conversation = conversations.find(item => item.conversation_id === selected)
@@ -129,8 +130,8 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         <Typography.Text type="secondary">{projectName}</Typography.Text>
       </div>
       <Space wrap size={8}>
-        <AgentTurnUndoPanel projectId={projectId} />
-        <AgentProjectCandidates projectId={projectId} />
+        <Tooltip title="整轮撤销与记录"><Button size="small" type={view === 'undo' ? 'primary' : 'default'} aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={() => setView(view === 'undo' ? 'chat' : 'undo')} /></Tooltip>
+        <Tooltip title="项目候选汇总"><Button size="small" type={view === 'candidates' ? 'primary' : 'default'} aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => setView(view === 'candidates' ? 'chat' : 'candidates')} /></Tooltip>
         <Tooltip title="收起面板"><Button size="small" aria-label="收起面板" icon={<CloseOutlined />} onClick={onClose} /></Tooltip>
       </Space>
     </header>
@@ -157,25 +158,31 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     {connection?.capability === 'unchecked' && <Alert type="info" message="尚未检测工具能力。可在设置页测试连接；当前仅进行文本对话。" />}
     {!connection && <Alert type="warning" showIcon message="请先在设置页配置 Agent 模型连接。" action={<Button size="small" onClick={onOpenSettings}>去设置</Button>} />}
     {running && conversation?.connection && <Alert type="info" message={`本轮固定连接：${conversation.connection.name} · ${conversation.connection.model}；修改配置不影响本轮。`} />}
-    <div className="agent-messages" role="log" aria-label="Agent 会话消息">
-      {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会自动选择项目对象；修改、执行、保存和新建由计划卡展示并按权限模式处理。</Typography.Text></Empty>}
-      {conversation?.messages.map(item => <article key={item.message_id} className={`agent-message ${item.role}`}>
-        <Typography.Text strong>{item.role === 'user' ? '你' : 'Agent'}</Typography.Text>
-        <div className="agent-message-text">{item.content || (item.status === 'streaming' ? '正在回复…' : '未收到回复')}</div>
-        {item.status === 'interrupted' && <Tag>已中断</Tag>}
-        {item.status === 'error' && <Tag color="error">回复失败</Tag>}
-      </article>)}
-      {conversation?.error && <Alert type="warning" message={conversation.error} />}
-      {conversation?.status === 'interrupted' && <Alert type="info" message="上次回复已中断。你可以继续发消息，不会自动重发。" />}
-      <AgentPlanPanel projectId={projectId} />
-      <div ref={end} />
-    </div>
-    <div className="agent-compose">
-      <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send() } }} />
-      <Space>
-        <Typography.Text type="secondary">⌘ / Ctrl + Enter 发送 · {permission.label}</Typography.Text>
-        {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
-      </Space>
-    </div>
+    {view === 'chat' ? <>
+      <div className="agent-messages" role="log" aria-label="Agent 会话消息">
+        {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会自动选择项目对象；修改、执行、保存和新建由计划卡展示并按权限模式处理。</Typography.Text></Empty>}
+        {conversation?.messages.map(item => <article key={item.message_id} className={`agent-message ${item.role}`}>
+          <Typography.Text strong>{item.role === 'user' ? '你' : 'Agent'}</Typography.Text>
+          <div className="agent-message-text">{item.content || (item.status === 'streaming' ? '正在回复…' : '未收到回复')}</div>
+          {item.status === 'interrupted' && <Tag>已中断</Tag>}
+          {item.status === 'error' && <Tag color="error">回复失败</Tag>}
+        </article>)}
+        {conversation?.error && <Alert type="warning" message={conversation.error} />}
+        {conversation?.status === 'interrupted' && <Alert type="info" message="上次回复已中断。你可以继续发消息，不会自动重发。" />}
+        <AgentPlanPanel projectId={projectId} />
+        <div ref={end} />
+      </div>
+      <div className="agent-compose">
+        <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send() } }} />
+        <Space>
+          <Typography.Text type="secondary">⌘ / Ctrl + Enter 发送 · {permission.label}</Typography.Text>
+          {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
+        </Space>
+      </div>
+    </> : <div className="agent-dock-subview">
+      {view === 'undo'
+        ? <AgentTurnUndoPanel projectId={projectId} inline onClose={() => setView('chat')} />
+        : <AgentProjectCandidates projectId={projectId} inline onClose={() => setView('chat')} />}
+    </div>}
   </div>
 }

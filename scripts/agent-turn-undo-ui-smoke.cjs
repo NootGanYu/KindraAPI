@@ -44,7 +44,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   await review.getByRole('button', { name: '放弃本次撤销' }).click()
   await page.getByLabel('撤销审计').getByText(/已放弃/).first().waitFor()
   assert.equal(await page.evaluate(async ({ pid, targetId }) => (await window.api.agent.getDraft(pid, targetId)).data.target.description, info), 'Agent 说明')
-  await page.locator('.ant-drawer-content-wrapper').filter({ hasText: '整轮本地撤销' }).locator('.ant-drawer-body').evaluate(el => el.scrollTo(0, 0))
+  await page.locator('.agent-dock-subview').evaluate(el => el.scrollTo(0, 0))
   await page.getByText('预览整轮撤销', { exact: true }).first().click()
   await review.getByText('接口 / 用例 · 整轮接口').waitFor()
   await review.getByRole('button', { name: '确认整轮撤销到草稿' }).click()

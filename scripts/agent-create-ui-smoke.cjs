@@ -48,7 +48,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   await page.getByText('未采纳', { exact: true }).waitFor()
   await page.getByRole('button', { name: '恢复到草稿', exact: true }).click()
   await page.getByText('已应用草稿', { exact: true }).waitFor()
-  await page.locator('.ant-drawer-close:visible').click()
+  await page.getByRole('button', { name: '返回对话', exact: true }).click()
   await submitAgentGoal(page, '正式保存健康检查草稿')
   await page.getByRole('button', { name: '批准修改与保存计划', exact: true }).click()
   await page.getByText('草稿与正式定义分别处理。', { exact: true }).first().waitFor()

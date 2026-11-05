@@ -55,7 +55,7 @@ const launch = () => _electron.launch({ args: [path.resolve(__dirname, '../out/m
   await page.getByRole('button', { name: '正式保存恢复草稿', exact: true }).click()
   await page.getByText('已正式保存', { exact: true }).waitFor()
   console.log('PASS Electron Git discard deletion retains candidate evidence and can explicitly restore the definition')
-  await page.locator('.ant-drawer-close:visible').click()
+  await page.getByRole('button', { name: '返回对话', exact: true }).click()
   flowId = await page.evaluate(async pid => (await window.api.flows.create(pid,'删除后的流程')).data.flow_id, pid)
   await page.evaluate(async ({pid,flowId}) => {
     const p = await window.api.agent.proposeEditPlan(pid,{goal:'修改流程',targetId:'',flowIds:[flowId]}); if (!p.ok) throw new Error(p.error)

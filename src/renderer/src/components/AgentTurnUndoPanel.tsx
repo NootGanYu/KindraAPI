@@ -1,25 +1,29 @@
 import { useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Drawer, Radio, Space, Tag, Tooltip } from 'antd'
-import { UndoOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Card, Drawer, Radio, Space, Tag, Tooltip, Typography } from 'antd'
+import { ArrowLeftOutlined, UndoOutlined } from '@ant-design/icons'
 import type { AgentTurnUndo, AgentTurnSummary } from '@shared/agentTurnUndo'
 import type { AgentConflictChoice } from '@shared/agentDraft'
 import type { Result } from '@shared/types'
 import { flushAgentDrafts } from '../agentDraftSync'
 import SnapshotDiff from './SnapshotDiff'
 const unwrap = <T,>(r: Result<T>): T => { if (!r.ok) throw new Error(r.error); return r.data }
-export default function AgentTurnUndoPanel({ projectId }: { projectId: string }): JSX.Element {
+export function AgentTurnUndoContent({ projectId, onClose }: { projectId: string; onClose?: () => void }): JSX.Element {
   const { modal } = App.useApp()
-  const [open,setOpen]=useState(false), [busy,setBusy]=useState(false), [error,setError]=useState('')
+  const [busy,setBusy]=useState(false), [error,setError]=useState('')
   const [turns,setTurns]=useState<AgentTurnSummary[]>([]),[history,setHistory]=useState<AgentTurnUndo[]>([]),[review,setReview]=useState<AgentTurnUndo|null>(null)
   const [choices,setChoices]=useState<Record<string,Record<string,AgentConflictChoice>>>({})
   async function load(): Promise<void> { setTurns(unwrap(await window.api.agent.listUndoTurns(projectId)));setHistory(unwrap(await window.api.agent.listTurnUndos(projectId))) }
-  useEffect(()=>{if(open) void load().catch(e=>setError(e.message))},[open,projectId])
+  useEffect(()=>{ void load().catch(e=>setError(e.message)) },[projectId])
   async function preview(planId: string): Promise<void> { setBusy(true);try { await flushAgentDrafts();setReview(unwrap(await window.api.agent.previewTurnUndo(projectId,planId)));setChoices({});setError('');await load() }catch(e){setError((e as Error).message)}finally{setBusy(false)} }
   async function apply(): Promise<void> { if(!review)return;setBusy(true);try { await flushAgentDrafts();setReview(unwrap(await window.api.agent.applyTurnUndo(projectId,review.undo_id,review.review_id,choices)));setChoices({});setError('');await load() }catch(e){setError((e as Error).message)}finally{setBusy(false)} }
-  function remove(): void { modal.confirm({title:'删除本项目全部 Agent 记录？',content:'会话、计划、工具结果、Agent 报告、候选、Agent 草稿、墓碑和撤销审计将从本机删除。正式接口、Flow、手动运行报告、纯人工草稿及模型连接保留。已删除记录无法恢复。',okText:'删除全部 Agent 记录',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{ await flushAgentDrafts();unwrap(await window.api.agent.deleteProjectAgentRecords(projectId));setOpen(false) }}) }
-  return <><Tooltip title="整轮撤销与记录"><Button aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={()=>setOpen(true)} /></Tooltip><Drawer title="整轮本地撤销" width="92vw" open={open} onClose={()=>setOpen(false)}>
+  function remove(): void { modal.confirm({title:'删除本项目全部 Agent 记录？',content:'会话、计划、工具结果、Agent 报告、候选、Agent 草稿、墓碑和撤销审计将从本机删除。正式接口、Flow、手动运行报告、纯人工草稿及模型连接保留。已删除记录无法恢复。',okText:'删除全部 Agent 记录',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{ await flushAgentDrafts();unwrap(await window.api.agent.deleteProjectAgentRecords(projectId));onClose?.() }}) }
+  return <div className="agent-dock-subview-content">
+    <div className="agent-dock-subview-title">
+      <Typography.Title level={5}>整轮本地撤销</Typography.Title>
+      {onClose && <Button size="small" aria-label="返回对话" icon={<ArrowLeftOutlined />} onClick={onClose}>返回对话</Button>}
+    </div>
     <Alert type="warning" message="仅撤销本地草稿修改，不会隐式正式保存。远端请求及外部副作用无法撤销；逐对象处理，不保证整批原子回滚。" />
-    <Space wrap style={{margin:'16px 0'}}><Button danger onClick={remove}>删除本项目 Agent 记录</Button><Button onClick={()=>void load()}>刷新记录</Button></Space>
+    <Space wrap><Button danger onClick={remove}>删除本项目 Agent 记录</Button><Button onClick={()=>void load()}>刷新记录</Button></Space>
     {error&&<Alert type="error" message={error}/>}
     {turns.map(turn=><Card key={turn.plan_id} size="small" title={turn.name}><Space><Tag>{turn.applied_count} 个已应用候选</Tag><Button loading={busy} onClick={()=>void preview(turn.plan_id)}>预览整轮撤销</Button></Space></Card>)}
     {!!history.length&&<section aria-label="撤销审计"><h3>本机撤销审计</h3>{history.map(item=><Button key={item.undo_id} onClick={()=>{setReview(item);setChoices({})}}>{item.updated_at} · {item.status==='cancelled'?'已放弃':item.status==='completed'?'已完成':item.status==='partial'?'部分完成 / 待审阅':'待审阅'}</Button>)}</section>}
@@ -35,5 +39,12 @@ export default function AgentTurnUndoPanel({ projectId }: { projectId: string })
         <Radio.Group value={choices[entry.key]?.[conflict.id]} onChange={e=>setChoices(previous=>({...previous,[entry.key]:{...previous[entry.key],[conflict.id]:e.target.value}}))}><Radio value="current">保留当前</Radio><Radio value="agent">恢复应用前</Radio><Radio value="base">恢复应用后</Radio></Radio.Group>
       </section>)}
     </Card>)}{['review','partial'].includes(review.status)&&<Space><Button onClick={()=>void window.api.agent.cancelTurnUndo(projectId,review.undo_id).then(unwrap).then(result=>{setReview(result);return load()}).catch(e=>setError(e.message))}>放弃本次撤销</Button><Button type="primary" loading={busy} disabled={review.entries.some(e=>e.conflicts.some(c=>!choices[e.key]?.[c.id]))} onClick={()=>void apply()}>确认整轮撤销到草稿</Button></Space>}</section>}
+  </div>
+}
+export default function AgentTurnUndoPanel({ projectId, inline = false, onClose }: { projectId: string; inline?: boolean; onClose?: () => void }): JSX.Element {
+  const [open,setOpen]=useState(false)
+  if (inline) return <AgentTurnUndoContent projectId={projectId} onClose={onClose} />
+  return <><Tooltip title="整轮撤销与记录"><Button aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={()=>setOpen(true)} /></Tooltip><Drawer title="整轮本地撤销" width="92vw" open={open} onClose={()=>setOpen(false)}>
+    <AgentTurnUndoContent projectId={projectId} onClose={()=>setOpen(false)} />
   </Drawer></>
 }

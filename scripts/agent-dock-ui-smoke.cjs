@@ -58,9 +58,19 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   const panel = page.locator('.agent-dock-panel')
   await panel.waitFor()
   const viewport = await page.evaluate(() => window.innerWidth)
-  const width = (await page.locator('.ant-drawer-content-wrapper').boundingBox()).width
-  assert(Math.abs(width / viewport - 0.4) < 0.03, `panel must be about 40vw (${width}/${viewport})`)
+  const height = await page.evaluate(() => window.innerHeight)
+  const box = await page.locator('.ant-drawer-content-wrapper').boundingBox()
+  assert(Math.abs(box.width / viewport - 0.4) < 0.03, `panel must be about 40vw (${box.width}/${viewport})`)
+  assert(box.y > 20 && height - (box.y + box.height) > 8, `panel must leave space above and below (${box.y}, ${height - (box.y + box.height)})`)
   assert.equal(await page.locator('.ant-drawer-mask').count(), 0, 'dock must not mask the main interface')
+  await page.getByRole('button', { name: '整轮撤销与记录', exact: true }).click()
+  await page.locator('.agent-dock-subview').waitFor()
+  assert.equal(await page.locator('.ant-drawer-content-wrapper').count(), 1, 'undo view must stay inside the dock panel')
+  await page.getByRole('button', { name: '返回对话', exact: true }).click()
+  await page.getByRole('button', { name: '项目候选汇总', exact: true }).click()
+  await page.locator('.agent-dock-subview').waitFor()
+  assert.equal(await page.locator('.ant-drawer-content-wrapper').count(), 1, 'candidates view must stay inside the dock panel')
+  await page.getByRole('button', { name: '返回对话', exact: true }).click()
   for (const name of ['只读计划', '修改草稿', '执行草稿', '执行接口用例', '修改并保存', '新建接口草稿', '连续任务']) {
     assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, `legacy mode button ${name} must be removed`)
   }
