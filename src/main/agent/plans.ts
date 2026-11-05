@@ -610,7 +610,8 @@ function validateSlotCall(plan: AgentPlan, context: PlanContext, slot: ApprovedS
     if (operation === 'propose_flow_change') validateFlowPatch(fillStablePatchRows(context.flows.get(slot.flow_id!), args.patch))
     else {
       validatePatch(fillStablePatchRows(context.targets.get(slot.target_id)!, args.patch))
-      validatePatchWithinAllowed(context.targets.get(slot.target_id)!, args.patch, slot.allowed_changes)
+      try { validatePatchWithinAllowed(context.targets.get(slot.target_id)!, args.patch, slot.allowed_changes) }
+      catch (error) { throw new PlanExpansion(error instanceof Error ? error.message : '修改超出批准字段范围') }
     }
   }
 }
