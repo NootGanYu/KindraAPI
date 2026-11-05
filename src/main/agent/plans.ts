@@ -35,6 +35,8 @@ interface PlanContext {
   redact: ReturnType<typeof projectRedactor>
 }
 const contexts = new Map<string, PlanContext>()
+// Raw snapshots/checkpoints stay in main memory, never in ordinary plan JSON.
+const resumableContexts = new Map<string, PlanContext>()
 let stopping = false
 const listeners = new Set<(event: AgentPlanEvent) => void>()
 export function onPlanEvent(listener: (event: AgentPlanEvent) => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
@@ -58,10 +60,11 @@ function getPlan(projectId: string, id: string): AgentPlan {
     plan.status = 'interrupted'; plan.error = '上次任务已中断，请重新生成计划；不会自动执行。'
     for (const step of plan.steps) {
       if (step.status === 'running') { step.status = ['execute_api', 'execute_api_case', 'execute_flow'].includes(step.operation) ? 'unknown' : 'paused'; step.error = '上次任务中断，执行结果可能未知，请勿自动重试。' }
-      else if (step.status === 'pending') { step.status = 'paused'; step.error = plan.error }
+      else if (step.status === 'pending') { step.retryable = step.status === 'pending'; step.status = 'paused'; step.error = plan.error }
     }
     savePlan(plan)
   }
+  plan.can_resume = resumableContexts.has(id) && plan.steps.some(step => step.retryable)
   return plan
 }
 function listPlans(projectId: string): AgentPlan[] {
@@ -223,14 +226,14 @@ async function proposeReadPlan(projectId: string, input: ReadPlanInput, mode: 'r
 function rejectPlan(projectId: string, id: string): AgentPlan {
   const plan = getPlan(projectId, id)
   if (!['pending', 'generating'].includes(plan.status)) throw new Error('计划无法拒绝')
-  contexts.get(id)?.controller.abort(); contexts.delete(id); plan.status = 'rejected'; return savePlan(plan)
+  contexts.get(id)?.controller.abort(); contexts.delete(id); resumableContexts.delete(id); plan.status = 'rejected'; return savePlan(plan)
 }
 async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
   const plan = getPlan(projectId, id), context = contexts.get(id)
   if (plan.status !== 'pending' || !context) throw new Error('计划不能批准，请重新生成计划')
   plan.status = 'running'; savePlan(plan)
   try {
-    const failedTargets = new Set<string>()
+    const failedTargets = new Set(plan.steps.filter(step => ['failed','paused','unknown','cancelled'].includes(step.status)).map(step => step.kind === 'flow' ? `flow:${step.flow_id}` : `api:${executionKey(step.target_id, step.case_id)}`))
     const byId = new Map(plan.steps.map(step => [step.step_id, step]))
     while (plan.steps.some(step => step.status === 'pending')) {
       let progressed = false
@@ -243,6 +246,7 @@ async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
         const blocked = dependencies.some(dependency => ['failed', 'paused', 'unknown', 'cancelled'].includes(dependency?.status ?? ''))
         if (missing || blocked || failedTargets.has(objectKey)) {
           step.status = 'paused'
+          step.retryable = !missing && !failedTargets.has(objectKey)
           step.error = missing ? '存在未知依赖，需重新确认计划' : blocked ? '依赖步骤未成功，已暂停' : '同一对象的先前步骤失败，已暂停'
           progressed = true; savePlan(plan); continue
         }
@@ -274,7 +278,7 @@ async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
           } else if (context.mode === 'execute' || context.mode === 'case-execute') {
             const result: Awaited<ReturnType<typeof executeFlowSnapshot>> & { response?: SendRecord['response'] } = step.operation === 'execute_flow' ? await executeFlowSnapshot(context.flowExecutions.get(step.flow_id!)!, context.controller.signal) : await executeSnapshot(context.executions.get(executionKey(step.target_id, step.case_id))!, context.controller.signal)
             if (result.response) context.responses.set(step.step_id, result.response)
-            step.result = context.redact(result.report); step.status = result.status; step.error = result.error
+            step.result = context.redact(result.report); step.status = result.status; step.error = result.error; step.retryable = result.retryable
             if (step.status !== 'succeeded') failedTargets.add(objectKey)
           } else {
             if (call.name === 'propose_flow_change') {
@@ -331,8 +335,33 @@ async function approvePlan(projectId: string, id: string): Promise<AgentPlan> {
   } catch (error) {
     plan.status = context.controller.signal.aborted ? 'interrupted' : 'paused'
     plan.error = context.redact(error instanceof Error ? error.message : '读取计划执行失败')
-    for (const step of plan.steps) if (step.status === 'pending' || step.status === 'running') { step.status = 'paused'; step.error = plan.error }
-  } finally { contexts.delete(id) }
+    for (const step of plan.steps) if (step.status === 'pending' || step.status === 'running') { step.retryable = step.status === 'pending'; step.status = 'paused'; step.error = plan.error }
+  } finally {
+    contexts.delete(id)
+    if (['execute', 'case-execute'].includes(context.mode) && plan.steps.some(step => step.retryable)) resumableContexts.set(id, context)
+    else resumableContexts.delete(id)
+    plan.can_resume = resumableContexts.has(id)
+  }
+  return savePlan(plan)
+}
+function resumePlan(projectId: string, id: string, stepIds: string[]): AgentPlan {
+  if (stopping) throw new Error('正在退出，不能恢复计划')
+  const plan = getPlan(projectId, id), context = resumableContexts.get(id)
+  if (!context || !['paused', 'interrupted'].includes(plan.status)) throw new Error('恢复快照不可用；成功或未知步骤禁止重发。重启后须重新确认未发送范围')
+  if (!Array.isArray(stepIds) || !stepIds.length || new Set(stepIds).size !== stepIds.length) throw new Error('须明确选择未完成步骤')
+  const selected = stepIds.map(stepId => plan.steps.find(step => step.step_id === stepId))
+  for (const step of selected) {
+    if (!step || !step.retryable || ['succeeded', 'unknown'].includes(step.status)) throw new Error('只能恢复未发送且未完成的明确步骤')
+    if (step.depends_on.some(dependency => !stepIds.includes(dependency) && plan.steps.find(s => s.step_id === dependency)?.status !== 'succeeded')) throw new Error('依赖尚未成功，不能恢复')
+    if (step.operation === 'execute_flow') context.flowExecutions.get(step.flow_id!)!.checkScope()
+    else context.executions.get(executionKey(step.target_id, step.case_id))!.checkScope()
+  }
+  if (plan.environment_id && !store.listEnvironments(projectId).some(env => env.env_id === plan.environment_id)) throw new Error('获批环境已删除')
+  for (const step of selected) { step!.status = 'pending'; step!.error = undefined; step!.retryable = false }
+  context.controller = new AbortController()
+  resumableContexts.delete(id); contexts.set(id, context)
+  plan.status = 'pending'; plan.error = undefined; plan.can_resume = false; plan.approval_revision = (plan.approval_revision ?? 1) + 1
+  plan.explanation = '恢复审批仅执行选中的未完成步骤；已成功节点与循环迭代保留，已发送失败或未知结果不重发；不回滚远端副作用。'
   return savePlan(plan)
 }
 function cancelPlan(projectId: string, id: string): AgentPlan {
@@ -346,6 +375,7 @@ function deletePlan(projectId: string, id: string): boolean {
   const plan = getPlan(projectId, id)
   if (plan.status === 'running' || plan.status === 'generating') throw new Error('请等待计划结束后删除')
   contexts.get(id)?.controller.abort(); contexts.delete(id)
+  resumableContexts.delete(id)
   fs.unlinkSync(planFile(projectId, id))
   for (const listener of listeners) listener({ project_id: projectId, plan_id: id, plan: null })
   return true
@@ -364,9 +394,13 @@ export async function shutdownPlans(): Promise<void> {
     contexts.delete(id)
     getPlan(context.projectId, id)
   }
+  resumableContexts.clear()
   stopping = false
   const failure = results.find(result => result.status === 'rejected')
   if (failure?.status === 'rejected') throw failure.reason
+}
+export function clearProjectPlanContexts(projectId: string): void {
+  for (const [id, context] of resumableContexts) if (context.projectId === projectId) resumableContexts.delete(id)
 }
 export function hasActivePlanOperations(): boolean { return operations.size > 0 }
 export function activePlanCount(): number { return contexts.size }
@@ -382,4 +416,4 @@ const proposeEditPlan = (projectId: string, input: ReadPlanInput): Promise<Agent
 const proposeSavePlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'save')
 const proposeExecutePlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'execute')
 const proposeExecuteCasePlan = (projectId: string, input: ReadPlanInput): Promise<AgentPlan> => proposeReadPlan(projectId, input, 'case-execute')
-export const planCommands = { proposeExecuteCasePlan: (...args: Parameters<typeof proposeExecuteCasePlan>) => track(proposeExecuteCasePlan(...args)), proposeCreateApiPlan: (...args: Parameters<typeof proposeCreateApiPlan>) => track(proposeCreateApiPlan(...args)), proposeExecutePlan: (...args: Parameters<typeof proposeExecutePlan>) => track(proposeExecutePlan(...args)), cancelPlan, proposeSavePlan: (...args: Parameters<typeof proposeSavePlan>) => track(proposeSavePlan(...args)), proposeEditPlan: (...args: Parameters<typeof proposeEditPlan>) => track(proposeEditPlan(...args)), proposeReadPlan: (...args: Parameters<typeof proposeReadPlan>) => track(proposeReadPlan(...args)), getPlan, listPlans, rejectPlan, approvePlan: (...args: Parameters<typeof approvePlan>) => track(approvePlan(...args)), deletePlan }
+export const planCommands = { resumePlan, proposeExecuteCasePlan: (...args: Parameters<typeof proposeExecuteCasePlan>) => track(proposeExecuteCasePlan(...args)), proposeCreateApiPlan: (...args: Parameters<typeof proposeCreateApiPlan>) => track(proposeCreateApiPlan(...args)), proposeExecutePlan: (...args: Parameters<typeof proposeExecutePlan>) => track(proposeExecutePlan(...args)), cancelPlan, proposeSavePlan: (...args: Parameters<typeof proposeSavePlan>) => track(proposeSavePlan(...args)), proposeEditPlan: (...args: Parameters<typeof proposeEditPlan>) => track(proposeEditPlan(...args)), proposeReadPlan: (...args: Parameters<typeof proposeReadPlan>) => track(proposeReadPlan(...args)), getPlan, listPlans, rejectPlan, approvePlan: (...args: Parameters<typeof approvePlan>) => track(approvePlan(...args)), deletePlan }

@@ -47,14 +47,14 @@ export interface RequestExecutionContext {
   globals: ReturnType<typeof store.getGlobalVars>
   resolved: ResolvedRequest
   dependencies: Array<Target | RequestModel>
-  variables?: { environment: Record<string, unknown>; globals: Record<string, unknown> }
+  variables?: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }
 }
 export interface RequestExecutionPolicy {
-  beforeRequest(request: { method: string; url: { toString(): string }; headers?: { get(name: string): string | undefined } }, variables: { environment: Record<string, unknown>; globals: Record<string, unknown> }): void
+  beforeRequest(request: { method: string; url: { toString(): string }; headers?: { get(name: string): string | undefined } }, variables: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }): void
   fileResolver: unknown
   followRedirects: boolean
   persistVariables: boolean
-  onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown> }): void
+  onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }): void
 }
 /** Raw definition dependencies for scope checks; does not re-resolve live model references. */
 export function requestDefinitionDependencies(projectId: string, target: Target): Array<Target | RequestModel> {
@@ -478,6 +478,9 @@ export async function sendRequest(
   let networkInfo: Record<string, unknown> | null = null
   const environmentScope = new VariableScope({ values: context?.variables ? Object.entries(context.variables.environment).map(([key, value]) => ({ key, value })) : toValues(environmentValues) })
   const globalScope = new VariableScope({ values: context?.variables ? Object.entries(context.variables.globals).map(([key, value]) => ({ key, value })) : toValues(globalValues) })
+  const localScope = new VariableScope({ values: Object.entries(context?.variables?.local ?? {}).map(([key, value]) => ({ key, value })) })
+  // Postman replaces state._variables after each script (environment/globals mutate in place).
+  let readLocalValues = (): Record<string, unknown> => localScope.toObject()
   const environmentBefore = environmentScope.toObject()
   const globalsBefore = globalScope.toObject()
 
@@ -534,7 +537,7 @@ export async function sendRequest(
         fileResolver: options.policy?.fileResolver ?? fs,
         environment: environmentScope,
         globals: globalScope,
-        localVariables: new VariableScope({ values: [] })
+        localVariables: localScope
       },
       (err: Error | null, run: any) => {
         if (err) {
@@ -542,13 +545,14 @@ export async function sendRequest(
           return
         }
         runtimeRun = run
+        readLocalValues = () => run.state._variables.toObject()
         if (options.signal?.aborted) { abort(); return }
         let responseRef: any = null
         let responseError: Error | null = null
         run.start({
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
             if (options.policy) {
-              try { options.policy.beforeRequest(request as any, { environment: environmentScope.toObject(), globals: globalScope.toObject() }) }
+              try { options.policy.beforeRequest(request as any, { environment: environmentScope.toObject(), globals: globalScope.toObject(), local: readLocalValues() }) }
               catch (error) {
                 controls.abort()
                 runtimeRun?.abort()
@@ -632,7 +636,7 @@ export async function sendRequest(
     )
   })
 
-  options.policy?.onVariables?.({ environment: environmentScope.toObject(), globals: globalScope.toObject() })
+  options.policy?.onVariables?.({ environment: environmentScope.toObject(), globals: globalScope.toObject(), local: readLocalValues() })
   const finishedAt = Date.now()
   if (options.policy?.persistVariables !== false && result.error?.type !== 'cancelled') {
     if (env) {

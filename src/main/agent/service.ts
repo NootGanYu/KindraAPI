@@ -1,10 +1,8 @@
 import { turnUndoCommands } from './turnUndo'
 import { flowDraftCommands, stashAgentFlowDrafts, listAgentFlowDrafts, forgetProjectAgentFlowDrafts, retainManualFlowDrafts } from './flowDrafts'
 import { draftCommands, stashAgentDrafts, listAgentDrafts, forgetProjectAgentDrafts } from './drafts'
-import * as planLifecycle from './plans'
-import { activePlanCount, hasActivePlanOperations } from './plans'
+import { activePlanCount, clearProjectPlanContexts, hasActivePlanOperations, planCommands, shutdownPlans } from './plans'
 import { projectRedactor } from './redaction'
-import { planCommands, shutdownPlans } from './plans'
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -145,8 +143,7 @@ function deleteProjectAgentRecords(pid: string): boolean {
   const retainManual = retainManualFlowDrafts(pid)
   const conversations = listConversations(pid), plans = planCommands.listPlans(pid)
   for (const plan of plans) planCommands.deletePlan(pid, plan.plan_id)
-  // The lifecycle service also drops paused resumable contexts when available.
-  ;(planLifecycle as typeof planLifecycle & { clearProjectPlanContexts?: (pid: string) => void }).clearProjectPlanContexts?.(pid)
+  clearProjectPlanContexts(pid)
   fs.rmSync(path.join(agentRoot(), 'projects', pid), { recursive: true, force: true })
   retainManual()
   forgetProjectAgentDrafts(pid, apiIds); forgetProjectAgentFlowDrafts(pid, flowIds)

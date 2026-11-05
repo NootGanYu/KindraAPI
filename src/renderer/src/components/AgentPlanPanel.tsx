@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Drawer, Input, Select, Space, Tag, Typography } from 'antd'
 import type { AgentPlan, AgentPlanStep } from '@shared/agentPlan'
 import type { AgentConnection } from '@shared/agent'
-import type { CaseRunResult, Environment, Flow, Result, TargetSummary } from '@shared/types'
+import type { CaseRunResult, Environment, Flow, FlowEventResult, Result, TargetSummary } from '@shared/types'
 import { flushAgentDrafts } from '../agentDraftSync'
 import { useApp } from '../store'
 
@@ -31,6 +31,7 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
   const [goal, setGoal] = useState('解释当前接口')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [resumeSelections, setResumeSelections] = useState<Record<string, string[]>>({})
   const capable = connection?.capability === 'tools'
   useEffect(() => {
     let mounted = true
@@ -94,6 +95,13 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
     }
     catch (e) { setError((e as Error).message) }
   }
+  async function resume(plan: AgentPlan): Promise<void> {
+    setError('')
+    try {
+      unwrap(await window.api.agent.resumePlan(projectId, plan.plan_id, resumeSelections[plan.plan_id] ?? []))
+      setResumeSelections(previous => ({ ...previous, [plan.plan_id]: [] }))
+    } catch (e) { setError((e as Error).message) }
+  }
   return <>
     <Button onClick={() => { setMode('read'); void show('read') }}>只读计划</Button>
     <Button onClick={() => { setMode('edit'); void show('edit') }}>修改草稿</Button>
@@ -131,11 +139,14 @@ export default function AgentPlanPanel({ projectId, connection }: { projectId: s
               {step.execution && <div><Typography.Text strong>{step.execution.method} {step.execution.url}</Typography.Text><ul>{step.execution.effects.map(effect => <li key={effect}>{effect}</li>)}</ul></div>}
               {step.changes !== undefined && <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(step.changes, null, 2)}</pre>}
               <CaseResult step={step} />
+              <FlowResults step={step} />
+              {plan.can_resume && step.retryable && <Checkbox checked={(resumeSelections[plan.plan_id] ?? []).includes(step.step_id)} onChange={event => setResumeSelections(previous => ({ ...previous, [plan.plan_id]: event.target.checked ? [...(previous[plan.plan_id] ?? []), step.step_id] : (previous[plan.plan_id] ?? []).filter(id => id !== step.step_id) }))}>选择恢复此未完成步骤</Checkbox>}
               {step.error && <Typography.Text type="danger">{step.error}</Typography.Text>}
             </div>)}
             {plan.error && <Alert type="warning" message={plan.error} />}
             {plan.explanation && <div style={{ whiteSpace: 'pre-wrap' }}>{plan.explanation}</div>}
             {plan.steps.some(step => step.result) && <details><summary>查看脱敏工具结果</summary><pre style={{ maxHeight: 240, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{JSON.stringify(plan.steps.map(({ step_id, status, result, error }) => ({ step_id, status, result, error })), null, 2)}</pre></details>}
+            {plan.can_resume && <><Typography.Text>已成功的步骤和循环迭代会保留；结果未知或已发送的失败请求不会自动重发。选择未完成步骤后生成新一轮待审批计划。</Typography.Text><Button disabled={!(resumeSelections[plan.plan_id]?.length)} onClick={() => void resume(plan)}>生成恢复计划（需重新批准）</Button></>}
             <Space>{plan.status === 'pending' && <><Button type="primary" onClick={() => void act('approvePlan', plan.plan_id)}>{plan.steps.some(step => ['save_api','save_flow'].includes(step.operation)) ? '批准修改与保存计划' : plan.steps.some(step => step.operation === 'create_api') ? '批准新建计划' : plan.steps.some(step => ['execute_api', 'execute_api_case', 'execute_flow'].includes(step.operation)) ? '批准执行计划' : plan.steps.some(step => ['propose_api_change', 'propose_flow_change'].includes(step.operation)) ? '批准修改计划' : '批准只读计划'}</Button><Button onClick={() => void act('rejectPlan', plan.plan_id)}>拒绝计划</Button></>}
               {['running', 'generating'].includes(plan.status) && <Button onClick={() => void act('cancelPlan', plan.plan_id)}>取消任务</Button>}
               {!['running', 'generating'].includes(plan.status) && <Button onClick={() => void act('deletePlan', plan.plan_id)}>删除计划记录</Button>}</Space>
@@ -155,4 +166,14 @@ function CaseResult({ step }: { step: AgentPlanStep }): JSX.Element | null {
     {result.assertions?.map(assertion => <div key={assertion.assertion_id}><Tag color={assertion.passed ? 'success' : 'error'}>{assertion.assertion_id} · {assertion.passed ? '通过' : '失败'}</Tag>{assertion.actual !== undefined && <span>实际：{assertion.actual}</span>} {assertion.message}</div>)}
     {result.error && <div>{result.error}</div>}
   </div>
+}
+
+function FlowResults({ step }: { step: AgentPlanStep }): JSX.Element | null {
+  const events = (step.result as { events?: FlowEventResult[] } | undefined)?.events
+  if (!events?.length) return null
+  const renderEvents = (items: FlowEventResult[]): JSX.Element => <ul>{items.map((event, index) => <li key={`${event.event_id}-${event.iteration ?? ''}-${index}`}>
+    {event.name}（{event.type}）{event.iteration !== undefined ? ` · 第 ${event.iteration + 1} 次迭代` : ''} · {({ passed: '已完成', failed: '失败', skipped: '已跳过', paused: '依赖暂停', unknown: '远端结果未知', cancelled: '已取消' } as const)[event.status]}{event.error ? `：${event.error}` : event.detail ? `：${event.detail}` : ''}
+    {event.children?.length ? renderEvents(event.children) : null}
+  </li>)}</ul>
+  return <div><Typography.Text strong>Flow 节点结果</Typography.Text>{renderEvents(events)}</div>
 }

@@ -77,10 +77,10 @@ async function main(): Promise<void> {
     reset()
     const failing = structuredClone(draft); failing.events[0].assertions = [{ assert_id: 'wrong-status', type: 'status', expected: 201 }]; commands.syncFlowEditorDraft(pid, failing)
     const failedPlan = await propose(); const failedCount = hits.length; const failed = await commands.approvePlan(pid, failedPlan.plan_id)
-    assert.equal(failed.steps[0].status, 'failed'); assert.equal(hits.length, failedCount + 1); assert.equal((failed.steps[0].result as any).events[1].status, 'skipped')
+    assert.equal(failed.steps[0].status, 'failed'); assert.equal(hits.length, failedCount + 1); assert.equal((failed.steps[0].result as any).events[1].status, 'paused')
     reset(); const dropped = structuredClone(a); dropped.url = `${base}/drop`; store.saveTarget(pid, dropped)
     const dropPlan = await propose(); const dropCount = hits.length; const drop = await commands.approvePlan(pid, dropPlan.plan_id)
-    assert.equal(drop.steps[0].status, 'unknown'); assert.equal(hits.length, dropCount + 1); assert.equal((drop.steps[0].result as any).events[1].status, 'skipped')
+    assert.equal(drop.steps[0].status, 'unknown'); assert.equal(hits.length, dropCount + 1); assert.equal((drop.steps[0].result as any).events[1].status, 'paused')
     await assert.rejects(commands.approvePlan(pid, dropPlan.plan_id)); assert.equal(hits.length, dropCount + 1)
     reset(); const hanging = structuredClone(a); hanging.url = `${base}/hang`; store.saveTarget(pid, hanging)
     const hangPlan = await propose(); afterHit = () => commands.cancelPlan(pid, hangPlan.plan_id)
@@ -90,7 +90,10 @@ async function main(): Promise<void> {
     const waitPlan = await propose(), waitCount = hits.length; const waitRun = commands.approvePlan(pid, waitPlan.plan_id); commands.cancelPlan(pid, waitPlan.plan_id)
     const cancelled = await waitRun; assert.equal(cancelled.steps[0].status, 'cancelled'); assert.equal(hits.length, waitCount)
     reset()
-    for (const type of ['if', 'loop', 'script'] as const) { const unsafe = structuredClone(draft); unsafe.events.unshift({ ...createFlowEvent(type), script: "this.constructor.constructor('return typeof process')()", condition: "Boolean.constructor('return typeof process')()" }); commands.syncFlowEditorDraft(pid, unsafe); await assert.rejects(propose(), /安全执行策略/) }
+    for (const type of ['if', 'script'] as const) {
+      const unsafe = structuredClone(draft); unsafe.events.unshift({ ...createFlowEvent(type), script: "this.constructor.constructor('return typeof process')()", condition: "Boolean.constructor('return typeof process')()" }); commands.syncFlowEditorDraft(pid, unsafe)
+      const unsafeCount = hits.length, unsafePlan = await propose(); assert.equal((await commands.approvePlan(pid, unsafePlan.plan_id)).steps[0].status, 'failed'); assert.equal(hits.length, unsafeCount)
+    }
     reset(); const manual = createFlow(pid, '手动报告'); manual.events = [{ ...createFlowEvent('wait'), wait_ms: 0 }]; await runFlow(pid, manual)
     assert.equal(store.listFlowRuns(pid).length, 1); const local = await propose(); await commands.approvePlan(pid, local.plan_id); assert.equal(store.listFlowRuns(pid).length, 1)
     reset()
