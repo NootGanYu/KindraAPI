@@ -86,35 +86,37 @@ export default function AgentConnectionSettings({ onClose }: { onClose?: () => v
       await reload(null)
     } })
   }
-  return <div className="agent-dock-subview-content" id="agent-connections">
+  return <div className="agent-dock-subview-content agent-connection-settings" id="agent-connections">
     <div className="agent-dock-subview-title">
       <Typography.Title level={5}>Agent 模型连接</Typography.Title>
       {onClose && <Button size="small" aria-label="返回对话" icon={<ArrowLeftOutlined />} onClick={onClose}>返回对话</Button>}
     </div>
-    <Typography.Paragraph type="secondary">
-      模型连接仅保存在本机凭据存储；新增、编辑、测试和删除在此管理。
-    </Typography.Paragraph>
-    {!project && <Alert type="info" message="请先选择项目，才能设置项目默认连接。" />}
-    {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} style={{ marginBottom: 12 }} />}
-    {testMessage && <Alert type="success" showIcon message={testMessage} style={{ marginBottom: 12 }} />}
-    <Space wrap style={{ marginBottom: 16 }}>
-      <Select aria-label="管理模型连接" style={{ minWidth: 220 }} placeholder="选择或新增连接" value={editingId ?? undefined} options={connections.map(item => ({ value: item.connection_id, label: item.name }))} onChange={id => { setTestMessage(''); edit(connections.find(item => item.connection_id === id) ?? null) }} />
-      <Button icon={<PlusOutlined />} onClick={() => { setTestMessage(''); edit(null) }}>新增连接</Button>
-      <Button icon={<ThunderboltOutlined />} onClick={() => void test()} loading={testing} disabled={!editingId}>测试连接</Button>
-      <Button onClick={() => void setDefault()} disabled={!project || !editingId || defaultId === editingId}>设为项目默认</Button>
-      {editing && defaultId === editing.connection_id && <Tag color="success">项目默认</Tag>}
-      {editingId && <Button danger icon={<DeleteOutlined />} onClick={remove}>删除连接</Button>}
-    </Space>
-    {!connections.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未配置模型连接" style={{ marginBottom: 16 }} />}
-    <Form form={form} layout="vertical" style={{ width: '100%' }}>
-      <Form.Item name="name" label="连接名称"><Input /></Form.Item>
-      <Form.Item name="base_url" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="填写兼容服务的基础地址，例如 https://example.com/v1"><Input placeholder="https://example.com/v1" /></Form.Item>
-      <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}><Input /></Form.Item>
-      <Form.Item name="protocol" label="协议"><Select options={[{ label: 'Chat Completions', value: 'chat-completions' }, { label: 'Responses', value: 'responses' }]} /></Form.Item>
-      <Form.Item name="api_key" label="API Key" extra={editing?.has_key ? 'Key 已安全保存；留空保留。' : 'Key 由系统凭据存储保护，本机无明文配置。'}><Input.Password autoComplete="new-password" /></Form.Item>
-      <Space>
-        <Button type="primary" loading={busy} onClick={() => void save()}>保存连接</Button>
+    <div className="agent-connection-scroll">
+      <Typography.Paragraph type="secondary">
+        模型连接仅保存在本机凭据存储；新增、编辑、测试和删除在此管理。
+      </Typography.Paragraph>
+      {!project && <Alert type="info" message="请先选择项目，才能设置项目默认连接。" />}
+      {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} style={{ marginBottom: 12 }} />}
+      {testMessage && <Alert type="success" showIcon message={testMessage} style={{ marginBottom: 12 }} />}
+      <Space wrap style={{ marginBottom: 16 }}>
+        <Select aria-label="管理模型连接" style={{ minWidth: 220 }} placeholder="选择或新增连接" value={editingId ?? undefined} options={connections.map(item => ({ value: item.connection_id, label: item.name }))} onChange={id => { setTestMessage(''); edit(connections.find(item => item.connection_id === id) ?? null) }} />
+        <Button icon={<PlusOutlined />} onClick={() => { setTestMessage(''); edit(null) }}>新增连接</Button>
+        <Button icon={<ThunderboltOutlined />} onClick={() => void test()} loading={testing} disabled={!editingId}>测试连接</Button>
+        <Button onClick={() => void setDefault()} disabled={!project || !editingId || defaultId === editingId}>设为项目默认</Button>
+        {editing && defaultId === editing.connection_id && <Tag color="success">项目默认</Tag>}
       </Space>
-    </Form>
+      {!connections.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未配置模型连接" style={{ marginBottom: 16 }} />}
+      <Form form={form} layout="vertical" style={{ width: '100%' }}>
+        <Form.Item name="name" label="连接名称"><Input /></Form.Item>
+        <Form.Item name="base_url" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="填写兼容服务的基础地址，例如 https://example.com/v1"><Input placeholder="https://example.com/v1" /></Form.Item>
+        <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}><Input /></Form.Item>
+        <Form.Item name="protocol" label="协议"><Select options={[{ label: 'Chat Completions', value: 'chat-completions' }, { label: 'Responses', value: 'responses' }]} /></Form.Item>
+        <Form.Item name="api_key" label="API Key" extra={editing?.has_key ? 'Key 已安全保存；留空保留。' : 'Key 由系统凭据存储保护，本机无明文配置。'}><Input.Password autoComplete="new-password" /></Form.Item>
+      </Form>
+    </div>
+    <div className="agent-connection-footer">
+      {editingId && <Button danger aria-label="删除连接" icon={<DeleteOutlined />} onClick={remove}>删除连接</Button>}
+      <Button type="primary" aria-label="保存连接" loading={busy} onClick={() => void save()}>保存连接</Button>
+    </div>
   </div>
 }

@@ -20,6 +20,7 @@ async function assertConnectionActionsVisible(page, label) {
   const save = page.getByRole('button', { name: '保存连接', exact: true })
   const remove = page.locator('button').filter({ hasText: '删除连接' })
   await page.locator('.agent-dock-subview').evaluate(el => el.scrollTo(0, el.scrollHeight))
+  await page.locator('.agent-dock-subview').evaluate(el => el.scrollTo(0, el.scrollHeight))
   await save.waitFor(); await remove.waitFor()
   const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
   for (const [name, locator] of [['保存', save], ['删除', remove]]) {

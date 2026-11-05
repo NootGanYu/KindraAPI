@@ -75,3 +75,6 @@ button.agent-session-title:hover { text-decoration: underline; }
 .agent-tool-card.awaiting-approval { border-color: rgba(250,173,20,.7); background: rgba(250,173,20,.06); }
 .agent-tool-diff { border: 1px dashed rgba(160,125,70,.35); background: rgba(160,125,70,.05); }
 .agent-tool-card .ant-btn { margin-top: 2px; }
+.agent-connection-settings { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.agent-connection-scroll { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; }
+.agent-connection-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border, #e6dfd4); background: var(--panel, #fff); }
