@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, App as AntApp, Button, Empty, Input, Select, Space, Tag, Tooltip, Typography } from 'antd'
-import { AppstoreOutlined, CloseOutlined, DeleteOutlined, PlusOutlined, SendOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
+import { Alert, App as AntApp, Button, Dropdown, Empty, Input, Select, Space, Tag, Tooltip, Typography } from 'antd'
+import { AppstoreOutlined, CloseOutlined, DeleteOutlined, DownOutlined, PlusOutlined, SendOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
 import type { AgentConnection, AgentConversation } from '@shared/agent'
 import type { AgentPermissionMode } from '@shared/agentPlan'
 import type { Result } from '@shared/types'
@@ -34,6 +34,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const [text, setText] = useState('')
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>('ask')
   const [busy, setBusy] = useState(false)
+  const [titleTick, setTitleTick] = useState(0)
   const [view, setView] = useState<'chat' | 'undo' | 'candidates' | 'settings'>('chat')
   const [error, setError] = useState('')
   const end = useRef<HTMLDivElement>(null)
@@ -137,10 +138,34 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     } catch (e) { setConnectionError((e as Error).message) }
   }
   function closeSettings(): void { setView('chat'); void refreshConnections() }
+  async function rename(value: string): Promise<void> {
+    if (!conversation) return
+    const next = value.trim()
+    if (!next) { setError('会话名称不能为空'); setTitleTick(n => n + 1); return }
+    if (next === conversation.title) return
+    try {
+      unwrap(await window.api.agent.renameConversation(projectId, conversation.conversation_id, next))
+    } catch (e) { setError((e as Error).message); setTitleTick(n => n + 1) }
+  }
 
   return <div className="agent-dock-panel">
     <header className="agent-dock-header">
-      <Typography.Title level={5} className="agent-dock-title">项目 Agent</Typography.Title>
+      <div className="agent-dock-controls">
+        <Typography.Text type="secondary" className="agent-dock-project">{projectName}</Typography.Text>
+        {conversation
+          ? <Typography.Text
+              key={`${conversation.conversation_id}:${conversation.title}:${titleTick}`}
+              strong
+              className="agent-session-title"
+              editable={{ triggerType: ['text'], icon: null, tooltip: false, maxLength: 100, enterIcon: null, onChange: value => void rename(value) }}
+            >{conversation.title}</Typography.Text>
+          : <Typography.Text type="secondary" className="agent-session-title">暂无会话</Typography.Text>}
+        <Dropdown trigger={['click']} menu={{ items: conversations.length ? conversations.map(item => ({ key: item.conversation_id, label: item.title })) : [{ key: 'none', label: '暂无会话', disabled: true }], onClick: ({ key }) => { if (key !== 'none') setSelected(key) } }}>
+          <Button type="text" size="small" aria-label="切换会话" icon={<DownOutlined />} />
+        </Dropdown>
+        <Tooltip title="新建会话"><Button size="small" aria-label="新建会话" icon={<PlusOutlined />} onClick={() => void newConversation()} /></Tooltip>
+        <Tooltip title="删除会话"><Button size="small" aria-label="删除会话" icon={<DeleteOutlined />} disabled={!conversation || running} onClick={remove} /></Tooltip>
+      </div>
       <Space wrap size={8}>
         <Tooltip title="整轮撤销与记录"><Button size="small" type={view === 'undo' ? 'primary' : 'default'} aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={() => setView(view === 'undo' ? 'chat' : 'undo')} /></Tooltip>
         <Tooltip title="项目候选汇总"><Button size="small" type={view === 'candidates' ? 'primary' : 'default'} aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => setView(view === 'candidates' ? 'chat' : 'candidates')} /></Tooltip>
@@ -148,14 +173,6 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         <Tooltip title="收起面板"><Button size="small" aria-label="收起面板" icon={<CloseOutlined />} onClick={onClose} /></Tooltip>
       </Space>
     </header>
-    <div className="agent-dock-controls">
-      <Space wrap size={8}>
-        <Typography.Text type="secondary" className="agent-dock-project">{projectName}</Typography.Text>
-        <Select aria-label="Agent 会话" size="small" style={{ minWidth: 140, maxWidth: 200 }} placeholder="选择会话" value={selected ?? undefined} onChange={setSelected} options={conversations.map(item => ({ value: item.conversation_id, label: item.title }))} />
-        <Tooltip title="新建会话"><Button size="small" aria-label="新建会话" icon={<PlusOutlined />} onClick={() => void newConversation()} /></Tooltip>
-        <Tooltip title="删除会话"><Button size="small" aria-label="删除会话" icon={<DeleteOutlined />} disabled={!conversation || running} onClick={remove} /></Tooltip>
-      </Space>
-    </div>
     {connectionError && <Alert type="error" showIcon message={connectionError} />}
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {connection?.capability === 'text-only' && <Alert type="info" message="仅文本对话；自然语言计划与工具操作不可用。" />}

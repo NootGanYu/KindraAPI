@@ -65,6 +65,17 @@ function createConversation(projectId: string): AgentConversation {
   persist(conversation)
   return conversation
 }
+function renameConversation(projectId: string, id: string, title: string): AgentConversation {
+  const conversation = getConversation(projectId, id)
+  const next = String(title ?? '').trim()
+  if (!next) throw new Error('会话名称不能为空')
+  if (next.length > 100) throw new Error('会话名称不能超过 100 个字符')
+  if (listConversations(projectId).some(item => item.conversation_id !== id && item.title === next)) throw new Error('会话名称已存在')
+  if (conversation.title === next) return conversation
+  conversation.title = next
+  persist(conversation)
+  return conversation
+}
 function deleteConversation(projectId: string, id: string): boolean {
   getConversation(projectId, id)
   if (active.has(id)) throw new Error('请先停止正在进行的对话')
@@ -160,4 +171,4 @@ function deleteProjectAgentRecords(pid: string): boolean {
   return true
 }
 /** The application commands called by IPC and integration tests. */
-export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }
+export const agentCommands = { ...turnUndoCommands, previewTurnUndo: (...args: Parameters<typeof turnUndoCommands.previewTurnUndo>) => { assertIdle(); return turnUndoCommands.previewTurnUndo(...args) }, applyTurnUndo: (...args: Parameters<typeof turnUndoCommands.applyTurnUndo>) => { assertIdle(); return turnUndoCommands.applyTurnUndo(...args) }, deleteProjectAgentRecords, ...flowDraftCommands, ...draftCommands, getActivity: () => ({ running: active.size + activePlanCount() }), prepareQuit: async () => { await shutdownAgent(); stashAgentDrafts(); stashAgentFlowDrafts(); return true }, ...planCommands, getConnection, saveConnection, createConnection, listConnections, deleteConnection, getProjectConnection, setProjectConnection, testConnection, createConversation, renameConversation, listConversations, getConversation, deleteConversation, sendMessage, cancelMessage }

@@ -83,6 +83,7 @@ const api = {
     saveConnection: (input: unknown, connectionId?: string) => invoke('agent:saveConnection', input, connectionId),
     testConnection: (connectionId?: string) => invoke('agent:testConnection', connectionId),
     createConversation: (projectId: string) => invoke('agent:createConversation', projectId),
+    renameConversation: (projectId: string, id: string, title: string) => invoke('agent:renameConversation', projectId, id, title),
     listConversations: (projectId: string) => invoke('agent:listConversations', projectId),
     getConversation: (projectId: string, id: string) => invoke('agent:getConversation', projectId, id),
     deleteConversation: (projectId: string, id: string) => invoke('agent:deleteConversation', projectId, id),

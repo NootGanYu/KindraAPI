@@ -160,6 +160,7 @@ export interface ApiBridge {
     saveConnection(input: AgentConnectionInput, connectionId?: string): Promise<Result<AgentConnection>>
     testConnection(connectionId?: string): Promise<Result<AgentConnectionTest>>
     createConversation(projectId: string): Promise<Result<AgentConversation>>
+    renameConversation(projectId: string, id: string, title: string): Promise<Result<AgentConversation>>
     listConversations(projectId: string): Promise<Result<AgentConversation[]>>
     getConversation(projectId: string, id: string): Promise<Result<AgentConversation>>
     deleteConversation(projectId: string, id: string): Promise<Result<boolean>>
