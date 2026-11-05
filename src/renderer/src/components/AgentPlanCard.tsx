@@ -46,6 +46,18 @@ export default function AgentPlanCard({ plan, projectId }: { plan: AgentPlan; pr
     } catch (e) { setError((e as Error).message) }
   }
 
+  if (!steps.length) {
+    // A conversational turn has no approved slots: show the model reply directly.
+    return <Card className="agent-plan-card agent-plan-chat" size="small" title={plan.goal}>
+      <Space direction="vertical" style={{ width: '100%' }}>
+        {plan.error && <Alert type="warning" message={plan.error} />}
+        {error && <Alert type="error" message={error} closable onClose={() => setError('')} />}
+        <div className="agent-plan-explanation">{plan.explanation ?? ''}</div>
+        <Button onClick={() => void act('deletePlan')}>删除记录</Button>
+      </Space>
+    </Card>
+  }
+
   return <Card className="agent-plan-card" size="small" title={plan.goal} extra={<Tag color={plan.status === 'pending' ? 'warning' : undefined}>{labels[plan.status]}</Tag>}>
     <Space direction="vertical" style={{ width: '100%' }}>
       <Typography.Text>项目：{plan.project_name} · 对象：{[...(plan.targets?.map(target => `${target.name}${target.new_object ? '（新对象）' : ''}`) ?? []), ...(plan.flows?.map(flow => flow.name) ?? [])].join('、') || plan.target_name}</Typography.Text>

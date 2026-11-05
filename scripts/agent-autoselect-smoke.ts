@@ -12,7 +12,7 @@ import { decodeModelRequest, respondModel } from './agent-model-fixture'
 
 const protocol = process.argv.includes('--responses') ? 'responses' : 'chat-completions'
 let pid = '', aId = '', bId = '', flowId = '', createId = ''
-let scenario: 'read' | 'unknown' | 'wrong-type' | 'empty' | 'limit' | 'step-outside' | 'create' | 'create-forbidden' = 'read'
+let scenario: 'read' | 'unknown' | 'wrong-type' | 'empty' | 'chat' | 'limit' | 'step-outside' | 'create' | 'create-forbidden' = 'read'
 let patch: any = { name: '自然语言新接口', description: '用户明确要求的健康检查接口', method: 'GET', url: 'https://example.invalid/health' }
 const planningBodies: any[] = []
 
@@ -48,7 +48,9 @@ async function main(): Promise<void> {
     if (tools.includes('propose_task_plan')) {
       planningBodies.push(body)
       let planned: any
-      if (scenario === 'create' || scenario === 'create-forbidden') {
+      if (scenario === 'chat') {
+        planned = { answer: '你好！我可以帮你读取、修改和测试接口与 Flow。', steps: [] }
+      } else if (scenario === 'create' || scenario === 'create-forbidden') {
         planned = {
           selected_objects: [],
           new_objects: [{ temp_id: 'new-api', name: '自然语言新接口', parent_id: '0', intent: '创建健康检查接口草稿' }],
@@ -102,6 +104,14 @@ async function main(): Promise<void> {
       assert.equal(commands.listCandidates(pid).length, 0, `${name} must not create candidates`)
     }
     console.log('PASS unknown, wrong-type, empty, oversized and step-outside selections pause with zero side effects')
+
+    scenario = 'chat'
+    const chat = await commands.proposeTaskPlan(pid, { goal: '你好', selection: 'auto', permission_mode: 'ask' })
+    assert.equal(chat.status, 'completed', chat.error)
+    assert.equal(chat.steps.length, 0, 'a conversational turn must not invent slots')
+    assert.match(chat.explanation ?? '', /你好/)
+    assert.equal(commands.listCandidates(pid).length, 0, 'a conversational answer has no side effects')
+    console.log('PASS conversational turn answers directly without inventing slots')
 
     scenario = 'create'
     const created = await commands.proposeTaskPlan(pid, { goal: '新建一个健康检查接口并保存', selection: 'auto', permission_mode: 'ask', allowCreate: true })

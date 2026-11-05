@@ -16,6 +16,9 @@ const server = http.createServer(async (req, res) => {
   const respond = message => res.end(JSON.stringify({ choices: [{ message }] }))
   if (tools.includes('kindra_capability_probe')) return respond({ tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] })
   if (tools.includes('propose_task_plan')) {
+    if (JSON.stringify(body).includes('你好')) {
+      return respond({ tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify({ answer: '你好！我是项目 Agent，可以帮你读取、修改和测试接口与 Flow。', steps: [] }) } }] })
+    }
     const planned = {
       selected_objects: [{ kind: 'api', id: targetId }],
       steps: [{ step_id: 'derive', operation: 'propose_api_change', binding: 'deferred', target_id: targetId, depends_on: [], intent: '把说明改为界面已验证', allowed_changes: ['description'] }]
@@ -73,7 +76,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.mouse.down()
   await page.mouse.move(startHandle.x - 120, startHandle.y + startHandle.height / 2, { steps: 5 })
   await page.mouse.up()
-  await page.waitForTimeout(50)
+  await page.waitForTimeout(400)
   const widened = (await wrapper.boundingBox()).width
   assert(widened > startWidth + 80, `dragging left must widen the panel (${startWidth} -> ${widened})`)
   const handleAfter = await handle.boundingBox()
@@ -81,7 +84,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.mouse.down()
   await page.mouse.move(handleAfter.x + 500, handleAfter.y + handleAfter.height / 2, { steps: 5 })
   await page.mouse.up()
-  await page.waitForTimeout(50)
+  await page.waitForTimeout(400)
   const minWidth = await page.evaluate(() => Math.round(window.innerWidth * 0.4))
   const restored = (await wrapper.boundingBox()).width
   assert(Math.abs(restored - minWidth) <= 2, `panel must stop at the 40vw minimum (${restored} vs ${minWidth})`)
@@ -136,14 +139,19 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await panel.waitFor()
 
   const goalBox = page.getByRole('textbox', { name: '告诉 Agent 要做什么' })
+  await goalBox.fill('你好')
+  await goalBox.press('Enter')
+  await panel.getByText('你好！我是项目 Agent，可以帮你读取、修改和测试接口与 Flow。', { exact: true }).waitFor()
+  assert.equal(await panel.getByText('槽位对象缺失', { exact: true }).count(), 0, 'a greeting must not become a broken plan')
+  const cardsBefore = await page.locator('.agent-plan-card').count()
   await goalBox.fill('第一行')
   await goalBox.press('Shift+Enter')
   await goalBox.type('第二行')
   assert((await goalBox.inputValue()).includes('\n'), 'Shift+Enter must insert a newline')
-  assert.equal(await page.locator('.agent-plan-card').count(), 0, 'Shift+Enter must not send')
+  assert.equal(await page.locator('.agent-plan-card').count(), cardsBefore, 'Shift+Enter must not send')
   await goalBox.fill('把界面接口的说明改为界面已验证')
   await goalBox.press('Enter')
-  const card = page.locator('.agent-plan-card').first()
+  const card = page.locator('.agent-plan-card').filter({ hasText: '把界面接口的说明改为界面已验证' }).first()
   await card.waitFor()
   assert.equal(await card.locator('.ant-drawer').count(), 0, 'plans must render inline, not in a nested drawer')
   await card.getByText('自动选择', { exact: false }).waitFor()

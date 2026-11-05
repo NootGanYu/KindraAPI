@@ -115,6 +115,7 @@ const proposeTaskTool: ModelTool = { type: 'function', function: {
   name: 'propose_task_plan',
   description: '仅为连续任务提出有限、明确批准槽位；本调用不读取或执行任何业务。先从项目目录中选择对象，再提出读取、修改、执行、保存或新建步骤。禁止在批准前获得接口/Flow/环境值。',
   parameters: { type: 'object', properties: {
+    answer: { type: 'string', description: '当用户只是问候、闲聊、询问能力或无需任何项目操作时，直接在这里回复；此时 steps 为空数组。' },
     selected_objects: { type: 'array', maxItems: 32, items: { type: 'object', properties: {
       kind: { type: 'string', enum: ['api','flow','case'] },
       id: { type: 'string', description: 'api/flow 为目录中的对象编号；case 为所属接口编号' },
@@ -128,7 +129,7 @@ const proposeTaskTool: ModelTool = { type: 'function', function: {
       extra_requests: { type: 'array', maxItems: 32, items: { type: 'object', properties: { method: { type: 'string' }, url: { type: 'string' }, maxCalls: { type: 'integer' } }, required: ['method','url'], additionalProperties: false } },
       write_variables: { type: 'boolean' }, save_response: { type: 'boolean' }, save_definitions: { type: 'boolean' }
     }, additionalProperties: false },
-    steps: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'object', properties: {
+    steps: { type: 'array', minItems: 0, maxItems: 32, items: { type: 'object', properties: {
     step_id: { type: 'string', description: '稳定步骤编号，后续调用按此匹配授权' },
     operation: { type: 'string', enum: taskOperationValues },
     binding: { type: 'string', enum: ['static','deferred'], description: 'deferred 表示参数需在获批读取后生成' },
@@ -594,7 +595,7 @@ async function proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise
   }
   const directory = buildProjectDirectory(projectId, redact, input.activeTargetId, source)
   const messages: ModelMessage[] = [
-    { role: 'system', content: '你是项目连续任务规划器。本轮只从脱敏项目目录选择对象并提出有限、明确的批准槽位，不读取、不执行、不保存任何业务。目录只有编号、名称、方法与类型；接口/Flow 定义、URL、描述与 Flow 事件不可见。先用 selected_objects 选择对象；新增对象放入 new_objects 并用 temp_id 在步骤中引用；额外请求、变量写回、保存响应或正式保存必须写入 proposed_effects。read 步骤批准后返回脱敏内容，deferred 修改槽位必须声明 allowed_changes。任何未列出对象、操作或副作用都不得声称获得授权；权限模式由服务端决定。' },
+    { role: 'system', content: '你是项目连续任务规划器。本轮只从脱敏项目目录选择对象并提出有限、明确的批准槽位，不读取、不执行、不保存任何业务。目录只有编号、名称、方法与类型；接口/Flow 定义、URL、描述与 Flow 事件不可见。先用 selected_objects 选择对象；新增对象放入 new_objects 并用 temp_id 在步骤中引用；额外请求、变量写回、保存响应或正式保存必须写入 proposed_effects。read 步骤批准后返回脱敏内容，deferred 修改槽位必须声明 allowed_changes。任何未列出对象、操作或副作用都不得声称获得授权；权限模式由服务端决定。如果用户只是问候、闲聊、询问能力，或任务不需要读取/修改/执行/保存任何项目对象，不要编造对象或步骤：steps 返回空数组，并把直接回复放在 answer，用简洁自然的中文助手口吻回答，不要自称规划器。' },
     { role: 'user', content: JSON.stringify({
       goal: plan.goal, project_id: projectId, selection_source: source, permission_mode: permissionMode,
       active_target_id: input.activeTargetId ?? null, environment_id: environment?.env_id ?? null,
@@ -611,6 +612,18 @@ async function proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise
     context.planningCall = planningCall
     let planned: any
     try { planned = JSON.parse(planningCall.arguments) } catch { throw new Error('规划槽位参数无效，请重新生成计划') }
+    const rawSteps = planned?.steps
+    if (!Array.isArray(rawSteps) || rawSteps.length > 32) throw new Error('规划槽位结构无效')
+    if (!rawSteps.length) {
+      // Conversational turn: the model answers directly instead of inventing project objects.
+      const answer = typeof planned?.answer === 'string' ? planned.answer.trim() : ''
+      if (!answer) throw new Error('请选择要操作的接口，或让 Agent 直接回答')
+      plan.steps = []
+      plan.status = 'completed'
+      plan.explanation = redact(answer)
+      contexts.delete(plan.plan_id)
+      return savePlan(plan)
+    }
     const proposedEffects = parseProposedEffects(planned?.proposed_effects)
     const resolved = resolveTaskSelection(projectId, input, source, planned, redact)
     // The context already owns these maps; hydrate them after validation so every later
@@ -619,8 +632,6 @@ async function proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise
     for (const [id, value] of resolved.revisions) revisions.set(id, value)
     for (const [id, value] of resolved.flows) flows.set(id, value)
     for (const [id, value] of resolved.flowRevisions) flowRevisions.set(id, value)
-    const rawSteps = planned?.steps
-    if (!Array.isArray(rawSteps) || !rawSteps.length || rawSteps.length > 32) throw new Error('模型必须提出 1 至 32 个批准槽位')
     const tempToTarget = resolved.tempToTarget
     const allowedTargets = new Set(resolved.targetIds)
     const allowedFlows = new Set(resolved.flowIds)
