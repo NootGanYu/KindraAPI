@@ -1,6 +1,7 @@
 import type { AgentToolRisk } from '@shared/agent'
 import type { ModelTool } from '../model'
 import type { ProjectRedactor } from '../redaction'
+import type { TurnExecutionState } from './runState'
 
 export interface AgentToolContext {
   projectId: string
@@ -10,6 +11,9 @@ export interface AgentToolContext {
   stepId: string
   /** Handlers that pre-serialize a large section redact it before stringifying. */
   redact?: ProjectRedactor
+  /** Per-turn execution memory; never persisted with the conversation. */
+  state: TurnExecutionState
+  signal?: AbortSignal
 }
 export interface AgentToolResult {
   output: unknown
@@ -19,6 +23,12 @@ export interface AgentToolResult {
   display?: string
   /** Continuation cursor when the result is paged or truncated. */
   cursor?: string
+  /** A structured business failure that still carries an output payload. */
+  isError?: boolean
+}
+export interface AgentToolApprovalDetails {
+  summary?: string
+  display?: string
 }
 export interface AgentToolExecution extends AgentToolResult {
   isError: boolean
@@ -32,6 +42,8 @@ export interface AgentToolDefinition {
   risk: AgentToolRisk
   readOnly: boolean
   handler: (args: Record<string, unknown>, context: AgentToolContext) => AgentToolResult | Promise<AgentToolResult>
+  /** Extra risk/scope text shown on the approval card before execution. */
+  describeForApproval?: (args: Record<string, unknown>, context: AgentToolContext) => AgentToolApprovalDetails | Promise<AgentToolApprovalDetails>
   /** Optional domain projection applied before redaction. */
   projection?: (value: unknown) => unknown
 }
@@ -73,7 +85,7 @@ export class AgentToolRegistry {
     try {
       const result = await definition.handler(args, context)
       return {
-        isError: false,
+        isError: result.isError === true,
         output: definition.projection ? definition.projection(result.output) : result.output,
         summary: result.summary,
         display: result.display,

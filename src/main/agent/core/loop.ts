@@ -3,7 +3,8 @@ import type { AgentActivity, AgentActivityStatus, AgentToolRisk } from '@shared/
 import type { ApprovalDecision, ApprovalRequestInput } from '../approval'
 import { completeModel, type ModelConnection, type ModelMessage, type ModelReply, type ModelTool } from '../model'
 import type { ProjectRedactor } from '../redaction'
-import type { AgentToolDefinition, AgentToolExecution } from './registry'
+import type { AgentToolContext, AgentToolDefinition, AgentToolExecution } from './registry'
+import { createTurnExecutionState, type TurnExecutionState } from './runState'
 
 export const DEFAULT_MAX_TURNS = 100
 /** One tool result that reaches the model is capped at 24 KB. */
@@ -29,6 +30,8 @@ export interface AgentLoopOptions {
   history?: ModelMessage[]
   userMessage: string
   tools: AgentToolDefinition[]
+  /** Shared by all tool calls of this user turn; never persisted. */
+  state?: TurnExecutionState
   maxTurns?: number
   signal?: AbortSignal
   /** Redacts tool results before they enter the ledger or timeline. */
@@ -177,11 +180,14 @@ function executionError(execution: AgentToolExecution): string {
   if (output && typeof output === 'object' && 'error' in output) return String((output as { error: unknown }).error)
   return execution.summary ?? '工具执行失败'
 }
-async function executeDefinition(definition: AgentToolDefinition, args: Record<string, unknown>, options: AgentLoopOptions, callId: string, turnId: string): Promise<AgentToolExecution> {
+function toolContext(options: AgentLoopOptions, callId: string, turnId: string, state: TurnExecutionState): AgentToolContext {
+  return { projectId: options.projectId, turnId, stepId: callId, redact: options.redact, state, signal: options.signal }
+}
+async function executeDefinition(definition: AgentToolDefinition, args: Record<string, unknown>, options: AgentLoopOptions, callId: string, turnId: string, state: TurnExecutionState): Promise<AgentToolExecution> {
   try {
-    const result = await definition.handler(args, { projectId: options.projectId, turnId, stepId: callId, redact: options.redact })
+    const result = await definition.handler(args, toolContext(options, callId, turnId, state))
     return {
-      isError: false,
+      isError: result.isError === true,
       output: definition.projection ? definition.projection(result.output) : result.output,
       summary: result.summary,
       display: result.display,
@@ -228,6 +234,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   let ledger: ModelMessage[] = (options.history ?? []).map(message => ({ ...message }))
   if (options.userMessage) ledger.push({ role: 'user', content: options.userMessage })
   const activities: AgentActivity[] = []
+  const state = options.state ?? createTurnExecutionState()
   const turnId = options.turnId ?? randomUUID()
   const system = options.context ? `${options.system}\n\n${options.context}` : options.system
   let turns = 0
@@ -345,14 +352,25 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       if (options.approval?.requires(definition.risk)) {
         let decision: ApprovalDecision
         try {
+          const details = await definition.describeForApproval?.(parsed.input, toolContext(options, call.id, turnId, state))
+          if (details?.summary) activity.summary = redactStream(redact, details.summary)
+          if (details?.display) activity.display = redactStream(redact, details.display)
           const pending = options.approval.request({ activity_id: activity.activity_id, call_id: call.id, tool: call.name, risk: definition.risk, args: parsed.input })
           activity.approval = 'pending'
           options.onActivity?.(activity)
           decision = await pending
         } catch (error) {
-          decision = { decision: 'denied', reason: error instanceof Error ? error.message : '审批不可用' }
+          state.prepared.delete(call.id)
+          const execution: AgentToolExecution = { isError: true, output: { error: error instanceof Error ? error.message : '审批准备失败' }, summary: error instanceof Error ? error.message : '审批准备失败' }
+          finishActivity(activity, 'failed', execution, redact, options.onActivity)
+          const content = resultContent(execution, redact)
+          ledger.push({ role: 'tool', tool_call_id: call.id, content })
+          turnOutputs.push(content)
+          turnInputs.push([call.name, parsed.input])
+          continue
         }
         if (signal?.aborted) {
+          state.prepared.delete(call.id)
           activity.approval = 'denied'
           finishActivity(activity, 'cancelled', { isError: true, output: { error: '本轮已取消' } }, redact, options.onActivity)
           return cancelledWithPending(ledger, reply.toolCalls, index, activities)
@@ -360,6 +378,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         activity.approval = decision.decision
         options.onActivity?.(activity)
         if (decision.decision === 'denied') {
+          state.prepared.delete(call.id)
           deniedCalls.add(callKey)
           const execution: AgentToolExecution = { isError: true, output: { decision: 'denied', reason: decision.reason ?? '用户拒绝此工具调用' }, summary: '用户拒绝此工具调用' }
           finishActivity(activity, 'failed', execution, redact, options.onActivity)
@@ -372,7 +391,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
       executedInTurn = true
       turnInputs.push([call.name, parsed.input])
-      const execution = await executeDefinition(definition, parsed.input, options, call.id, turnId)
+      const execution = await executeDefinition(definition, parsed.input, options, call.id, turnId, state)
       if (signal?.aborted) {
         finishActivity(activity, 'cancelled', execution, redact, options.onActivity)
         return cancelledWithPending(ledger, reply.toolCalls, index, activities)
