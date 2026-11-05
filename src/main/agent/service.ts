@@ -149,6 +149,8 @@ export interface SendMessageOptions {
   activeFlowId?: string
   activeEnvId?: string
   permissionMode?: AgentPermissionMode
+  /** Test/limit hook; the loop still defaults to 100. */
+  maxTurns?: number
 }
 function historyForTools(conversation: AgentConversation): ModelMessage[] {
   if (conversation.ledger?.length) return conversation.ledger.map(({ role, content, tool_call_id, tool_calls }) => ({ role, content, ...(tool_call_id ? { tool_call_id } : {}), ...(tool_calls ? { tool_calls } : {}) }))
@@ -225,6 +227,7 @@ async function sendMessage(projectId: string, id: string, content: string, conne
             history,
             userMessage: userText,
             tools: agentToolRegistry.list(),
+            maxTurns: options.maxTurns,
             state,
             signal: controller.signal,
             redact,

@@ -175,7 +175,7 @@ function resultContent(execution: AgentToolExecution, redact: ProjectRedactor | 
     truncated: true,
     note: '单条工具结果超过 24KB；请使用 cursor/limit 分页继续读取，不要假设未返回部分。',
     ...(execution.cursor ? { next_cursor: execution.cursor } : {}),
-    preview: truncateBytes(content, MAX_TOOL_RESULT_BYTES - 500)
+    preview: truncateBytes(content, MAX_TOOL_RESULT_BYTES - 1_200)
   }))
 }
 function displayContent(execution: AgentToolExecution, redact: ProjectRedactor | undefined): string | undefined {
