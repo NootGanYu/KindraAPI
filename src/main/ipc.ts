@@ -224,6 +224,25 @@ export function registerIpc(): void {
     (projectId: string, targetId: string) => store.cloneTarget(projectId, targetId),
     true
   )
+  handle(
+    'target:transfer-preview',
+    (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) => store.previewTargetTransfer(sourceProjectId, targetId, destinationProjectId, mode)
+  )
+  handle(
+    'target:transfer',
+    (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) => store.transferTargetToProject(sourceProjectId, targetId, destinationProjectId, mode),
+    true
+  )
   handle('target:versions:list', (projectId: string, targetId: string) =>
     store.listTargetVersions(projectId, targetId)
   )

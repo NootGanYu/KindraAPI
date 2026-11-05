@@ -262,6 +262,49 @@ export interface TargetSummary {
   updated_at: string
 }
 
+/** 跨项目移动或复制。 */
+export type TargetTransferMode = 'move' | 'copy'
+
+/** 跨项目移动/复制前的关联检查结果。 */
+export interface TargetTransferPreview {
+  mode: TargetTransferMode
+  source_project_id: string
+  destination_project_id: string
+  root: { target_id: string; name: string; target_type: 'folder' | 'api' }
+  /** 源项目中的节点 ID。 */
+  target_ids: string[]
+  api_count: number
+  folder_count: number
+  /** 目标项目根目录下最终使用的名称（同名时自动加序号）。 */
+  root_name_after: string
+  /** 源项目中显式包含这些节点的分享；复制时为空。 */
+  shares: Array<{ share_id: string; name: string; affected: number }>
+  /** 源项目中引用这些节点的流程；复制时为空。 */
+  flows: Array<{ flow_id: string; name: string; affected: number }>
+  /** 目标项目缺少的模型引用；非空时禁止操作。 */
+  model_blockers: Array<{
+    target_id: string
+    target_name: string
+    model_id: string
+    kind: 'request-body' | 'response-example'
+  }>
+  source_key_conflicts: string[]
+  server_reset_ids: string[]
+  can_transfer: boolean
+}
+
+export interface TargetTransferResult {
+  mode: TargetTransferMode
+  destination_project_id: string
+  /** 源项目中的节点 ID；复制时用于区分新节点。 */
+  source_target_ids: string[]
+  /** 结果节点 ID；移动时与源 ID 相同，复制时为新 ID。 */
+  target_ids: string[]
+  api_count: number
+  folder_count: number
+  root_name: string
+}
+
 export type CustomAttributeType = 'text' | 'number' | 'radio' | 'checkbox' | 'date' | 'link' | 'email'
 
 export interface CustomAttributeOption {

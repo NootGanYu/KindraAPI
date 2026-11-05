@@ -51,6 +51,9 @@ import type {
   CurlResult,
   Target,
   TargetSummary,
+  TargetTransferMode,
+  TargetTransferPreview,
+  TargetTransferResult,
   TargetVersion,
   TargetVersionSummary,
   DbTable
@@ -134,6 +137,18 @@ export interface ApiBridge {
       orderedIds: string[]
     ): Promise<Result<TargetSummary[]>>
     clone(projectId: string, targetId: string): Promise<Result<Target>>
+    transferPreview(
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: TargetTransferMode
+    ): Promise<Result<TargetTransferPreview>>
+    transfer(
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: TargetTransferMode
+    ): Promise<Result<TargetTransferResult>>
     cases: {
       run(
         projectId: string,

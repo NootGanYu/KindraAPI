@@ -32,7 +32,7 @@ import {
   SearchOutlined,
   ShareAltOutlined
 } from '@ant-design/icons'
-import type { Target } from '@shared/types'
+import type { Target, TargetSummary, TargetTransferMode } from '@shared/types'
 import { methodColor, methodLabel } from '@shared/httpMethods'
 import { useApp } from '../store'
 import ApiTree from '../components/ApiTree'
@@ -42,6 +42,7 @@ import ResponsePanel from '../components/ResponsePanel'
 import DesignEditor from '../components/DesignEditor'
 import CasesEditor from '../components/CasesEditor'
 import DocShareDialog from '../components/DocShareDialog'
+import TargetTransferDialog from '../components/TargetTransferDialog'
 import DocShareLinkDialog, {
   type DocShareLinkInfo
 } from '../components/DocShareLinkDialog'
@@ -104,6 +105,10 @@ export default function ApisPage(): JSX.Element {
     scope: 'api' | 'folder'
   } | null>(null)
   const [shareLink, setShareLink] = useState<DocShareLinkInfo | null>(null)
+  const [transfer, setTransfer] = useState<{
+    item: TargetSummary
+    mode: TargetTransferMode
+  } | null>(null)
   const [descOpen, setDescOpen] = useState(false)
   const [versionOpen, setVersionOpen] = useState(false)
   const [codeOpen, setCodeOpen] = useState(false)
@@ -379,6 +384,7 @@ export default function ApisPage(): JSX.Element {
             onCreate={handleCreate}
             onDelete={handleDelete}
             onShare={(item) => void openShareNode(item)}
+            onTransfer={(item, mode) => setTransfer({ item, mode })}
           />
         </Panel>
         <PanelResizeHandle className="resize-handle resize-handle-v" />
@@ -778,6 +784,11 @@ export default function ApisPage(): JSX.Element {
         }}
       />
       <DocShareLinkDialog share={shareLink} onClose={() => setShareLink(null)} />
+      <TargetTransferDialog
+        item={transfer?.item ?? null}
+        mode={transfer?.mode ?? 'move'}
+        onClose={() => setTransfer(null)}
+      />
 
       <ApiDescriptionDialog
         key={editorKey}

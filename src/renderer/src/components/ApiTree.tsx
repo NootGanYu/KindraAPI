@@ -32,7 +32,7 @@ import {
   SwapOutlined,
   ThunderboltOutlined
 } from '@ant-design/icons'
-import type { TargetSummary } from '@shared/types'
+import type { TargetSummary, TargetTransferMode } from '@shared/types'
 import { methodColor, methodLabel } from '@shared/httpMethods'
 import { useApp } from '../store'
 import { useRefreshFeedback } from '../useRefreshFeedback'
@@ -42,6 +42,7 @@ interface Props {
   onCreate: (parentId: string, type: 'folder' | 'api') => Promise<void>
   onDelete: (id: string) => Promise<void>
   onShare: (item: TargetSummary) => void
+  onTransfer: (item: TargetSummary, mode: TargetTransferMode) => void
 }
 
 interface TreeNode extends DataNode {
@@ -103,7 +104,7 @@ function buildTree(items: TargetSummary[], ascending: boolean): TreeNode[] {
   return build('0')
 }
 
-export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Element {
+export default function ApiTree({ onCreate, onDelete, onShare, onTransfer }: Props): JSX.Element {
   const { modal, message } = AntApp.useApp()
   const targets = useApp((s) => s.targets)
   const activeId = useApp((s) => s.activeId)
@@ -310,11 +311,16 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
         { type: 'divider' as const },
         {
           key: 'move',
-          label: '移动至',
+          label: '移动到项目…',
           icon: <DragOutlined />,
-          onClick: () => message.info('可直接拖动节点调整位置')
+          onClick: () => onTransfer(item, 'move')
         },
-        { key: 'copy', label: '复制', icon: <CopyOutlined />, onClick: () => message.info('复制将在后续里程碑支持') },
+        {
+          key: 'copy',
+          label: '复制到项目…',
+          icon: <CopyOutlined />,
+          onClick: () => onTransfer(item, 'copy')
+        },
         { key: 'edit', label: '编辑', icon: <EditOutlined />, onClick: () => openRename(item) },
         {
           key: 'describe',
@@ -336,11 +342,16 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
       { type: 'divider' as const },
       {
         key: 'move',
-        label: '移动至',
+        label: '移动到项目…',
         icon: <DragOutlined />,
-        onClick: () => message.info('可直接拖动节点调整位置')
+        onClick: () => onTransfer(item, 'move')
       },
-      { key: 'copy', label: '复制', icon: <CopyOutlined />, onClick: () => message.info('复制将在后续里程碑支持') },
+      {
+        key: 'copy',
+        label: '复制到项目…',
+        icon: <CopyOutlined />,
+        onClick: () => onTransfer(item, 'copy')
+      },
       { key: 'edit', label: '编辑', icon: <EditOutlined />, onClick: () => openRename(item) },
       { type: 'divider' as const },
       { key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true, onClick: () => handleDelete(item) }
@@ -357,7 +368,7 @@ export default function ApiTree({ onCreate, onDelete, onShare }: Props): JSX.Ele
         ) : (
           <span className="method-text" style={{ color: methodColor(item.method) }}>{methodLabel(item.method, true)}</span>
         )}
-        <span className="tree-node-name">{item.name}</span>
+        <span className="tree-node-name" title={item.name}>{item.name}</span>
         <span className="tree-node-actions">
           {item.target_type === 'folder' ? (
             <Dropdown menu={{ items: newMenuItems(item.target_id) }} trigger={['click']}>
