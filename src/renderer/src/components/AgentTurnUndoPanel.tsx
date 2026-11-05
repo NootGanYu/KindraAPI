@@ -3,6 +3,7 @@ import { Alert, App, Button, Card, Drawer, Radio, Space, Tag, Tooltip, Typograph
 import { ArrowLeftOutlined, UndoOutlined } from '@ant-design/icons'
 import type { AgentTurnUndo, AgentTurnSummary } from '@shared/agentTurnUndo'
 import type { AgentConflictChoice } from '@shared/agentDraft'
+import type { AgentConfigAudit } from '@shared/agentConfigAudit'
 import type { Result } from '@shared/types'
 import { flushAgentDrafts } from '../agentDraftSync'
 import SnapshotDiff from './SnapshotDiff'
@@ -10,12 +11,13 @@ const unwrap = <T,>(r: Result<T>): T => { if (!r.ok) throw new Error(r.error); r
 export function AgentTurnUndoContent({ projectId, onClose }: { projectId: string; onClose?: () => void }): JSX.Element {
   const { modal } = App.useApp()
   const [busy,setBusy]=useState(false), [error,setError]=useState('')
-  const [turns,setTurns]=useState<AgentTurnSummary[]>([]),[history,setHistory]=useState<AgentTurnUndo[]>([]),[review,setReview]=useState<AgentTurnUndo|null>(null)
+  const [turns,setTurns]=useState<AgentTurnSummary[]>([]),[history,setHistory]=useState<AgentTurnUndo[]>([]),[audits,setAudits]=useState<AgentConfigAudit[]>([]),[review,setReview]=useState<AgentTurnUndo|null>(null)
   const [choices,setChoices]=useState<Record<string,Record<string,AgentConflictChoice>>>({})
-  async function load(): Promise<void> { setTurns(unwrap(await window.api.agent.listUndoTurns(projectId)));setHistory(unwrap(await window.api.agent.listTurnUndos(projectId))) }
+  async function load(): Promise<void> { const [nextTurns,nextHistory,nextAudits]=await Promise.all([window.api.agent.listUndoTurns(projectId),window.api.agent.listTurnUndos(projectId),window.api.agent.listConfigAudits(projectId)]);setTurns(unwrap(nextTurns));setHistory(unwrap(nextHistory));setAudits(unwrap(nextAudits)) }
   useEffect(()=>{ void load().catch(e=>setError(e.message)) },[projectId])
   async function preview(planId: string): Promise<void> { setBusy(true);try { await flushAgentDrafts();setReview(unwrap(await window.api.agent.previewTurnUndo(projectId,planId)));setChoices({});setError('');await load() }catch(e){setError((e as Error).message)}finally{setBusy(false)} }
   async function apply(): Promise<void> { if(!review)return;setBusy(true);try { await flushAgentDrafts();setReview(unwrap(await window.api.agent.applyTurnUndo(projectId,review.undo_id,review.review_id,choices)));setChoices({});setError('');await load() }catch(e){setError((e as Error).message)}finally{setBusy(false)} }
+  async function undoConfig(auditId:string):Promise<void>{setBusy(true);try{unwrap(await window.api.agent.undoConfigChange(projectId,auditId));setError('');await load()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
   function remove(): void { modal.confirm({title:'删除本项目全部 Agent 记录？',content:'会话、计划、工具结果、Agent 报告、候选、Agent 草稿、墓碑和撤销审计将从本机删除。正式接口、Flow、手动运行报告、纯人工草稿及模型连接保留。已删除记录无法恢复。',okText:'删除全部 Agent 记录',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{ await flushAgentDrafts();unwrap(await window.api.agent.deleteProjectAgentRecords(projectId));onClose?.() }}) }
   return <div className="agent-dock-subview-content">
     <div className="agent-dock-subview-title">
@@ -27,6 +29,15 @@ export function AgentTurnUndoContent({ projectId, onClose }: { projectId: string
     {error&&<Alert type="error" message={error}/>}
     {turns.map(turn=><Card key={turn.plan_id} size="small" title={turn.name}><Space><Tag>{turn.applied_count} 个已应用候选</Tag><Button loading={busy} onClick={()=>void preview(turn.plan_id)}>预览整轮撤销</Button></Space></Card>)}
     {!!history.length&&<section aria-label="撤销审计"><h3>本机撤销审计</h3>{history.map(item=><Button key={item.undo_id} onClick={()=>{setReview(item);setChoices({})}}>{item.updated_at} · {item.status==='cancelled'?'已放弃':item.status==='completed'?'已完成':item.status==='partial'?'部分完成 / 待审阅':'待审阅'}</Button>)}</section>}
+    <section aria-label="配置变更审计"><h3>配置变更审计</h3>
+      {!audits.length&&<Typography.Text type="secondary">暂无配置变更</Typography.Text>}
+      {audits.map(item=><Card key={item.audit_id} size="small" title={item.masked} extra={<Tag color={item.undo_status==='undone'?'default':'warning'}>{item.undo_status==='undone'?'已撤销':'可撤销'}</Tag>} style={{marginBottom:8}}>
+        <Space wrap>
+          <Typography.Text type="secondary">{item.created_at} · {item.kind==='environment'?'环境':'全局变量'} · {item.key ?? item.entity_id}</Typography.Text>
+          {item.undo_status!=='undone'&&<Button size="small" loading={busy} onClick={()=>void undoConfig(item.audit_id)}>撤销配置变更</Button>}
+        </Space>
+      </Card>)}
+    </section>
     {review&&<section aria-label="整轮撤销审阅"><h3>本轮 {review.plan_id}</h3>{!!review.pending_candidate_ids?.length&&<p>{review.pending_candidate_ids.length} 个未应用候选将标记为未采纳，保留审阅历史。</p>}{review.entries.map(entry=><Card key={entry.key} title={`${entry.kind==='api'?'接口 / 用例':'Flow'} · ${entry.name}`} style={{marginBottom:16}}>
       <Tag>{({ready:'可撤销',conflict:'撤销冲突',blocked:'已暂停',completed:'已撤销'})[entry.status]}</Tag>
       {entry.error&&<Alert type="warning" message={entry.error}/>}

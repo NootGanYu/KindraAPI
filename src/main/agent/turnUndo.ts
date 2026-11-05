@@ -5,6 +5,7 @@ import type { Target, Flow } from '@shared/types'
 import type { AgentCandidate, AgentConflictChoice } from '@shared/agentDraft'
 import type { AgentFlowCandidate } from '@shared/agentFlowDraft'
 import type { AgentTurnUndo, TurnUndoEntry, AgentTurnSummary } from '@shared/agentTurnUndo'
+import type { AgentConversation } from '@shared/agent'
 import { targetDefinition, preserveCaseRuns, stableJson } from '@shared/targetSync'
 import { flowDefinition } from '@shared/flowSync'
 import * as store from '../storage/store'
@@ -29,10 +30,26 @@ const idOf = (c: Candidate): string => 'flow_id' in c ? c.flow_id : c.target_id
 const definition = (kind: 'api' | 'flow', value: Target | Flow): object => kind === 'api' ? targetDefinition(value as Target) : flowDefinition(value as Flow)
 const signature = (kind: 'api' | 'flow', value: Target | Flow): string => stableJson(definition(kind, value))
 function persist(record: AgentTurnUndo): AgentTurnUndo { record.updated_at = new Date().toISOString(); writeLocal(file(record.project_id,record.undo_id),record); return record }
+function nativeTurnName(pid: string, planId: string): string | undefined {
+  const folder = path.join(agentRoot(), 'projects', pid, 'conversations')
+  if (!fs.existsSync(folder)) return undefined
+  for (const name of fs.readdirSync(folder).filter(file => file.endsWith('.json'))) {
+    const conversation = readLocal<AgentConversation | null>(path.join(folder, name), null)
+    if (!conversation) continue
+    const user = conversation.messages.find(message => message.turn_id === planId && message.role === 'user')
+    if (user?.content.trim()) return user.content.trim().slice(0, 40)
+    if (conversation.activities?.some(activity => activity.turn_id === planId)) return conversation.title
+  }
+  return undefined
+}
 export function listUndoTurns(pid: string): AgentTurnSummary[] {
   dir(pid)
   const candidates = all(pid).filter(c => c.application && !c.application.undone || !c.application && ['pending', 'conflict'].includes(c.status))
-  return [...new Set(candidates.map(c => c.plan_id))].map(plan_id => ({plan_id, name: readLocal<{goal?: string}>(path.join(agentRoot(),'projects',pid,'plans',`${plan_id}.json`),{}).goal ?? plan_id, applied_count: candidates.filter(c=>c.plan_id===plan_id && c.application).length}))
+  return [...new Set(candidates.map(c => c.plan_id))].map(plan_id => ({
+    plan_id,
+    name: readLocal<{goal?: string}>(path.join(agentRoot(),'projects',pid,'plans',`${plan_id}.json`),{}).goal ?? nativeTurnName(pid, plan_id) ?? plan_id,
+    applied_count: candidates.filter(c=>c.plan_id===plan_id && c.application).length
+  }))
 }
 export function listTurnUndos(pid: string): AgentTurnUndo[] { const folder = dir(pid); return fs.existsSync(folder) ? fs.readdirSync(folder).filter(n=>n.endsWith('.json')).map(n=>readLocal<AgentTurnUndo>(path.join(folder,n),null!)).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)) : [] }
 function prepare(pid: string, candidates: Candidate[], choices: Record<string, AgentConflictChoice> = {}): TurnUndoEntry {

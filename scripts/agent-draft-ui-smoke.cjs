@@ -8,7 +8,7 @@ const server = http.createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk
   const body = JSON.parse(raw), tools = (body.tools ?? []).map(tool => tool.function?.name)
   const patch = { description: 'Agent 候选说明', request: { query: { parameter: [{ param_id: 'second', key: 'duplicate', value: '', is_checked: 1 }] } } }
-  if (hold && !tools.length) { res.setHeader('Content-Type', 'text/event-stream'); res.write('data: {"choices":[{"delta":{"content":"进行中"}}]}\n\n'); return }
+  if (hold) { res.setHeader('Content-Type', 'text/event-stream'); res.write('data: {"choices":[{"delta":{"content":"进行中"}}]}\n\n'); return }
   let message
   if (tools.includes('kindra_capability_probe')) message = { tool_calls: [{ id: 'probe', type: 'function', function: { name: 'kindra_capability_probe', arguments: '{"token":"kindra-probe"}' } }] }
   else if (tools.includes('propose_task_plan')) message = { tool_calls: [{ id: 'plan', type: 'function', function: { name: 'propose_task_plan', arguments: JSON.stringify({ selected_objects: [{ kind: 'api', id: targetId }], steps: [{ step_id: 'edit', operation: 'propose_api_change', binding: 'deferred', target_id: targetId, depends_on: [], intent: '修改说明', allowed_changes: ['description', 'request.query.parameter'] }] }) } }] }

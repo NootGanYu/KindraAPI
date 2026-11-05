@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, App as AntApp, Button, Dropdown, Empty, Input, Select, Space, Tag, Tooltip, Typography } from 'antd'
-import { AppstoreOutlined, CloseOutlined, DeleteOutlined, DownOutlined, PlusOutlined, SendOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
+import { Alert, App as AntApp, Button, Dropdown, Empty, Input, Select, Space, Tooltip, Typography } from 'antd'
+import { AppstoreOutlined, CloseOutlined, DeleteOutlined, DownOutlined, HistoryOutlined, PlusOutlined, SendOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
 import type { AgentConnection, AgentConversation } from '@shared/agent'
 import type { AgentPermissionMode } from '@shared/agentPlan'
 import type { Result } from '@shared/types'
@@ -9,6 +9,7 @@ import { useApp } from '../store'
 import AgentConnectionSettings from './AgentConnectionSettings'
 import AgentPlanPanel from './AgentPlanPanel'
 import AgentProjectCandidates from './AgentProjectCandidates'
+import AgentTimeline from './AgentTimeline'
 import AgentTurnUndoPanel from './AgentTurnUndoPanel'
 
 function unwrap<T>(result: Result<T>): T { if (!result.ok) throw new Error(result.error); return result.data }
@@ -33,11 +34,12 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const [selected, setSelected] = useState<string | null>(null)
   const [text, setText] = useState('')
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>('ask')
+  const [legacyPlanMode, setLegacyPlanMode] = useState(() => localStorage.getItem('kindra.agent.legacyPlanMode') === '1')
   const [busy, setBusy] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const canceledRename = useRef(false)
-  const [view, setView] = useState<'chat' | 'undo' | 'candidates' | 'settings'>('chat')
+  const [view, setView] = useState<'chat' | 'undo' | 'candidates' | 'settings' | 'plans'>('chat')
   const [error, setError] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const conversation = conversations.find(item => item.conversation_id === selected)
@@ -98,12 +100,19 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     setConversations(previous => [created, ...previous.filter(item => item.conversation_id !== created.conversation_id)])
     return created
   }
+  async function respondApproval(activityId: string, decision: 'approved' | 'denied'): Promise<void> {
+    if (!conversation) return
+    setError('')
+    try {
+      unwrap(await window.api.agent.respondToolApproval(projectId, conversation.conversation_id, activityId, decision))
+    } catch (e) { setError((e as Error).message) }
+  }
   async function send(): Promise<void> {
     if (!text.trim() || busy || running) return
     setBusy(true); setError('')
     try {
       await flushAgentDrafts()
-      if (connection?.capability === 'tools') {
+      if (connection?.capability === 'tools' && legacyPlanMode) {
         unwrap(await window.api.agent.proposeTaskPlan(projectId, {
           goal: text,
           selection: 'auto',
@@ -113,7 +122,10 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         }))
       } else {
         const current = conversation ?? await create()
-        unwrap(await window.api.agent.sendMessage(projectId, current.conversation_id, text, connection?.connection_id))
+        unwrap(await window.api.agent.sendMessage(projectId, current.conversation_id, text, connection?.connection_id, {
+          activeTargetId: useApp.getState().activeId ?? undefined,
+          permissionMode
+        }))
       }
       setText('')
     } catch (e) { setError((e as Error).message) }
@@ -186,6 +198,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
       <Space wrap size={8}>
         <Tooltip title="整轮撤销与记录"><Button size="small" type={view === 'undo' ? 'primary' : 'default'} aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={() => setView(view === 'undo' ? 'chat' : 'undo')} /></Tooltip>
         <Tooltip title="项目候选汇总"><Button size="small" type={view === 'candidates' ? 'primary' : 'default'} aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => setView(view === 'candidates' ? 'chat' : 'candidates')} /></Tooltip>
+        <Tooltip title="旧计划记录（legacy）"><Button size="small" type={view === 'plans' ? 'primary' : 'default'} aria-label="旧计划记录" icon={<HistoryOutlined />} onClick={() => setView(view === 'plans' ? 'chat' : 'plans')} /></Tooltip>
         <Tooltip title="Agent 设置"><Button size="small" type={view === 'settings' ? 'primary' : 'default'} aria-label="Agent 设置" icon={<SettingOutlined />} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')} /></Tooltip>
         <Tooltip title="收起面板"><Button size="small" aria-label="收起面板" icon={<CloseOutlined />} onClick={onClose} /></Tooltip>
       </Space>
@@ -198,24 +211,20 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     {running && conversation?.connection && <Alert type="info" message={`本轮固定连接：${conversation.connection.name} · ${conversation.connection.model}；修改配置不影响本轮。`} />}
     {view === 'chat' ? <>
       <div className="agent-messages" role="log" aria-label="Agent 会话消息">
-        {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会自动选择项目对象；修改、执行、保存和新建由计划卡展示并按权限模式处理。</Typography.Text></Empty>}
-        {conversation?.messages.map(item => <article key={item.message_id} className={`agent-message ${item.role}`}>
-          <Typography.Text strong>{item.role === 'user' ? '你' : 'Agent'}</Typography.Text>
-          <div className="agent-message-text">{item.content || (item.status === 'streaming' ? '正在回复…' : '未收到回复')}</div>
-          {item.status === 'interrupted' && <Tag>已中断</Tag>}
-          {item.status === 'error' && <Tag color="error">回复失败</Tag>}
-        </article>)}
+        {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会连续读取项目对象，把每次工具调用展示在时间线上；只读工具自动执行，本机草稿修改按权限模式等待允许。</Typography.Text></Empty>}
+        {conversation && <AgentTimeline conversation={conversation} onApproval={(activityId, decision) => void respondApproval(activityId, decision)} />}
+        {legacyPlanMode && <AgentPlanPanel projectId={projectId} />}
         {conversation?.error && <Alert type="warning" message={conversation.error} />}
         {conversation?.status === 'interrupted' && <Alert type="info" message="上次回复已中断。你可以继续发消息，不会自动重发。" />}
-        <AgentPlanPanel projectId={projectId} />
         <div ref={end} />
       </div>
       <div className="agent-compose">
-        <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取当前接口，把说明改成用户已确认的新规则' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
+        <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取订单接口与相关 Flow，汇总请求参数和最近运行结果' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
         <div className="agent-compose-bar">
           <Space size={4} wrap>
             <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 96 }} />
             <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 230 }} />
+            <Tooltip title="旧计划模式：先用待批准计划再执行（legacy）"><Button size="small" type={legacyPlanMode ? 'primary' : 'text'} aria-label="旧计划模式" aria-pressed={legacyPlanMode} onClick={() => setLegacyPlanMode(value => { localStorage.setItem('kindra.agent.legacyPlanMode', value ? '0' : '1'); return !value })}>旧计划</Button></Tooltip>
           </Space>
           <Space size={8}>
             {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
@@ -227,7 +236,9 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     </div> : <div className="agent-dock-subview">
       {view === 'undo'
         ? <AgentTurnUndoPanel projectId={projectId} inline onClose={() => setView('chat')} />
-        : <AgentProjectCandidates projectId={projectId} inline onClose={() => setView('chat')} />}
+        : view === 'plans'
+          ? <AgentPlanPanel projectId={projectId} />
+          : <AgentProjectCandidates projectId={projectId} inline onClose={() => setView('chat')} />}
     </div>}
   </div>
 }

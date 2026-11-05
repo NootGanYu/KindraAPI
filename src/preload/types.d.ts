@@ -5,6 +5,7 @@ import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@s
 import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
 import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput, TaskPlanInput } from '../shared/agentPlan'
 import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
+import type { AgentConfigAudit } from '@shared/agentConfigAudit'
 import type {
   AppPaths,
   AppSettings,
@@ -164,8 +165,11 @@ export interface ApiBridge {
     listConversations(projectId: string): Promise<Result<AgentConversation[]>>
     getConversation(projectId: string, id: string): Promise<Result<AgentConversation>>
     deleteConversation(projectId: string, id: string): Promise<Result<boolean>>
-    sendMessage(projectId: string, id: string, content: string, connectionId?: string): Promise<Result<AgentConversation>>
+    sendMessage(projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }): Promise<Result<AgentConversation>>
     cancelMessage(projectId: string, id: string): Promise<Result<boolean>>
+    respondToolApproval(projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied'): Promise<Result<boolean>>
+    listConfigAudits(projectId: string): Promise<Result<AgentConfigAudit[]>>
+    undoConfigChange(projectId: string, auditId: string): Promise<Result<AgentConfigAudit>>
     onChanged(callback: (event: AgentEvent) => void): () => void
   }
   paths(): Promise<Result<AppPaths>>

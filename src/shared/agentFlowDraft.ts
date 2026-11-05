@@ -5,6 +5,8 @@ export interface AgentFlowDraft {
   flow_id: string
   flow: Flow
   base_revision: string | null
+  /** A Flow that exists only as a local draft; no formal Flow has been written. */
+  new_object?: boolean
   agent_owned: boolean
   deleted_object?: string
   candidate_ids?: string[]
