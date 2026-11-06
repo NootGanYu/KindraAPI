@@ -46,7 +46,7 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
     const target = (await window.api.targets.create(project.project_id, '0', 'api')).data
     target.name = '界面接口'; target.url = 'https://example.invalid/dock'; target.description = '旧说明'
     await window.api.targets.save(project.project_id, target)
-    const connection = (await window.api.agent.createConnection({ name: '界面连接', base_url: base, model: 'dock', protocol: 'chat-completions' })).data
+    const connection = (await window.api.agent.createConnection({ name: '界面连接', base_url: base, model: 'deepseek-v4.1-flash-long-name', protocol: 'chat-completions' })).data
     await window.api.agent.setProjectConnection(project.project_id, connection.connection_id)
     await window.api.agent.testConnection(connection.connection_id)
     return { project: project.project_id, target: target.target_id }
@@ -104,9 +104,16 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await page.waitForTimeout(250)
   assert.equal(await page.locator('.ant-tooltip').filter({ hasText: '仅全只读计划自动执行' }).count(), 0, 'permission hover must not cover the dropdown')
   assert(await page.locator('.agent-compose-bar').getByRole('combobox', { name: '模型连接' }).isVisible())
+  const modelSelect = page.locator('.agent-compose-bar .ant-select').filter({ has: page.getByRole('combobox', { name: '模型连接' }) })
+  await modelSelect.locator('.ant-select-selector').click()
+  const longOption = page.locator('.ant-select-item-option').filter({ hasText: 'deepseek-v4.1-flash-long-name' }).last()
+  await longOption.waitFor()
+  const optionContent = longOption.locator('.ant-select-item-option-content')
+  assert.equal(await optionContent.evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'open model menu must show the full connection name')
+  await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).click()
   assert.equal(await page.locator('.agent-dock-controls').getByRole('combobox', { name: '权限模式' }).count(), 0, 'permission selector must sit in the bottom bar')
   assert(await page.getByRole('textbox', { name: '告诉 Agent 要做什么' }).isVisible())
-  await panel.getByText('界面连接', { exact: false }).waitFor()
+  assert((await page.locator('.agent-compose-bar .ant-select-selection-item').allTextContents()).some(text => text.includes('界面连接')), 'the selected model label must be visible')
   const projectBox = await panel.locator('.agent-dock-project').boundingBox()
   const sessionBox = await panel.locator('.agent-session-title').boundingBox()
   assert(projectBox && sessionBox && Math.abs((projectBox.y + projectBox.height / 2) - (sessionBox.y + sessionBox.height / 2)) < 12, 'project and session titles must share a row')

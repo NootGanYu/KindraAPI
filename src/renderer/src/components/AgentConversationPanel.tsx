@@ -234,7 +234,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
         <div className="agent-compose-bar">
           <Space size={4} wrap={false}>
             <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 88 }} />
-            <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 190, minWidth: 0 }} />
+            <Select aria-label="模型连接" size="small" variant="borderless" popupMatchSelectWidth={false} value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 190, minWidth: 0 }} />
           </Space>
           <Space size={8}>
             {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
