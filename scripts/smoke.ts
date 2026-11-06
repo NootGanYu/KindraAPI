@@ -30,12 +30,17 @@ import {
   getModel,
   getPaths,
   getSettings,
+  getTarget,
   listDbConnections,
   listDictionaryEntries,
   listDictionarySuggestions,
+  listDocShares,
   listModels,
+  listTargets,
+  listTargetVersions,
   mcpInfoPath,
   moveModel,
+  previewTargetTransfer,
   redactDbConnection,
   saveDbConnection,
   saveDictionaryEntry,
@@ -46,7 +51,8 @@ import {
   saveMcpConfig,
   saveModel,
   saveSettings,
-  saveTarget
+  saveTarget,
+  transferTargetToProject
 } from '../src/main/storage/store'
 import {
   createApiCase,
@@ -144,12 +150,220 @@ function bridgeCall(
   })
 }
 
+async function testCrossProjectMove(): Promise<void> {
+  const source = createProjectWithDefaults('move-source')
+  const destination = createProjectWithDefaults('move-dest')
+
+  const root = createTargetInProject(source.project_id, '0', 'folder')
+  root.name = '模块A'
+  root.description = '跨项目移动'
+  saveTarget(source.project_id, root)
+
+  const child = createTargetInProject(source.project_id, root.target_id, 'folder')
+  child.name = '子目录'
+  saveTarget(source.project_id, child)
+
+  const model = createModelInProject(source.project_id, '0', 'model')
+  model.name = '用户模型'
+  saveModel(source.project_id, model)
+
+  const api = createTargetInProject(source.project_id, child.target_id, 'api')
+  api.name = '查询用户'
+  api.method = 'GET'
+  api.url = '{{baseUrl}}/users'
+  api.source_key = 'move.user'
+  api.server_id = 'missing-server'
+  api.request!.body = { ...api.request!.body, model_id: model.model_id }
+  saveTarget(source.project_id, api)
+
+  const keep = createTargetInProject(source.project_id, '0', 'api')
+  keep.name = '保留接口'
+  keep.url = '{{baseUrl}}/keep'
+  saveTarget(source.project_id, keep)
+
+  const destinationFolder = createTargetInProject(destination.project_id, '0', 'folder')
+  destinationFolder.name = '模块A'
+  saveTarget(destination.project_id, destinationFolder)
+  const destinationApi = createTargetInProject(destination.project_id, '0', 'api')
+  destinationApi.name = '目标已有接口'
+  destinationApi.source_key = 'move.user'
+  destinationApi.url = '{{baseUrl}}/dest'
+  saveTarget(destination.project_id, destinationApi)
+
+  const share = createDocShare(source.project_id, {
+    name: '移动前分享',
+    scope: 'api',
+    target_ids: [api.target_id],
+    settings: createDocSettings({})
+  })
+  const flow = createFlow(source.project_id, '移动前流程')
+  flow.events = [createFlowEvent('api', { target_id: api.target_id })]
+  saveFlow(source.project_id, flow)
+
+  const sourceBefore = JSON.stringify(listTargets(source.project_id))
+  const destinationBefore = JSON.stringify(listTargets(destination.project_id))
+
+  const blocked = previewTargetTransfer(
+    source.project_id,
+    root.target_id,
+    destination.project_id,
+    'move'
+  )
+  assert(blocked.can_transfer === false, 'missing destination model blocks move')
+  assert(blocked.model_blockers.length === 1, 'model blocker listed')
+  assert(blocked.target_ids.length === 3, 'subtree includes folder, child and api')
+  assert(blocked.api_count === 1 && blocked.folder_count === 2, 'move counts')
+  assert(blocked.root_name_after === '模块A (2)', 'name conflict renamed')
+  assert(blocked.shares.length === 1 && blocked.shares[0].affected === 1, 'source share warning')
+  assert(blocked.flows.length === 1 && blocked.flows[0].affected === 1, 'source flow warning')
+  assert(blocked.source_key_conflicts.length === 1, 'source_key conflict warning')
+  assert(blocked.server_reset_ids.length === 1, 'server reset warning')
+
+  let refused = ''
+  try {
+    transferTargetToProject(source.project_id, root.target_id, destination.project_id, 'move')
+  } catch (error) {
+    refused = (error as Error).message
+  }
+  assert(refused.includes('数据模型'), 'blocked move throws')
+  assert(JSON.stringify(listTargets(source.project_id)) === sourceBefore, 'blocked move leaves source untouched')
+  assert(
+    JSON.stringify(listTargets(destination.project_id)) === destinationBefore,
+    'blocked move leaves destination untouched'
+  )
+
+  saveModel(destination.project_id, { ...model, project_id: destination.project_id })
+  const allowed = previewTargetTransfer(
+    source.project_id,
+    root.target_id,
+    destination.project_id,
+    'move'
+  )
+  assert(allowed.can_transfer === true, 'move allowed after destination model exists')
+
+  const result = transferTargetToProject(
+    source.project_id,
+    root.target_id,
+    destination.project_id,
+    'move'
+  )
+  assert(
+    result.target_ids.length === 3 && result.api_count === 1 && result.folder_count === 2,
+    'move result counts'
+  )
+  assert(result.root_name === '模块A (2)', 'moved root renamed')
+
+  const sourceIds = new Set(listTargets(source.project_id).map((item) => item.target_id))
+  assert(
+    !sourceIds.has(root.target_id) && !sourceIds.has(child.target_id) && !sourceIds.has(api.target_id),
+    'source subtree removed'
+  )
+  assert(sourceIds.has(keep.target_id), 'unrelated source target kept')
+
+  const destinationRoot = listTargets(destination.project_id).find(
+    (item) => item.target_id === root.target_id
+  )
+  assert(
+    destinationRoot?.parent_id === '0' && destinationRoot?.name === '模块A (2)',
+    'moved root at destination root'
+  )
+  const movedChild = listTargets(destination.project_id).find(
+    (item) => item.target_id === child.target_id
+  )
+  assert(movedChild?.parent_id === root.target_id, 'child keeps parent link')
+  const movedApi = getTarget(destination.project_id, api.target_id)!
+  assert(movedApi.project_id === destination.project_id, 'moved target project id')
+  assert(movedApi.parent_id === child.target_id, 'moved target parent id')
+  assert(movedApi.source_key === undefined, 'source_key conflict cleared')
+  assert(movedApi.server_id === '0', 'missing server reset')
+  assert(
+    listTargetVersions(destination.project_id, api.target_id).length > 0,
+    'version history moved'
+  )
+  assert(
+    listTargetVersions(source.project_id, api.target_id).length === 0,
+    'source version history removed'
+  )
+  assert(getModel(destination.project_id, model.model_id) !== null, 'destination model retained')
+  assert(
+    listDocShares(source.project_id).some((item) => item.share_id === share.share_id),
+    'source share kept'
+  )
+
+  // --- 复制到项目：源项目保留，目标项目使用新 ID ---
+  createDocShare(destination.project_id, {
+    name: '复制源分享',
+    scope: 'folder',
+    target_ids: [root.target_id],
+    settings: createDocSettings({})
+  })
+  const destinationIdsBeforeCopy = new Set(
+    listTargets(destination.project_id).map((item) => item.target_id)
+  )
+  const copyPreview = previewTargetTransfer(
+    destination.project_id,
+    root.target_id,
+    source.project_id,
+    'copy'
+  )
+  assert(copyPreview.mode === 'copy' && copyPreview.can_transfer, 'copy preview allowed')
+  assert(
+    copyPreview.shares.length === 0 && copyPreview.flows.length === 0,
+    'copy does not report source impacts'
+  )
+
+  const copyResult = transferTargetToProject(
+    destination.project_id,
+    root.target_id,
+    source.project_id,
+    'copy'
+  )
+  assert(copyResult.mode === 'copy', 'copy result mode')
+  assert(
+    copyResult.source_target_ids.length === 3 && copyResult.target_ids.length === 3,
+    'copy result counts'
+  )
+  assert(
+    copyResult.target_ids.every((id) => !copyResult.source_target_ids.includes(id)),
+    'copy generates new target ids'
+  )
+  assert(
+    copyResult.target_ids.every((id) => !destinationIdsBeforeCopy.has(id)),
+    'copy ids do not collide with source project'
+  )
+
+  const sourceAfterCopy = listTargets(source.project_id)
+  assert(copyResult.root_name === '模块A (2)', 'copy keeps the moved root name')
+  const copiedRoot = sourceAfterCopy.find(
+    (item) => item.name === copyResult.root_name && item.parent_id === '0'
+  )
+  assert(copiedRoot, 'copied root exists')
+  const copiedChild = sourceAfterCopy.find(
+    (item) => item.name === '子目录' && item.parent_id === copiedRoot!.target_id
+  )
+  assert(copiedChild, 'copied child keeps subtree link')
+  const copiedApi = sourceAfterCopy.find(
+    (item) => item.name === '查询用户' && item.parent_id === copiedChild!.target_id
+  )
+  assert(copiedApi, 'copied api keeps subtree link')
+  assert(
+    getTarget(source.project_id, copiedApi!.target_id)?.project_id === source.project_id,
+    'copied target belongs to destination project'
+  )
+  assert(
+    listTargets(destination.project_id).filter((item) => destinationIdsBeforeCopy.has(item.target_id))
+      .length === destinationIdsBeforeCopy.size,
+    'copy leaves source project content intact'
+  )
+}
+
 async function main(): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kindraapi-smoke-'))
   app.setPath('userData', tmp)
   ;(app as unknown as { dock?: { hide(): void } }).dock?.hide()
   await app.whenReady()
 
+  const orderAuthorizations: Array<string | undefined> = []
   const httpServer = http.createServer((req, res) => {
     let body = ''
     req.on('data', (chunk) => (body += chunk))
@@ -161,6 +375,7 @@ async function main(): Promise<void> {
       if (req.url === '/login') return send(200, { token: 'smoke-token' })
       if (req.url === '/ping') return send(200, { ok: true })
       if (req.url === '/orders') {
+        orderAuthorizations.push(req.headers.authorization)
         if (req.headers.authorization !== 'Bearer smoke-token') {
           return send(401, { error: 'unauthorized' })
         }
@@ -173,6 +388,8 @@ async function main(): Promise<void> {
   const httpPort = (httpServer.address() as net.AddressInfo).port
 
   const project = ensureDefaultProject()
+  // 使用独立项目验证跨项目移动，先于文档相关断言执行。
+  await testCrossProjectMove()
   const env = createEnvironment(project.project_id, 'smoke')
   env.server_list[0].uri = `http://127.0.0.1:${httpPort}`
   saveEnvironment(project.project_id, env)
@@ -269,7 +486,11 @@ async function main(): Promise<void> {
 
   const run = await runFlow(project.project_id, flow, env.env_id)
   assert(run.status === 'passed', 'flow run passed')
-  assert(run.variables.token === 'smoke-token', 'token propagated')
+  assert(orderAuthorizations.length === 1, 'flow dispatches one authorized orders request')
+  assert(orderAuthorizations[0] === 'Bearer smoke-token', 'login token propagates to actual orders request')
+  assert(run.variables.token === '[REDACTED]', 'returned token evidence is redacted')
+  assert(!JSON.stringify(run).includes('smoke-token'), 'returned run evidence excludes raw token')
+  console.log('PASS flow propagates login token to real orders request and redacts public evidence')
 
   // -------------------------------------------------------------------------
   // Issue 01 · shared schema example generation
@@ -483,7 +704,10 @@ async function main(): Promise<void> {
   assert(status.running, 'mcp server running')
 
   const tools = await bridgeCall(port, 'smoke-token-123', '__tools', {})
-  assert(tools.ok && tools.result.tools.length === 71, 'mcp tool list')
+  assert(tools.ok && tools.result.tools.length === 75, 'mcp tool list includes controlled Run additions')
+  const toolNames = tools.result.tools.map((tool: { name: string }) => tool.name).sort()
+  assert(['start_flow_run', 'get_flow_run', 'pause_flow_run', 'cancel_flow_run', 'execute_flow'].every(name => toolNames.includes(name)), 'mcp controlled Run and legacy tools available')
+  assert(!toolNames.includes('resume_flow_run'), 'MCP cannot expose manual resume')
 
   const projects = await bridgeCall(port, 'smoke-token-123', 'list_projects', {})
   assert(projects.ok && projects.result.projects.length === 1, 'mcp list projects')
@@ -1010,7 +1234,7 @@ async function main(): Promise<void> {
   const init = await rpc(1, 'initialize', { protocolVersion: '2024-11-05' })
   assert(init.result?.serverInfo?.name === 'KindraAPI', 'stdio initialize')
   const stdioTools = await rpc(2, 'tools/list', {})
-  assert(stdioTools.result?.tools?.length === 71, 'stdio tools/list')
+  assert(JSON.stringify(stdioTools.result?.tools?.map((tool: { name: string }) => tool.name).sort()) === JSON.stringify(toolNames), 'stdio tools/list matches TCP catalog')
   const stdioCall = await rpc(3, 'tools/call', {
     name: 'list_projects',
     arguments: {}

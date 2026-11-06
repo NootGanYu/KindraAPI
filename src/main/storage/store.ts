@@ -1,8 +1,14 @@
+import { isActiveFlowRunStatus } from '@shared/flow'
+import { redactEvidence } from '../flow/evidence'
+import { deletedObjects, retainDeletedObject, publishDeletedObject, settleDeletionCheckpoints } from './deletedObjects'
+import { flowSignature, type FlowVersion, type FlowSnapshot, type FlowSaveResult } from '@shared/flowSync'
+import { assertAgentConflictsResolved } from './agentConflicts'
 import { app } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeFlowEvents } from '../flow/definition'
 import { apiStatuses, defaultApiStatus } from '@shared/apiStatuses'
 import { isValidServerUri } from '@shared/environmentUrl'
 import type {
@@ -28,6 +34,7 @@ import type {
   DocTargetSnapshot,
   Environment,
   Flow,
+  FlowEvent,
   FlowEventResult,
   FlowRun,
   FlowRunSummary,
@@ -44,6 +51,9 @@ import type {
   CookieJar,
   Target,
   TargetSummary,
+  TargetTransferMode,
+  TargetTransferPreview,
+  TargetTransferResult,
   TargetVersion,
   TargetVersionSummary
 } from '@shared/types'
@@ -376,25 +386,9 @@ function readTargetVersions(projectId: string, targetId: string): TargetVersionF
   }
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  const record = value as Record<string, unknown>
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(',')}}`
-}
-
-/** 只对可编辑内容做签名，忽略时间、排序与版本元数据。 */
+/** Versions and revisions share the editable-definition boundary; runtime is never versioned. */
 function targetSignature(target: Target): string {
-  const { updated_at, created_at, version, sort, parent_id, ...content } = target as Target
-  void updated_at
-  void created_at
-  void version
-  void sort
-  void parent_id
-  return crypto.createHash('sha1').update(stableStringify(content)).digest('hex')
+  return crypto.createHash('sha1').update(stableJson(targetDefinition(target))).digest('hex')
 }
 
 function toVersionSummary(version: TargetVersion): TargetVersionSummary {
@@ -416,7 +410,8 @@ function recordTargetVersion(projectId: string, target: Target): void {
   const file = readTargetVersions(projectId, target.target_id)
   const signature = targetSignature(target)
   const newest = file.versions[0]
-  if (newest && newest.signature === signature) {
+  // Recompute old snapshots too, so legacy signatures do not manufacture a migration version.
+  if (newest && targetSignature(newest.snapshot) === signature) {
     target.version = newest.version
     return
   }
@@ -471,22 +466,16 @@ export function restoreTargetVersion(
   if (!live) throw new Error('接口不存在')
   const found = getTargetVersion(projectId, targetId, versionId)
   if (!found) throw new Error('版本不存在')
-  const snapshot = found.snapshot
-  const restored: Target = {
-    ...live,
-    name: snapshot.name,
-    description: snapshot.description,
-    method: snapshot.method,
-    url: snapshot.url,
-    protocol: snapshot.protocol,
-    server_id: snapshot.server_id,
-    status: snapshot.status,
-    tags: snapshot.tags ? [...snapshot.tags] : [],
-    is_exampled: snapshot.is_exampled,
-    request: snapshot.request ? cloneJson(snapshot.request) : live.request,
-    response: snapshot.response ? cloneJson(snapshot.response) : live.response,
+  // Restore the whole editable definition, including removed optional fields, while
+  // keeping this entity's identity and the latest local runtime results.
+  const restored = preserveCaseRuns({
+    ...cloneJson(targetDefinition(found.snapshot)),
+    target_id: live.target_id,
+    project_id: live.project_id,
+    target_type: live.target_type,
+    created_at: live.created_at,
     updated_at: new Date().toISOString()
-  }
+  } as Target, live)
   return saveTarget(projectId, restored)
 }
 
@@ -662,7 +651,24 @@ export function getCookieJarForUrl(projectId: string, rawUrl: string): Record<st
   return result
 }
 
+const approvedAgentCreations = new Set<string>()
+/** Synchronous creation boundary used only by the independently approved Agent save step. */
+export function createAgentTargetChecked(projectId: string, target: Target): TargetSaveOutcome {
+  const current = readTargetSnapshot(projectId, target.target_id)
+  if (current.target) return { status: 'conflict', ...current }
+  if (target.parent_id !== '0' && getTarget(projectId, target.parent_id)?.target_type !== 'folder') throw new Error('父目录已删除，创建已暂停')
+  const key = `${projectId}:${target.target_id}`
+  approvedAgentCreations.add(key)
+  try {
+    const saved = saveTarget(projectId, target)
+    return { status: 'saved', target: saved, revision: targetRevision(saved) }
+  } finally { approvedAgentCreations.delete(key) }
+}
+
 export function saveTarget(projectId: string, target: Target): Target {
+  assertAgentConflictsResolved(getPaths().localRoot, projectId, target.target_id)
+  const localDraft = readJson<{ new_object?: boolean } | null>(path.join(getPaths().localRoot, 'agent', 'projects', projectId, 'drafts', `${target.target_id}.json`), null)
+  if (localDraft?.new_object && !getTarget(projectId, target.target_id) && !approvedAgentCreations.has(`${projectId}:${target.target_id}`)) throw new Error('新接口草稿需要独立获批保存步骤才能正式创建')
   if (target.project_id !== projectId) throw new Error('项目不匹配')
   target.updated_at = new Date().toISOString()
   recordTargetVersion(projectId, target)
@@ -734,14 +740,19 @@ export function deleteTarget(projectId: string, targetId: string): void {
       }
     }
   }
+  // Capture the whole subtree before deleting any file, including MCP and sync callers.
+  for (const id of toDelete) {
+    const snapshot = readTargetSnapshot(projectId, id)
+    if (snapshot.target?.target_type === 'api') retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: id, kind: 'api', snapshot: snapshot.target, revision: snapshot.revision!, versions: readTargetVersions(projectId, id).versions })
+  }
   for (const id of toDelete) {
     const file = path.join(projectDir(projectId), 'apis', `${assertId(id, 'target_id')}.json`)
     fs.rmSync(file, { force: true })
-    fs.rmSync(targetVersionsPath(projectId, id), { force: true })
+    if (!getDeletedObject(projectId, 'api', id)) fs.rmSync(targetVersionsPath(projectId, id), { force: true })
   }
   index.items = index.items.filter((i) => !toDelete.has(i.target_id))
   writeTargetIndex(projectId, index)
-  for (const id of toDelete) recordTargetChange(projectId, id, 'deleted')
+  for (const id of toDelete) { recordTargetChange(projectId, id, 'deleted'); publishDeletedObject(projectId, 'api', id) }
 }
 
 export function reorderTargets(
@@ -773,6 +784,346 @@ export function reorderTargets(
   writeTargetIndex(projectId, index)
   for (const id of ids) recordTargetChange(projectId, id, 'definition')
   return listTargets(projectId)
+}
+
+// ---------------------------------------------------------------------------
+// 跨项目移动 / 复制
+// ---------------------------------------------------------------------------
+
+interface TransferPlan {
+  mode: TargetTransferMode
+  sourceProjectId: string
+  destinationProjectId: string
+  root: Target
+  targets: Target[]
+  ids: Set<string>
+  sourceIndex: TargetIndex
+  destinationIndex: TargetIndex
+  rootNameAfter: string
+  rootSort: number
+  shares: TargetTransferPreview['shares']
+  flows: TargetTransferPreview['flows']
+  modelBlockers: TargetTransferPreview['model_blockers']
+  sourceKeyConflicts: string[]
+  serverResetIds: string[]
+  /** 需要在目标项目中清空的 source_key（与目标已有键冲突）。 */
+  clearSourceKeys: Set<string>
+  /** 目标项目环境中不存在的 server_id。 */
+  missingServerIds: Set<string>
+}
+
+function collectTransferSubtree(index: TargetIndex, rootId: string): string[] {
+  const ids = new Set<string>([rootId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const item of index.items) {
+      if (ids.has(item.parent_id) && !ids.has(item.target_id)) {
+        ids.add(item.target_id)
+        changed = true
+      }
+    }
+  }
+  return [...ids]
+}
+
+function countFlowTargetRefs(events: FlowEvent[] | undefined, ids: Set<string>): number {
+  let count = 0
+  for (const event of events ?? []) {
+    if (event.target_id && ids.has(event.target_id)) count += 1
+    count += countFlowTargetRefs(event.children, ids)
+  }
+  return count
+}
+
+function resolveTransferPlan(
+  sourceProjectId: string,
+  targetId: string,
+  destinationProjectId: string,
+  mode: TargetTransferMode
+): TransferPlan {
+  if (mode !== 'move' && mode !== 'copy') throw new Error('操作类型非法')
+  assertId(sourceProjectId, '源项目')
+  assertId(destinationProjectId, '目标项目')
+  assertId(targetId, 'target_id')
+  if (sourceProjectId === destinationProjectId) throw new Error('目标项目与当前项目相同')
+  if (!getProject(sourceProjectId)) throw new Error('源项目不存在')
+  if (!getProject(destinationProjectId)) throw new Error('目标项目不存在')
+
+  const sourceIndex = readTargetIndex(sourceProjectId)
+  const destinationIndex = readTargetIndex(destinationProjectId)
+  if (!sourceIndex.items.some((item) => item.target_id === targetId)) {
+    throw new Error('要操作的节点不存在')
+  }
+  const ids = new Set(collectTransferSubtree(sourceIndex, targetId))
+  // 复制会生成新 target_id，不需要与目标项目去重。
+  if (mode === 'move' && destinationIndex.items.some((item) => ids.has(item.target_id))) {
+    throw new Error('目标项目中已存在相同节点，请刷新后重试')
+  }
+
+  const targets = [...ids].map((id) => {
+    const target = getTarget(sourceProjectId, id)
+    if (!target) throw new Error('接口数据不完整，无法操作')
+    return target
+  })
+  const root = targets.find((target) => target.target_id === targetId)!
+
+  const destinationModelIds = new Set(
+    listModelsAll(destinationProjectId)
+      .filter((model) => model.model_type === 'model')
+      .map((model) => model.model_id)
+  )
+  const modelBlockers: TargetTransferPreview['model_blockers'] = []
+  for (const target of targets) {
+    const bodyModelId = target.request?.body?.model_id
+    if (bodyModelId && !destinationModelIds.has(bodyModelId)) {
+      modelBlockers.push({
+        target_id: target.target_id,
+        target_name: target.name,
+        model_id: bodyModelId,
+        kind: 'request-body'
+      })
+    }
+    for (const example of target.response?.example ?? []) {
+      const modelId = example.expect?.model_id
+      if (modelId && !destinationModelIds.has(modelId)) {
+        modelBlockers.push({
+          target_id: target.target_id,
+          target_name: target.name,
+          model_id: modelId,
+          kind: 'response-example'
+        })
+      }
+    }
+  }
+
+  // 只有移动会让源项目失去节点；复制不影响源项目的分享与流程。
+  const shares =
+    mode === 'move'
+      ? listDocShares(sourceProjectId).flatMap((share) => {
+          const affected = (share.target_ids ?? []).filter((id) => ids.has(id)).length
+          return affected > 0 ? [{ share_id: share.share_id, name: share.name, affected }] : []
+        })
+      : []
+  const flows =
+    mode === 'move'
+      ? listFlows(sourceProjectId).flatMap((flow) => {
+          const affected = countFlowTargetRefs(flow.events, ids)
+          return affected > 0 ? [{ flow_id: flow.flow_id, name: flow.name, affected }] : []
+        })
+      : []
+
+  const destinationKeys = new Set<string>()
+  for (const item of destinationIndex.items) {
+    const key = getTarget(destinationProjectId, item.target_id)?.source_key
+    if (key) destinationKeys.add(key)
+  }
+  const clearSourceKeys = new Set<string>()
+  const sourceKeyConflicts: string[] = []
+  for (const target of targets) {
+    if (target.source_key && destinationKeys.has(target.source_key)) {
+      clearSourceKeys.add(target.target_id)
+      sourceKeyConflicts.push(target.name)
+    }
+  }
+
+  const destinationServerIds = new Set(
+    listEnvironments(destinationProjectId).flatMap((env) =>
+      (env.server_list ?? []).map((server) => server.server_id)
+    )
+  )
+  const missingServerIds = new Set<string>()
+  const serverResetIds: string[] = []
+  for (const target of targets) {
+    if (target.server_id && target.server_id !== '0' && !destinationServerIds.has(target.server_id)) {
+      missingServerIds.add(target.target_id)
+      serverResetIds.push(target.name)
+    }
+  }
+
+  const rootSort =
+    destinationIndex.items
+      .filter((item) => item.parent_id === '0')
+      .reduce((max, item) => Math.max(max, item.sort), 0) + 100
+
+  return {
+    mode,
+    sourceProjectId,
+    destinationProjectId,
+    root,
+    targets,
+    ids,
+    sourceIndex,
+    destinationIndex,
+    rootNameAfter: uniqueTargetName(destinationProjectId, '0', root.name),
+    rootSort,
+    shares,
+    flows,
+    modelBlockers,
+    sourceKeyConflicts,
+    serverResetIds,
+    clearSourceKeys,
+    missingServerIds
+  }
+}
+
+export function previewTargetTransfer(
+  sourceProjectId: string,
+  targetId: string,
+  destinationProjectId: string,
+  mode: TargetTransferMode
+): TargetTransferPreview {
+  const plan = resolveTransferPlan(sourceProjectId, targetId, destinationProjectId, mode)
+  const apiCount = plan.targets.filter((target) => target.target_type === 'api').length
+  return {
+    mode: plan.mode,
+    source_project_id: plan.sourceProjectId,
+    destination_project_id: plan.destinationProjectId,
+    root: {
+      target_id: plan.root.target_id,
+      name: plan.root.name,
+      target_type: plan.root.target_type
+    },
+    target_ids: [...plan.ids],
+    api_count: apiCount,
+    folder_count: plan.targets.length - apiCount,
+    root_name_after: plan.rootNameAfter,
+    shares: plan.shares,
+    flows: plan.flows,
+    model_blockers: plan.modelBlockers,
+    source_key_conflicts: plan.sourceKeyConflicts,
+    server_reset_ids: plan.serverResetIds,
+    can_transfer: plan.modelBlockers.length === 0
+  }
+}
+
+export function transferTargetToProject(
+  sourceProjectId: string,
+  targetId: string,
+  destinationProjectId: string,
+  mode: TargetTransferMode
+): TargetTransferResult {
+  const plan = resolveTransferPlan(sourceProjectId, targetId, destinationProjectId, mode)
+  if (plan.modelBlockers.length > 0) {
+    const names = [...new Set(plan.modelBlockers.map((item) => item.target_name))].join('、')
+    throw new Error(
+      `目标项目缺少数据模型，无法${mode === 'move' ? '移动' : '复制'}：${names}`
+    )
+  }
+
+  const now = new Date().toISOString()
+  // 复制必须生成新的 target_id，才能重复复制且避免与目标项目已有节点冲突。
+  const idMap = new Map<string, string>()
+  if (mode === 'copy') {
+    for (const id of plan.ids) idMap.set(id, createId('t'))
+  }
+  const idOf = (id: string): string => idMap.get(id) ?? id
+
+  const moved = plan.targets.map((target) => {
+    const next: Target = {
+      ...target,
+      target_id: idOf(target.target_id),
+      project_id: plan.destinationProjectId,
+      updated_at: now
+    }
+    if (mode === 'copy') {
+      next.created_at = now
+      next.parent_id = target.parent_id === '0' ? '0' : idOf(target.parent_id)
+    }
+    if (plan.clearSourceKeys.has(target.target_id)) delete next.source_key
+    if (plan.missingServerIds.has(target.target_id)) next.server_id = '0'
+    return next
+  })
+  const movedRoot = moved.find((target) => target.target_id === idOf(targetId))!
+  movedRoot.parent_id = '0'
+  movedRoot.sort = plan.rootSort
+  movedRoot.name = plan.rootNameAfter
+
+  const sourceApisDir = path.join(projectDir(sourceProjectId), 'apis')
+  const destinationApisDir = path.join(projectDir(destinationProjectId), 'apis')
+  const sourceIndexBefore = structuredClone(plan.sourceIndex)
+  const destinationIndexBefore = structuredClone(plan.destinationIndex)
+  const versions = new Map<string, string>()
+  for (const id of plan.ids) {
+    const file = targetVersionsPath(sourceProjectId, id)
+    if (fs.existsSync(file)) versions.set(id, fs.readFileSync(file, 'utf8'))
+  }
+  const writtenFiles: string[] = []
+  const writtenVersions: string[] = []
+
+  try {
+    for (const target of moved) {
+      const file = path.join(destinationApisDir, `${assertId(target.target_id, 'target_id')}.json`)
+      writeJson(file, target)
+      writtenFiles.push(file)
+    }
+    for (const [id, content] of versions) {
+      let payload = content
+      if (mode === 'copy') {
+        try {
+          const parsed = JSON.parse(content) as { target_id?: string }
+          parsed.target_id = idOf(id)
+          payload = JSON.stringify(parsed, null, 2)
+        } catch {
+          // 版本文件损坏时保持原样，不阻断移动/复制。
+        }
+      }
+      const file = targetVersionsPath(destinationProjectId, idOf(id))
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, payload, 'utf8')
+      writtenVersions.push(file)
+    }
+
+    plan.destinationIndex.items.push(...moved.map(toSummary))
+    writeTargetIndex(destinationProjectId, plan.destinationIndex)
+
+    if (mode === 'move') {
+      plan.sourceIndex.items = plan.sourceIndex.items.filter((item) => !plan.ids.has(item.target_id))
+      writeTargetIndex(sourceProjectId, plan.sourceIndex)
+
+      for (const id of plan.ids) {
+        fs.rmSync(path.join(sourceApisDir, `${assertId(id, 'target_id')}.json`), { force: true })
+        fs.rmSync(targetVersionsPath(sourceProjectId, id), { force: true })
+      }
+    }
+  } catch (error) {
+    for (const file of writtenFiles) fs.rmSync(file, { force: true })
+    for (const file of writtenVersions) fs.rmSync(file, { force: true })
+    writeTargetIndex(destinationProjectId, destinationIndexBefore)
+    if (mode === 'move') {
+      for (const target of plan.targets) {
+        writeJson(
+          path.join(sourceApisDir, `${assertId(target.target_id, 'target_id')}.json`),
+          target
+        )
+      }
+      writeTargetIndex(sourceProjectId, sourceIndexBefore)
+      for (const [id, content] of versions) {
+        const file = targetVersionsPath(sourceProjectId, id)
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, content, 'utf8')
+      }
+    }
+    throw error
+  }
+
+  for (const target of moved) {
+    recordTargetChange(destinationProjectId, target.target_id, 'definition')
+  }
+  if (mode === 'move') {
+    for (const id of plan.ids) recordTargetChange(sourceProjectId, id, 'deleted')
+  }
+
+  const apiCount = moved.filter((target) => target.target_type === 'api').length
+  return {
+    mode,
+    destination_project_id: destinationProjectId,
+    source_target_ids: [...plan.ids],
+    target_ids: moved.map((target) => target.target_id),
+    api_count: apiCount,
+    folder_count: moved.length - apiCount,
+    root_name: movedRoot.name
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,6 +1394,10 @@ function flowsDir(projectId: string): string {
 }
 
 function runsDir(projectId: string): string {
+  return path.join(localProjectDir(projectId), 'executions', 'runs')
+}
+
+function legacyRunsDir(projectId: string): string {
   return path.join(projectDir(projectId), 'executions', 'runs')
 }
 
@@ -1062,48 +1417,122 @@ export function listFlows(projectId: string): Flow[] {
     .filter((file) => file.endsWith('.json'))
     .map((file) => readJson<Flow | null>(path.join(dir, file), null))
     .filter((flow): flow is Flow => Boolean(flow))
+    .map(withFlowRevision)
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
 
 export function getFlow(projectId: string, flowId: string): Flow | null {
-  return readJson<Flow | null>(flowPath(projectId, flowId), null)
+  const flow = readJson<Flow | null>(flowPath(projectId, flowId), null)
+  return flow ? withFlowRevision(flow) : null
 }
 
+function withFlowRevision(flow: Flow): Flow {
+  return { ...flow, revision: crypto.createHash('sha256').update(flowSignature(flow)).digest('hex') }
+}
+
+/** Stored revision identity; never the canonical JSON itself (it can contain sensitive scripts). */
+export function flowRevision(flow: Flow): string {
+  return flow.revision ?? crypto.createHash('sha256').update(flowSignature(flow)).digest('hex')
+}
+
+/** Read, validate and write without yielding, including legacy updates without a revision. */
+export function updateFlowChecked(
+  projectId: string, flowId: string, expectedRevision: string | undefined, update: (flow: Flow) => Flow
+): Flow {
+  const current = getFlow(projectId, flowId)
+  if (!current) throw new Error('流程不存在')
+  if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+    throw new Error('流程保存冲突：revision 已过期，请重新读取流程')
+  }
+  return saveFlow(projectId, update(current))
+}
+
+function flowVersionsPath(projectId: string, flowId: string): string {
+  return path.join(localProjectDir(projectId), 'flow-versions', `${assertId(flowId, 'flow_id')}.json`)
+}
+export function listFlowVersions(projectId: string, flowId: string): FlowVersion[] {
+  return readJson<FlowVersion[]>(flowVersionsPath(projectId, flowId), []).sort((a, b) => b.version - a.version)
+}
+export function getFlowVersion(projectId: string, flowId: string, versionId: string): FlowVersion | null {
+  return listFlowVersions(projectId, flowId).find(version => version.version_id === versionId) ?? null
+}
+export function readFlowSnapshot(projectId: string, flowId: string): FlowSnapshot {
+  const flow = getFlow(projectId, flowId)
+  return { flow, revision: flow ? flowRevision(flow) : null }
+}
 export function saveFlow(projectId: string, flow: Flow): Flow {
+  assertAgentConflictsResolved(getPaths().localRoot, projectId, flow.flow_id, 'flow')
   if (flow.project_id !== projectId) throw new Error('项目不匹配')
-  flow.updated_at = new Date().toISOString()
-  writeJson(flowPath(projectId, flow.flow_id), flow)
-  return flow
+  const current = getFlow(projectId, flow.flow_id)
+  const saved = withFlowRevision({
+    ...structuredClone(flow),
+    events: normalizeFlowEvents(flow.events),
+    created_at: current?.created_at ?? flow.created_at,
+    updated_at: new Date().toISOString()
+  })
+  const versions = listFlowVersions(projectId, flow.flow_id)
+  const record = (snapshot: Flow): void => {
+    const revision = flowRevision(snapshot)
+    if (versions[0]?.revision === revision) return
+    versions.unshift({ version_id: crypto.randomUUID(), version: (versions[0]?.version ?? 0) + 1, revision, flow: structuredClone(snapshot), created_at: new Date().toISOString() })
+  }
+  // Preserve the pre-migration definition when a legacy Flow is first edited.
+  if (current && !versions.length) record(current)
+  record(saved)
+  writeJson(flowPath(projectId, flow.flow_id), saved)
+  writeJson(flowVersionsPath(projectId, flow.flow_id), versions)
+  return saved
+}
+export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision: string): FlowSaveResult {
+  const snapshot = readFlowSnapshot(projectId, flow.flow_id)
+  if (!snapshot.flow) return { status: 'deleted', ...snapshot }
+  if (!expectedRevision || expectedRevision !== snapshot.revision) return { status: 'conflict', ...snapshot }
+  const saved = saveFlow(projectId, flow)
+  return { status: 'saved', flow: saved, revision: flowRevision(saved), version: listFlowVersions(projectId, flow.flow_id)[0] }
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
+  if (readFlowRuns(projectId).some(run => run.flow_id === flowId && isActiveFlowRunStatus(run.status))) {
+    throw new Error('活动运行绑定的流程不可删除')
+  }
+  const snapshot = readFlowSnapshot(projectId, flowId)
+  if (snapshot.flow) retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: flowId, kind: 'flow', snapshot: snapshot.flow, revision: snapshot.revision!, versions: listFlowVersions(projectId, flowId) })
   fs.rmSync(flowPath(projectId, flowId), { force: true })
+  publishDeletedObject(projectId, 'flow', flowId)
 }
 
 function countResults(
   events: FlowEventResult[],
-  acc: { passed: number; failed: number; skipped: number }
+  acc: { passed: number; failed: number; skipped: number; blocked: number }
 ): void {
   for (const event of events) {
     if (event.status === 'passed') acc.passed += 1
     else if (event.status === 'failed') acc.failed += 1
-    else acc.skipped += 1
+    else if (event.status === 'blocked') acc.blocked += 1
+    else if (event.status === 'skipped') acc.skipped += 1
     if (event.children?.length) countResults(event.children, acc)
   }
 }
 
+/** Local evidence first; existing project reports remain readable without migration. */
+export function readFlowRuns(projectId: string): FlowRun[] {
+  const runs = new Map<string, FlowRun>()
+  for (const dir of [legacyRunsDir(projectId), runsDir(projectId)]) {
+    if (!fs.existsSync(dir)) continue
+    for (const file of fs.readdirSync(dir).filter(file => file.endsWith('.json'))) {
+      const run = readJson<FlowRun | null>(path.join(dir, file), null)
+      if (run?.project_id === projectId) runs.set(run.run_id, redactEvidence(run, [], 'run'))
+    }
+  }
+  return [...runs.values()]
+}
+
 export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
-  const dir = runsDir(projectId)
-  if (!fs.existsSync(dir)) return []
-  return fs
-    .readdirSync(dir)
-    .filter((file) => file.endsWith('.json'))
-    .map((file) => readJson<FlowRun | null>(path.join(dir, file), null))
-    .filter((run): run is FlowRun => Boolean(run))
+  return readFlowRuns(projectId)
     .sort((a, b) => b.started_at - a.started_at)
     .slice(0, Math.max(1, limit))
     .map((run) => {
-      const counts = { passed: 0, failed: 0, skipped: 0 }
+      const counts = { passed: 0, failed: 0, skipped: 0, blocked: 0 }
       countResults(run.events, counts)
       return {
         run_id: run.run_id,
@@ -1119,17 +1548,20 @@ export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
 }
 
 export function getFlowRun(projectId: string, runId: string): FlowRun | null {
-  return readJson<FlowRun | null>(runPath(projectId, runId), null)
+  return redactEvidence(readJson<FlowRun | null>(runPath(projectId, runId), null)
+    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null), [], 'run')
 }
 
 export function saveFlowRun(projectId: string, run: FlowRun): FlowRun {
   if (run.project_id !== projectId) throw new Error('项目不匹配')
-  writeJson(runPath(projectId, run.run_id), run)
-  return run
+  const evidence = redactEvidence(run, [], 'run')
+  writeJson(runPath(projectId, run.run_id), evidence)
+  return evidence
 }
 
 export function clearFlowRuns(projectId: string): void {
   fs.rmSync(runsDir(projectId), { recursive: true, force: true })
+  fs.rmSync(legacyRunsDir(projectId), { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
@@ -2196,4 +2628,30 @@ export function docShareExpireInfo(share: DocShare): {
   expired: boolean
 } {
   return docExpireInfo(share)
+}
+
+export function listDeletedObjects(projectId: string) {
+  settleDeletionCheckpoints(getPaths().localRoot, projectId, item => Boolean(item.kind === 'api' ? getTarget(projectId, item.entity_id) : getFlow(projectId, item.entity_id)))
+  return deletedObjects(getPaths().localRoot, projectId)
+}
+export function getDeletedObject(projectId: string, kind: 'api' | 'flow', id: string) { return listDeletedObjects(projectId).find(item => item.kind === kind && item.entity_id === id) ?? null }
+
+/** Git can remove definitions without using deleteTarget/deleteFlow. Persist evidence before its IO. */
+export async function withExternalDefinitionChanges<T>(projectId: string, action: () => Promise<T>): Promise<T> {
+  const checkpoints: string[] = []
+  const keep = (file: string | undefined): void => { if (file) checkpoints.push(file) }
+  try {
+    for (const summary of listTargets(projectId)) {
+      const snapshot = readTargetSnapshot(projectId, summary.target_id)
+      if (snapshot.target?.target_type === 'api') keep(retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: summary.target_id, kind: 'api', snapshot: snapshot.target, revision: snapshot.revision!, versions: readTargetVersions(projectId, summary.target_id).versions }, true))
+    }
+    for (const flow of listFlows(projectId)) keep(retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: flow.flow_id, kind: 'flow', snapshot: flow, revision: flowRevision(flow), versions: listFlowVersions(projectId, flow.flow_id) }, true))
+    return await action()
+  } finally {
+    const deleted = settleDeletionCheckpoints(getPaths().localRoot, projectId, item => Boolean(item.kind === 'api' ? getTarget(projectId, item.entity_id) : getFlow(projectId, item.entity_id)), checkpoints)
+    for (const item of deleted) {
+      if (item.kind === 'api') recordTargetChange(projectId, item.entity_id, 'deleted')
+      publishDeletedObject(projectId, item.kind, item.entity_id)
+    }
+  }
 }

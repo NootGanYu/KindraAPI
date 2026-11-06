@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { isActiveFlowRunStatus } from '@shared/flow'
+import { flowSignature } from '@shared/flowSync'
+import { syncFlowDraft, flushFlowDrafts } from '../flowDraftSync'
+import FlowVersionDrawer from '../components/FlowVersionDrawer'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
   Button,
@@ -83,18 +87,23 @@ function makeEvent(type: FlowEventType, targets: TargetSummary[]): FlowEvent {
   return event
 }
 
-function countRun(events: FlowEventResult[]): { passed: number; failed: number; skipped: number } {
-  const acc = { passed: 0, failed: 0, skipped: 0 }
+function countRun(events: FlowEventResult[]): { passed: number; failed: number; skipped: number; blocked: number } {
+  const acc = { passed: 0, failed: 0, skipped: 0, blocked: 0 }
   const walk = (list: FlowEventResult[]): void => {
     for (const item of list) {
       if (item.status === 'passed') acc.passed += 1
       else if (item.status === 'failed') acc.failed += 1
-      else acc.skipped += 1
+      else if (item.status === 'blocked') acc.blocked += 1
+      else if (item.status === 'skipped') acc.skipped += 1
       if (item.children?.length) walk(item.children)
     }
   }
   walk(events)
   return acc
+}
+
+function runStatusLabel(status: string): string {
+  return ({ permission_revoked: 'MCP 权限已撤销', cancelling: '正在取消', cancelled: '已取消', running: '运行中', pausing: '正在暂停', paused: '已暂停', passed: '通过', failed: '失败', interrupted: '已中断', unknown: '远端结果未知', blocked: '依赖阻塞' } as Record<string, string>)[status] ?? status
 }
 
 export default function AutomationPage(): JSX.Element {
@@ -104,6 +113,8 @@ export default function AutomationPage(): JSX.Element {
   const environments = useApp((s) => s.environments)
   const currentEnvId = useApp((s) => s.currentEnvId)
 
+  const live = useRef<{ projectId?: string; flow: Flow | null }>({ flow: null })
+  const [agentOwned, setAgentOwned] = useState(false)
   const [flows, setFlows] = useState<Flow[]>([])
   const [flow, setFlow] = useState<Flow | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -111,36 +122,66 @@ export default function AutomationPage(): JSX.Element {
   const [run, setRun] = useState<FlowRun | null>(null)
   const [envId, setEnvId] = useState('')
   const [saving, setSaving] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const running = starting || run?.status === 'running' || run?.status === 'pausing'
+  const active = Boolean(run && isActiveFlowRunStatus(run.status))
+  const [controlling, setControlling] = useState(false)
+  const projectSelection = useRef(project?.project_id)
+  projectSelection.current = project?.project_id
+  const selection = useRef('')
+  selection.current = `${project?.project_id ?? ''}/${flow?.flow_id ?? ''}`
+
+  live.current = { projectId: project?.project_id, flow }
+  useEffect(() => window.api.agent.onFlowDraftChanged(event => {
+    if (event.records_deleted && !event.draft && event.project_id === live.current.projectId && event.flow_id === live.current.flow?.flow_id) { setFlow(null); setAgentOwned(false); setDirty(false); return }
+    if (!event.draft || event.project_id !== live.current.projectId || event.flow_id !== live.current.flow?.flow_id) return
+    if (event.previous && flowSignature(event.previous) !== flowSignature(live.current.flow)) { message.warning('审阅期间出现新编辑，已保留人工内容，请重新检查冲突'); return }
+    // Multiple draft events can arrive in one tick (candidate apply followed by save).
+    // Advance the guard synchronously so the save event is not compared with a stale render.
+    live.current = { projectId: event.project_id, flow: event.draft.flow }
+    setFlow(event.draft.flow); setAgentOwned(event.draft.agent_owned); setDirty(!event.saved_revision); setEnvId(event.draft.flow.env_id)
+    if (event.saved_revision) setFlows(items => items.map(item => item.flow_id === event.flow_id ? event.draft!.flow : item))
+  }), [message])
 
   const apiTargets = useMemo(
     () => targets.filter((target) => target.target_type === 'api'),
     [targets]
   )
 
-  const reloadRuns = async (flowId: string): Promise<void> => {
-    if (!project) return
+  const reloadRuns = async (flowId: string): Promise<FlowRunSummary[]> => {
+    if (!project) return []
     const result = await window.api.flows.runs(project.project_id, 50)
-    if (result.ok) setRuns(result.data.filter((item) => item.flow_id === flowId))
+    if (projectSelection.current !== project.project_id) return []
+    const matching = result.ok ? result.data.filter((item) => item.flow_id === flowId) : []
+    setRuns(matching)
+    return matching
   }
 
   const loadFlow = async (flowId: string): Promise<void> => {
     if (!project) return
-    const result = await window.api.flows.get(project.project_id, flowId)
+    await flushFlowDrafts()
+    const result = await window.api.agent.getFlowDraft(project.project_id, flowId)
+    if (project.project_id !== live.current.projectId) return
     if (!result.ok || !result.data) {
       message.error(result.ok ? '流程不存在' : result.error)
       return
     }
-    setFlow(result.data)
-    setDirty(false)
+    setFlow({ ...result.data.flow, revision: result.data.base_revision ?? result.data.flow.revision })
+    setAgentOwned(result.data.agent_owned)
+    setDirty(Boolean(result.data.dirty ?? result.data.agent_owned))
     setRun(null)
-    setEnvId(result.data.env_id || currentEnvId || environments[0]?.env_id || '')
-    await reloadRuns(flowId)
+    setEnvId(result.data.flow.env_id || currentEnvId || environments[0]?.env_id || '')
+    const history = await reloadRuns(flowId)
+    if (history[0]) {
+      const latest = await window.api.flows.getRun(project.project_id, history[0].run_id)
+      if (project.project_id === live.current.projectId && latest.ok) setRun(latest.data)
+    }
   }
 
   const reloadFlows = async (preferredId?: string): Promise<void> => {
     if (!project) return
     const result = await window.api.flows.list(project.project_id)
+    if (projectSelection.current !== project.project_id) return
     if (!result.ok) {
       message.error(result.error)
       return
@@ -164,9 +205,106 @@ export default function AutomationPage(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.project_id])
 
+  useEffect(() => {
+    if (!project || !run || !isActiveFlowRunStatus(run.status)) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const projectId = project.project_id
+    const runId = run.run_id
+    const poll = async (): Promise<void> => {
+      const result = await window.api.flows.getRun(projectId, runId)
+      if (stopped) return
+      if (result.ok && result.data) {
+        setRun(result.data)
+        if (!isActiveFlowRunStatus(result.data.status)) {
+          await reloadRuns(result.data.flow_id)
+          return
+        }
+      }
+      timer = setTimeout(() => void poll(), 300)
+    }
+    void poll()
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
+  }, [project?.project_id, run?.run_id, run?.status])
+
+  const ensureSavedRunApis = (): boolean => {
+    const references = new Set(run?.snapshot?.requests.map(item => item.target_id) ?? [])
+    if (useApp.getState().tabs.some(tab => references.has(tab.id) && (tab.dirty || tab.syncError))) {
+      message.error('相关接口有未保存修改或保存失败，请先主动保存后再审阅或继续')
+      return false
+    }
+    return true
+  }
+  const refreshRun = async (apply = false): Promise<void> => {
+    if (!run || !ensureSavedRunApis()) return
+    setControlling(true)
+    try {
+      if (apply && run.refresh_preview) {
+        const result = await window.api.flows.applyRunRefresh(run.project_id, run.run_id, run.refresh_preview.preview_id)
+        if (!result.ok) { message.error(result.error); return }
+        setRun(result.data)
+      } else {
+        const result = await window.api.flows.previewRunRefresh(run.project_id, run.run_id)
+        if (!result.ok) { message.error(result.error); return }
+        setRun(current => current?.run_id === run.run_id ? { ...current, refresh_preview: result.data } : current)
+      }
+    } finally { setControlling(false) }
+  }
+
+  const resolveRunConflict = async (eventId: string, field: string, choice: 'api' | 'override'): Promise<void> => {
+    if (!run?.refresh_preview || !ensureSavedRunApis()) return
+    setControlling(true)
+    try {
+      const result = await window.api.flows.resolveRunConflict(run.project_id, run.run_id, run.refresh_preview.preview_id, eventId, field, choice)
+      if (!result.ok) { message.error(result.error); return }
+      setRun(current => current?.run_id === run.run_id ? { ...current, refresh_preview: result.data } : current)
+    } finally { setControlling(false) }
+  }
+
+  const reviewRunScope = (): void => {
+    if (!run?.refresh_preview || !ensureSavedRunApis()) return
+    const preview = run.refresh_preview
+    modal.confirm({
+      title: '确认扩大本轮执行范围',
+      content: <div>
+        <p>仅对下面列出的版本生效。确认后仍需采用更新并手动继续。</p>
+        <div>固定运行环境：{run.env_id || '无环境'}</div>
+        {preview.references.filter(item => item.scope_changes.length).map(item => <div key={item.event_id} style={{ marginTop: 8 }}>
+          <b>{item.name}</b> · {item.next_revision.slice(0, 8)}
+          {item.scope_changes.map((change, index) => <div key={index}>{change}</div>)}
+        </div>)}
+      </div>,
+      okText: '确认本轮范围', cancelText: '保持暂停',
+      onOk: async () => {
+        if (!ensureSavedRunApis()) throw new Error('请先保存相关接口')
+        const result = await window.api.flows.approveRunScope(run.project_id, run.run_id, preview.preview_id)
+        if (!result.ok) { message.error(result.error); throw new Error(result.error) }
+        setRun(current => current?.run_id === run.run_id ? result.data : current)
+      }
+    })
+  }
+
+  const controlRun = async (action: 'pause' | 'resume' | 'cancel'): Promise<void> => {
+    if (!run) return
+    if (action === 'resume' && !ensureSavedRunApis()) return
+    setControlling(true)
+    try {
+      const result = action === 'cancel'
+        ? await window.api.flows.cancelRun(run.project_id, run.run_id)
+        : action === 'pause'
+        ? await window.api.flows.pauseRun(run.project_id, run.run_id)
+        : await window.api.flows.resumeRun(run.project_id, run.run_id)
+      if (!result.ok) { message.error(result.error); return }
+      setRun(current => current?.run_id === result.data.run_id ? result.data : current)
+    } finally { setControlling(false) }
+  }
+
   const patchFlow = (patch: Partial<Flow>): void => {
-    setFlow((current) => (current ? { ...current, ...patch } : current))
-    setDirty(true)
+    const current = live.current.flow
+    if (!current || !project) return
+    const next = { ...current, ...patch }
+    live.current.flow = next; setFlow(next); setDirty(true)
+    void syncFlowDraft(project.project_id, next).catch(error => message.error(error.message))
   }
 
   const createFlow = async (): Promise<void> => {
@@ -184,11 +322,16 @@ export default function AutomationPage(): JSX.Element {
     if (!project || !flow) return false
     setSaving(true)
     try {
-      const result = await window.api.flows.save(project.project_id, { ...flow, env_id: envId })
+      await flushFlowDrafts()
+      const result = notify
+        ? await window.api.flows.save(project.project_id, { ...flow, env_id: envId }, flow.revision ?? '')
+        : await window.api.agent.saveManualFlowForRun(project.project_id, { ...flow, env_id: envId })
       if (!result.ok) {
         message.error(result.error)
         return false
       }
+      await syncFlowDraft(project.project_id, result.data)
+      setAgentOwned(false)
       setFlow(result.data)
       setDirty(false)
       setFlows((current) =>
@@ -206,21 +349,27 @@ export default function AutomationPage(): JSX.Element {
 
   const executeFlow = async (): Promise<void> => {
     if (!project || !flow) return
-    const saved = await saveFlow(false)
-    if (!saved) return
-    setRunning(true)
+    if (agentOwned) {
+      message.warning('Agent Flow 草稿请先主动保存后运行；运行不会自动保存。')
+      return
+    }
+    if (dirty) {
+      message.warning('请先主动保存流程，再运行')
+      return
+    }
+    const selected = selection.current
+    setStarting(true)
     try {
-      const result = await window.api.flows.run(project.project_id, flow.flow_id, envId)
+      const result = await window.api.flows.startRun(project.project_id, flow.flow_id, envId, crypto.randomUUID())
+      if (selection.current !== selected) return
       if (!result.ok) {
         message.error(result.error)
         return
       }
       setRun(result.data)
       await reloadRuns(flow.flow_id)
-      if (result.data.status === 'passed') message.success('流程运行通过')
-      else message.error('流程存在失败事件')
     } finally {
-      setRunning(false)
+      setStarting(false)
     }
   }
 
@@ -303,9 +452,12 @@ export default function AutomationPage(): JSX.Element {
         <div className="automation-panel-head">
           <span>{flow ? flow.name : '流程编辑器'}</span>
           {dirty ? <Tag color="warning">未保存</Tag> : null}
+          {flow ? <span className="muted">编辑版本：{flow.revision?.slice(0, 8) ?? '未保存'}</span> : null}
           <span style={{ flex: 1 }} />
+          {flow && project && <FlowVersionDrawer key={`${project.project_id}:${flow.flow_id}`} projectId={project.project_id} flowId={flow.flow_id} />}
           <Button
             size="small"
+            aria-label="保存 Flow"
             icon={<SaveOutlined />}
             loading={saving}
             disabled={!flow}
@@ -316,9 +468,10 @@ export default function AutomationPage(): JSX.Element {
           <Button
             size="small"
             type="primary"
+            aria-label="运行 Flow"
             icon={<PlayCircleOutlined />}
             loading={running}
-            disabled={!flow}
+            disabled={!flow || active}
             onClick={() => void executeFlow()}
           >
             运行
@@ -327,6 +480,7 @@ export default function AutomationPage(): JSX.Element {
 
         {flow ? (
           <div className="automation-scroll">
+            {agentOwned && <div role="status">已恢复 Agent Flow 草稿 · 退出仅暂存 · 运行前需主动保存</div>}
             <div className="flow-meta">
               <Input
                 value={flow.name}
@@ -383,6 +537,7 @@ export default function AutomationPage(): JSX.Element {
                     event={event}
                     depth={0}
                     targets={apiTargets}
+                    allEvents={flow.events}
                     onChange={(patch) =>
                       patchFlow({ events: updateEventInTree(flow.events, event.event_id, patch) })
                     }
@@ -403,21 +558,38 @@ export default function AutomationPage(): JSX.Element {
       </main>
 
       <aside className="automation-panel">
-        <div className="automation-panel-head">
-          <span>运行结果</span>
+        <div className="automation-panel-head automation-results-head">
+          <span className="automation-results-title">运行结果</span>
+          {run?.status === 'running' || run?.status === 'pausing' ? (
+            <Button size="small" disabled={run.status === 'pausing'} loading={controlling} onClick={() => void controlRun('pause')}>
+              {run.status === 'pausing' ? '正在暂停' : '暂停'}
+            </Button>
+          ) : run?.status === 'paused' || run?.status === 'permission_revoked' ? (
+            <Button size="small" type="primary" loading={controlling} onClick={() => void controlRun('resume')}>{run.version_switches?.length ? '继续已审阅快照' : '继续原快照'}</Button>
+          ) : null}
+          {run && isActiveFlowRunStatus(run.status) ? (
+            <Button size="small" danger disabled={run.status === 'cancelling'} loading={controlling} onClick={() => void controlRun('cancel')}>
+              {run.status === 'cancelling' ? '正在取消' : '取消运行'}
+            </Button>
+          ) : null}
+          {run ? <Tooltip title={run.snapshot?.flow_revision ?? '旧记录未记录快照版本'}>
+            <Tag>运行版本：{run.snapshot?.flow_revision.slice(0, 8) ?? '旧记录'}</Tag>
+          </Tooltip> : null}
           {run ? (
-            <Tag color={run.status === 'passed' ? 'success' : 'error'}>
-              {run.status === 'passed' ? '通过' : '失败'}
+            <Tag color={isActiveFlowRunStatus(run.status) ? 'processing' : run.status === 'passed' ? 'success' : 'error'}>
+              {runStatusLabel(run.status)}
             </Tag>
           ) : null}
         </div>
         <div className="automation-scroll">
-          {running ? (
+          {starting && !run ? (
             <div style={{ padding: 30, textAlign: 'center' }}>
               <Spin tip="运行中…" />
             </div>
           ) : run ? (
             <>
+              {run.status === 'running' ? <div style={{ padding: 12 }}><Spin size="small" /> 正在运行，已完成结果持续保存</div> : null}
+              {run.error ? <div className="run-error">{run.error}</div> : null}
               <div className="run-summary">
                 <div>
                   <b>{run.elapsed_ms}</b>
@@ -435,8 +607,44 @@ export default function AutomationPage(): JSX.Element {
                   <b>{counts?.skipped ?? 0}</b>
                   <span>跳过</span>
                 </div>
+                <div>
+                  <b>{counts?.blocked ?? 0}</b>
+                  <span>依赖阻塞</span>
+                </div>
               </div>
 
+              {run.status === 'paused' ? <div style={{ padding: 12 }}>
+                <Button loading={controlling} onClick={() => void refreshRun()}>预览已保存变更</Button>
+                <div className="muted">保存接口后预览所有剩余引用；采用更新后仍需手动继续。</div>
+                {run.refresh_preview ? <div aria-label="剩余引用变更预览">
+                  {run.refresh_preview.references.map(reference => <div key={reference.event_id} style={{ marginTop: 10 }}>
+                    <b>{reference.name}</b> · 剩余 {reference.remaining_instances} 次
+                    <div className="mono">{reference.previous_revision.slice(0,8)} → {reference.next_revision.slice(0,8)}</div>
+                    {reference.conflicts.map(conflict => <div key={conflict.field} aria-label={`步骤覆盖冲突 ${reference.event_id} ${conflict.field}`} style={{ padding: 8, border: '1px solid var(--border-color)', marginTop: 8 }}>
+                      <b>{conflict.field}</b> · {conflict.reason === 'deleted' ? '字段已删除' : conflict.reason === 'type_changed' ? '字段类型已变化' : '接口值已变化'}
+                      <div>新 API 值：<code>{conflict.new_value === undefined ? '（已删除）' : JSON.stringify(conflict.new_value)}</code></div>
+                      <div>步骤覆盖：<code>{JSON.stringify(conflict.override_value)}</code></div>
+                      <Space>
+                        <Button disabled={controlling || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} onClick={() => void resolveRunConflict(reference.event_id, conflict.field, 'api')}>采用新 API 值</Button>
+                        <Button disabled={controlling || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} onClick={() => void resolveRunConflict(reference.event_id, conflict.field, 'override')}>保留步骤覆盖</Button>
+                      </Space>
+                      <div>{conflict.resolution ? `已选择：${conflict.resolution === 'api' ? '新 API 值' : '步骤覆盖'}` : '请选择本轮使用的值'}</div>
+                    </div>)}
+                    <pre aria-label={`实际生效请求 ${reference.event_id}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(reference.effective_request, null, 2)}</pre>
+                    {reference.scope_changes.map((change, index) => <div key={index}>范围变化：{change}</div>)}
+                  </div>)}
+                  {run.refresh_preview.references.length === 0 ? <div>没有需要更新的剩余引用</div> : null}
+                  {run.refresh_preview.blockers.map((blocker,index) => <div className="run-error" key={index}>{blocker}</div>)}
+                  {run.refresh_preview.references.some(item => item.scope_changes.length) ? run.refresh_preview.scope_approval
+                    ? <div>范围已确认；采用后仍需手动继续。</div>
+                    : <Button onClick={reviewRunScope}>审阅执行范围</Button> : null}
+                  <Button disabled={run.refresh_preview.blockers.length > 0 || run.refresh_preview.references.length === 0 || run.version_switches?.some(item => item.preview_id === run.refresh_preview!.preview_id)} loading={controlling} onClick={() => void refreshRun(true)}>采用剩余引用更新</Button>
+                </div> : null}
+              </div> : null}
+              {run.version_switches?.length ? <div style={{ padding: 12 }} aria-label="快照版本切换">
+                <b>快照版本切换</b>
+                {run.version_switches.map(change => <div key={change.preview_id}>{new Date(change.applied_at).toLocaleTimeString()}{change.scope_approval ? ' · 范围已确认' : ''} · {change.references.map(item=>`${item.name} ${item.previous_revision.slice(0,8)} → ${item.next_revision.slice(0,8)}`).join('；')}</div>)}
+              </div> : null}
               <div className="run-section-title">事件</div>
               <ResultRows events={run.events} depth={0} />
 
@@ -489,8 +697,8 @@ export default function AutomationPage(): JSX.Element {
                   className={`run-history-row${run?.run_id === item.run_id ? ' active' : ''}`}
                   onClick={() => void openRun(item.run_id)}
                 >
-                  <span className={item.status === 'passed' ? 'run-status passed' : 'run-status failed'}>
-                    {item.status === 'passed' ? '通过' : '失败'}
+                  <span className={item.status === 'running' ? 'run-status' : item.status === 'passed' ? 'run-status passed' : 'run-status failed'}>
+                    {runStatusLabel(item.status)}
                   </span>
                   <span className="run-history-time">
                     {new Date(item.started_at).toLocaleString()}
@@ -512,6 +720,7 @@ function EventEditor({
   event,
   depth,
   targets,
+  allEvents,
   onChange,
   onDelete,
   onAddChild
@@ -519,10 +728,15 @@ function EventEditor({
   event: FlowEvent
   depth: number
   targets: TargetSummary[]
+  allEvents: FlowEvent[]
   onChange: (patch: Partial<FlowEvent>) => void
   onDelete: () => void
   onAddChild: (parentId: string, type: FlowEventType) => void
 }): JSX.Element {
+  const dependencyOptions = (list: FlowEvent[]): Array<{ value: string; label: string }> => list.flatMap(item => [
+    ...(item.event_id === event.event_id ? [] : [{ value: item.event_id, label: `${item.name} (${item.event_id})` }]),
+    ...dependencyOptions(item.children ?? [])
+  ])
   const canNest = event.type === 'if' || event.type === 'begin' || event.type === 'loop'
   return (
     <div className="event-card" style={{ marginLeft: depth * 14 }}>
@@ -553,6 +767,20 @@ function EventEditor({
       </div>
 
       <div className="event-body">
+        <Select
+          size="small"
+          aria-label="依赖策略"
+          value={event.depends_on === undefined ? 'sequence' : 'explicit'}
+          onChange={(value) => onChange({ depends_on: value === 'sequence' ? undefined : [] })}
+          options={[{ value: 'sequence', label: '保守顺序：前序失败则阻塞' }, { value: 'explicit', label: '显式依赖：只依赖所选步骤' }]}
+          style={{ width: '100%' }}
+        />
+        {event.depends_on !== undefined ? <>
+          <Select mode="multiple" size="small" aria-label="依赖步骤" value={event.depends_on}
+            onChange={(depends_on: string[]) => onChange({ depends_on })}
+            options={dependencyOptions(allEvents)} placeholder="不选表示明确独立" style={{ width: '100%' }} />
+          <span className="muted">不选表示明确独立；同一逻辑步骤的失败仍会阻止后续操作。</span>
+        </> : null}
         {event.type === 'api' ? (
           <Select
             size="small"
@@ -660,6 +888,7 @@ function EventEditor({
               event={child}
               depth={0}
               targets={targets}
+              allEvents={allEvents}
               onChange={(patch) => {
                 const children = updateEventInTree(event.children ?? [], child.event_id, patch)
                 onChange({ children })
@@ -773,19 +1002,21 @@ function ResultRows({
       {events.map((event) => (
         <div
           className="run-event"
-          key={`${event.event_id}-${event.iteration ?? 0}-${depth}`}
+          key={event.instance_id ?? `${event.event_id}-${event.iteration ?? 0}-${depth}`}
           style={{ marginLeft: depth * 12 }}
         >
           <div className="run-event-head">
             <span className={`run-dot ${event.status}`} />
             <span className={`event-type ${event.type}`}>{TYPE_LABEL[event.type]}</span>
             <span className="run-event-name">{event.name}</span>
-            {event.iteration !== undefined ? (
+            {event.iteration_path?.length ? (
+              <span className="muted">#{event.iteration_path.map(item => item.iteration + 1).join(" / ")}</span>
+            ) : event.iteration !== undefined ? (
               <span className="muted">#{event.iteration + 1}</span>
             ) : null}
             <span className="muted">{event.elapsed_ms}ms</span>
             <span className={`run-status ${event.status}`}>
-              {event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : '跳过'}
+              {event.status === 'running' ? '运行中' : event.status === 'passed' ? '通过' : event.status === 'failed' ? '失败' : event.status === 'blocked' ? '依赖阻塞' : event.status === 'cancelled' ? '已取消' : '跳过'}
             </span>
           </div>
           {event.detail ? <div className="run-detail">{event.detail}</div> : null}

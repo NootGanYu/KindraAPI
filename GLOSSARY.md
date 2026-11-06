@@ -121,17 +121,22 @@ Testing 树中的节点，字段标识：`event_id`、`type`、`data`、`childre
 Testing 的汇总报告用的是 `report_id`，不要与 `run_id` 混用。
 
 **MCP Execution Flow（原应用的 MCP 执行流程）**
-Original App 中由 MCP 工具创建、保存于 `executions/flows/` 的步骤序列。
+Original App 中可由用户或外部 AI 编排、保存并重复运行的 HTTP 接口步骤序列；原应用界面称为“AI 执行计划”。
 字段标识：`flow_id`、`steps[].step_id`。
 **不要**把它与 Testing 事件树都简称为“流程”；必要时写全称。
+_Avoid_: Testing、Agent 操作计划
+
+**Execution Snapshot（运行快照）**
+一次流程运行采用的接口、步骤及相关配置定义的固定版本；暂停后可为尚未执行的步骤形成新版本，步骤间传递的运行变量另行维护。
+_Avoid_: 接口草稿、原应用持久化步骤快照
 
 **API Case（接口用例，Kindra）**
 针对单个接口定义的参数覆盖与断言，用于验证该接口的不同情形。
 _Avoid_: 执行流程、原应用 Testing
 
 **Execution Flow（执行流程，Kindra）**
-由跨接口请求、条件、循环等步骤组成的可执行流程。
-_Avoid_: 接口用例、原应用 MCP Execution Flow
+由跨接口请求、条件、循环等步骤组成的可执行流程，可保存后重复运行。
+_Avoid_: 接口用例、Agent 操作计划、原应用 MCP Execution Flow
 
 ## 字典
 
@@ -244,8 +249,48 @@ _Avoid_: 已保存版本
 _Avoid_: 待确认版本
 
 **Agent Plan（Agent 操作计划）**
-一轮任务中可获批准的目标、修改、执行环境和操作范围；不等同于可复用的 Execution Flow。
-_Avoid_: 执行流程
+一轮任务中可获批准的目标、修改、执行环境和操作范围；不等同于可复用的 Execution Flow，但可以包含运行某个 Execution Flow 的操作。
+_Avoid_: 执行流程、原应用 AI 执行计划
+
+**Continuous Task Plan（连续任务计划）**
+先规划、再在批准槽位内连续执行读取、修改、采纳与执行的 Agent Plan；读取结果可用于生成后续补丁，无需对已授权范围内的普通参数逐步再次确认。
+_Avoid_: 静态计划（指包含延迟绑定槽位的连续任务时）
+
+**Deferred Binding（延迟绑定）**
+连续任务计划中的槽位在批准时固定对象、操作、来源与范围，但具体补丁参数要等获批读取返回后才生成；执行前仍按槽位授权与有效范围复核。
+_Avoid_: 自动扩权、未授权调用
+
+**Turn Undo（整轮撤销）**
+按一轮任务中候选的实际应用顺序逆序回放，把接口、用例与执行流程草稿恢复到应用前内容；只撤销本地草稿，不撤销远端请求或外部副作用。
+_Avoid_: 版本回滚、历史记录删除
+
+**Agent Tool（Agent 工具）**
+内置 Agent 可调用的一个具名能力，声明 JSON Schema、风险等级、只读标记与 handler。工具名全局唯一；handler 直接复用 Kindra 的 store、草稿、执行与脱敏能力，不经过 MCP 权限入口。
+_Avoid_: MCP 工具、命令（指内置 Agent 工具时）
+
+**Tool Activity（工具活动）**
+一次 Agent Tool 调用在时间线上的脱敏记录，包含调用编号、工具、风险、运行/成功/失败/取消状态、审批状态与不超过 24KB 的 display。Tool Activity 不是发送记录或执行报告。
+_Avoid_: 工具结果（指整条活动记录时）、计划步骤
+
+**Approval Gate（审批门）**
+连续循环中暂停高风险工具并等待用户允许或拒绝的边界。审批门绑定项目、会话、原生轮次与活动，记录参数哈希和一次性 nonce；拒绝后相同调用不得重试。
+_Avoid_: 计划批准、权限模式
+
+**Turn（原生轮次）**
+一条用户消息驱动的一次连续工具循环，字段标识为 `turn_id`。它把用户消息、工具活动、最终回答、候选 `plan_id`、整轮撤销与配置审计归入同一轮。
+_Avoid_: 计划、会话（指单轮执行时）
+
+**Legacy Plan（旧计划路径）**
+保留的计划优先执行引擎（`plans.ts` 与 `planCommands`）：先批准有限槽位，再在槽位内执行。原生轮次为主路径；旧计划只作为兼容入口与历史记录，不再扩展为新能力。
+_Avoid_: 旧版、废弃计划
+
+**Config Audit（配置审计）**
+环境、变量或服务器配置写入的本机审计记录。元数据包含脱敏摘要、action 与撤销状态；before/after 快照使用 safeStorage 加密保存，不进入会话 JSON 或项目 Git。
+_Avoid_: 配置历史（指可撤销审计时）、变更日志
+
+**Execution Unknown（执行结果未知）**
+网络请求可能已到达远端、但传输未完整结束的状态。unknown 记录在单轮运行状态中，本轮禁止自动重发；新用户轮的明确请求才可重新发起。
+_Avoid_: 失败重试、超时重发
 
 ## 两个系统
 

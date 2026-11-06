@@ -1,3 +1,11 @@
+import type { AgentTurnUndo, AgentTurnSummary } from '@shared/agentTurnUndo'
+import type { DeletedObject } from '@shared/agentDeletion'
+import type { FlowVersion } from '@shared/flowSync'
+import type { AgentFlowCandidate, AgentFlowDraft, AgentFlowDraftEvent } from '@shared/agentFlowDraft'
+import type { AgentDraft, AgentCandidate, AgentDraftEvent, ProjectCandidateSummary, AgentConflictChoice } from '@shared/agentDraft'
+import type { AgentPlan, AgentPlanEvent, ReadPlanInput, CreateApiPlanInput, TaskPlanInput } from '../shared/agentPlan'
+import type { AgentConnection, AgentConnectionInput, AgentConnectionTest, AgentConversation, AgentEvent } from '@shared/agent'
+import type { AgentConfigAudit } from '@shared/agentConfigAudit'
 import type {
   AppPaths,
   AppSettings,
@@ -20,6 +28,7 @@ import type {
   Environment,
   Flow,
   FlowRun,
+  FlowRefreshPreview,
   FlowRunSummary,
   GeneratedExampleResult,
   GitAvailability,
@@ -43,6 +52,9 @@ import type {
   ModelSchema,
   ModelSummary,
   Project,
+  ProjectImportInspection,
+  ProjectImportRequest,
+  ProjectImportResult,
   RequestModel,
   Result,
   SendRecord,
@@ -51,6 +63,9 @@ import type {
   CurlResult,
   Target,
   TargetSummary,
+  TargetTransferMode,
+  TargetTransferPreview,
+  TargetTransferResult,
   TargetVersion,
   TargetVersionSummary,
   DbTable
@@ -87,6 +102,83 @@ export interface SelectedFile {
 }
 
 export interface ApiBridge {
+  agent: {
+    cancelTurnUndo(pid: string, id: string): Promise<Result<AgentTurnUndo>>
+    listUndoTurns(pid: string): Promise<Result<AgentTurnSummary[]>>
+    listTurnUndos(pid: string): Promise<Result<AgentTurnUndo[]>>
+    previewTurnUndo(pid: string, planId: string): Promise<Result<AgentTurnUndo>>
+    applyTurnUndo(pid: string, id: string, reviewId: string, choices: Record<string, Record<string, AgentConflictChoice>>): Promise<Result<AgentTurnUndo>>
+    deleteProjectAgentRecords(pid: string): Promise<Result<boolean>>
+    getDeletedObject(pid: string, kind: 'api' | 'flow', id: string): Promise<Result<DeletedObject | null>>
+    restoreDeletedApiDraft(pid: string, id: string, deletionId: string): Promise<Result<AgentDraft>>
+    saveDeletedApiDraft(pid: string, id: string, deletionId: string, signature: string): Promise<Result<AgentDraft>>
+    restoreDeletedFlowDraft(pid: string, id: string, deletionId: string): Promise<Result<AgentFlowDraft>>
+    saveDeletedFlowDraft(pid: string, id: string, deletionId: string, signature: string): Promise<Result<AgentFlowDraft>>
+    listFlowVersions(pid: string, id: string): Promise<Result<FlowVersion[]>>
+    getFlowVersion(pid: string, id: string, versionId: string): Promise<Result<FlowVersion | null>>
+    restoreFlowVersionDraft(pid: string, id: string, versionId: string): Promise<Result<AgentFlowCandidate>>
+    restoreFlowCandidate(pid: string, id: string): Promise<Result<AgentFlowCandidate>>
+    reloadFlowDraft(pid: string, id: string, signature: string): Promise<Result<AgentFlowDraft>>
+    getFlowDraft(pid: string, id: string): Promise<Result<AgentFlowDraft>>
+    syncFlowEditorDraft(pid: string, flow: Flow): Promise<Result<AgentFlowDraft>>
+    saveManualFlowForRun(pid: string, flow: Flow): Promise<Result<Flow>>
+    listAgentFlowDrafts(pid: string): Promise<Result<AgentFlowDraft[]>>
+    listFlowCandidates(pid: string, id?: string): Promise<Result<AgentFlowCandidate[]>>
+    applyFlowCandidate(pid: string, id: string): Promise<Result<AgentFlowCandidate>>
+    rejectFlowCandidate(pid: string, id: string): Promise<Result<AgentFlowCandidate>>
+    resolveFlowCandidate(pid: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentFlowCandidate>>
+    onFlowDraftChanged(callback: (event: AgentFlowDraftEvent) => void): () => void
+    releaseEditorDraft(projectId: string, id: string): Promise<Result<boolean>>
+    resolveCandidate(projectId: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentCandidate>>
+    saveManualDraftOnQuit(projectId: string, target: Target, revision: string): Promise<Result<boolean>>
+    getDraft(projectId: string, targetId: string): Promise<Result<AgentDraft>>
+    syncEditorDraft(projectId: string, target: Target, baseRevision?: string | null): Promise<Result<AgentDraft>>
+    listAgentDrafts(projectId: string): Promise<Result<AgentDraft[]>>
+    listCandidates(projectId: string, targetId?: string): Promise<Result<AgentCandidate[]>>
+    restoreCandidate(projectId: string, id: string): Promise<Result<AgentCandidate>>
+    rejectCandidate(projectId: string, id: string): Promise<Result<AgentCandidate>>
+    undoCandidate(projectId: string, id: string): Promise<Result<AgentCandidate>>
+    resolveCandidateUndo(projectId: string, id: string, reviewId: string, choices: Record<string, AgentConflictChoice>): Promise<Result<AgentCandidate>>
+    applyCandidate(projectId: string, candidateId: string): Promise<Result<AgentCandidate>>
+    onDraftChanged(callback: (event: AgentDraftEvent) => void): () => void
+    getActivity(): Promise<Result<{ running: number }>>
+    prepareQuit(): Promise<Result<boolean>>
+    proposeCreateApiPlan(projectId: string, input: CreateApiPlanInput): Promise<Result<AgentPlan>>
+    listProjectCandidates(projectId: string): Promise<Result<ProjectCandidateSummary[]>>
+    proposeSavePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
+    proposeExecuteCasePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
+    proposeExecutePlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
+    cancelPlan(projectId: string, id: string): Promise<Result<AgentPlan>>
+    proposeEditPlan(projectId: string, input: ReadPlanInput): Promise<Result<AgentPlan>>
+    proposeReadPlan: (projectId: string, input: ReadPlanInput) => Promise<Result<AgentPlan>>
+    proposeTaskPlan(projectId: string, input: TaskPlanInput): Promise<Result<AgentPlan>>
+    getPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
+    listPlans: (projectId: string) => Promise<Result<AgentPlan[]>>
+    resumePlan: (projectId: string, id: string, stepIds: string[]) => Promise<Result<AgentPlan>>
+    approvePlan: (projectId: string, id: string, expectedRevision?: number) => Promise<Result<AgentPlan>>
+    rejectPlan: (projectId: string, id: string) => Promise<Result<AgentPlan>>
+    deletePlan: (projectId: string, id: string) => Promise<Result<boolean>>
+    onPlanChanged: (callback: (event: AgentPlanEvent) => void) => () => void
+    getConnection(connectionId?: string): Promise<Result<AgentConnection | null>>
+    listConnections(): Promise<Result<AgentConnection[]>>
+    createConnection(input: AgentConnectionInput): Promise<Result<AgentConnection>>
+    deleteConnection(connectionId: string): Promise<Result<boolean>>
+    getProjectConnection(projectId: string): Promise<Result<AgentConnection | null>>
+    setProjectConnection(projectId: string, connectionId: string | null): Promise<Result<AgentConnection | null>>
+    saveConnection(input: AgentConnectionInput, connectionId?: string): Promise<Result<AgentConnection>>
+    testConnection(connectionId?: string): Promise<Result<AgentConnectionTest>>
+    createConversation(projectId: string): Promise<Result<AgentConversation>>
+    renameConversation(projectId: string, id: string, title: string): Promise<Result<AgentConversation>>
+    listConversations(projectId: string): Promise<Result<AgentConversation[]>>
+    getConversation(projectId: string, id: string): Promise<Result<AgentConversation>>
+    deleteConversation(projectId: string, id: string): Promise<Result<boolean>>
+    sendMessage(projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }): Promise<Result<AgentConversation>>
+    cancelMessage(projectId: string, id: string): Promise<Result<boolean>>
+    respondToolApproval(projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied'): Promise<Result<boolean>>
+    listConfigAudits(projectId: string): Promise<Result<AgentConfigAudit[]>>
+    undoConfigChange(projectId: string, auditId: string): Promise<Result<AgentConfigAudit>>
+    onChanged(callback: (event: AgentEvent) => void): () => void
+  }
   paths(): Promise<Result<AppPaths>>
   app: {
     openPath(targetPath: string): Promise<Result<string>>
@@ -96,6 +188,7 @@ export interface ApiBridge {
     onRequestClose(callback: () => void): () => void
     onCloseTabShortcut(callback: () => void): () => void
     confirmClose(): Promise<Result<boolean>>
+    cancelClose(): Promise<Result<boolean>>
   }
   dialog: {
     openFiles(multiple?: boolean): Promise<Result<SelectedFile[]>>
@@ -113,6 +206,9 @@ export interface ApiBridge {
     save(project: Project): Promise<Result<Project>>
     saveApiStatuses(projectId: string, statuses: ApiStatus[], defaultId: string): Promise<Result<Project>>
     ensureDefault(): Promise<Result<Project>>
+    pickImportFile(): Promise<Result<SelectedFile | null>>
+    inspectImport(filePath: string): Promise<Result<ProjectImportInspection>>
+    importFile(input: ProjectImportRequest): Promise<Result<ProjectImportResult>>
   }
   targets: {
     onChanged(callback: (event: TargetChangeEvent) => void): () => void
@@ -134,6 +230,18 @@ export interface ApiBridge {
       orderedIds: string[]
     ): Promise<Result<TargetSummary[]>>
     clone(projectId: string, targetId: string): Promise<Result<Target>>
+    transferPreview(
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: TargetTransferMode
+    ): Promise<Result<TargetTransferPreview>>
+    transfer(
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: TargetTransferMode
+    ): Promise<Result<TargetTransferResult>>
     cases: {
       run(
         projectId: string,
@@ -265,12 +373,21 @@ export interface ApiBridge {
     ): Promise<Result<ImportDbResult>>
   }
   flows: {
+    activeRuns(): Promise<Result<FlowRun[]>>
     list(projectId: string): Promise<Result<Flow[]>>
     get(projectId: string, flowId: string): Promise<Result<Flow | null>>
     create(projectId: string, name: string): Promise<Result<Flow>>
-    save(projectId: string, flow: Flow): Promise<Result<Flow>>
+    save(projectId: string, flow: Flow, expectedRevision: string): Promise<Result<Flow>>
     delete(projectId: string, flowId: string): Promise<Result<boolean>>
     run(projectId: string, flowId: string, environmentId?: string): Promise<Result<FlowRun>>
+    cancelRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    pauseRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    previewRunRefresh(projectId: string, runId: string): Promise<Result<FlowRefreshPreview>>
+    resolveRunConflict(projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override'): Promise<Result<FlowRefreshPreview>>
+    approveRunScope(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
+    applyRunRefresh(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
+    resumeRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    startRun(projectId: string, flowId: string, environmentId: string | undefined, requestId: string): Promise<Result<FlowRun>>
     runs(projectId: string, limit?: number): Promise<Result<FlowRunSummary[]>>
     getRun(projectId: string, runId: string): Promise<Result<FlowRun | null>>
   }

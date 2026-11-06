@@ -15,11 +15,16 @@ import type {
   McpStatus,
   McpToolInfo,
   Project,
+  ProjectImportRequest,
+  ProjectImportResult,
   ResponseExample,
   Result,
   SendRecord,
   Target,
-  TargetSummary
+  TargetSummary,
+  TargetTransferMode,
+  TargetTransferPreview,
+  TargetTransferResult
 } from '@shared/types'
 
 export interface Tab {
@@ -68,6 +73,18 @@ interface AppState {
   init: () => Promise<void>
   selectProject: (projectId: string) => Promise<void>
   createProject: (name: string) => Promise<void>
+  createProjectOnly: (name: string) => Promise<Project>
+  importProject: (input: ProjectImportRequest) => Promise<ProjectImportResult>
+  previewTargetTransfer: (
+    id: string,
+    destinationProjectId: string,
+    mode: TargetTransferMode
+  ) => Promise<TargetTransferPreview>
+  transferTargetToProject: (
+    id: string,
+    destinationProjectId: string,
+    mode: TargetTransferMode
+  ) => Promise<TargetTransferResult>
   reloadTargets: () => Promise<void>
   reloadEnvironments: () => Promise<void>
   openTarget: (id: string) => Promise<void>
@@ -87,6 +104,8 @@ interface AppState {
   deleteTarget: (id: string) => Promise<void>
   deleteTargets: (ids: string[]) => Promise<void>
   closeTab: (id: string) => void
+  /** 只清理本地标签与草稿，不调用后端删除。 */
+  discardTargets: (ids: string[]) => void
   setActive: (id: string) => void
   patchDraft: (id: string, patch: Partial<Target>) => void
   setEnv: (envId: string) => Promise<void>
@@ -391,6 +410,58 @@ export const useApp = create<AppState>((set, get) => ({
     await get().selectProject(project.project_id)
   },
 
+  createProjectOnly: async (name) => {
+    const project = unwrap(await window.api.projects.create(name))
+    const projects = unwrap(await window.api.projects.list())
+    set({ projects })
+    return project
+  },
+
+  importProject: async (input) => {
+    const result = unwrap(await window.api.projects.importFile(input))
+    const projects = unwrap(await window.api.projects.list())
+    set({ projects })
+    if (get().project?.project_id === result.project.project_id) {
+      set({ project: result.project })
+      await get().reloadTargets()
+    } else {
+      await get().selectProject(result.project.project_id)
+    }
+    return result
+  },
+
+  previewTargetTransfer: async (id, destinationProjectId, mode) => {
+    const project = get().project
+    if (!project) throw new Error('项目未就绪')
+    return unwrap(
+      await window.api.targets.transferPreview(project.project_id, id, destinationProjectId, mode)
+    )
+  },
+
+  transferTargetToProject: async (id, destinationProjectId, mode) => {
+    const project = get().project
+    if (!project) throw new Error('项目未就绪')
+    const preview = unwrap(
+      await window.api.targets.transferPreview(project.project_id, id, destinationProjectId, mode)
+    )
+    const dirty = preview.target_ids.filter((targetId) => hasLocalEdits(targetId))
+    if (dirty.length > 0) {
+      const names = dirty
+        .map((targetId) => get().tabs.find((tab) => tab.id === targetId)?.name ?? targetId)
+        .join('、')
+      throw new Error(`以下接口有未保存的修改，请先保存或关闭：${names}`)
+    }
+    const result = unwrap(
+      await window.api.targets.transfer(project.project_id, id, destinationProjectId, mode)
+    )
+    // 只有移动会让当前项目失去这些节点；复制不动源项目。
+    if (mode === 'move') {
+      get().discardTargets(result.source_target_ids)
+      await get().reloadTargets()
+    }
+    return result
+  },
+
   reloadTargets: async () => {
     const project = get().project
     if (!project) return
@@ -421,14 +492,17 @@ export const useApp = create<AppState>((set, get) => ({
       return
     }
     const snapshot = unwrap(await window.api.targets.read(project.project_id, id))
-    const target = snapshot.target
+    let target = snapshot.target
     if (!target) return
+    const agentDraft = target.target_type === 'api' && window.api.agent?.getDraft ? unwrap(await window.api.agent.getDraft(project.project_id, id)) : null
+    if (agentDraft?.agent_owned) target = agentDraft.target
     if (get().project?.project_id !== project.project_id || get().tabs.some(tab => tab.id === id)) return
     set((state) => ({
       drafts: { ...state.drafts, [id]: target },
       baselines: { ...state.baselines, [id]: snapshot },
-      tabs: [...state.tabs, { id, name: target.name, dirty: false, openKey: createId('tab') }],
-      activeId: id
+      tabs: [...state.tabs, { id, name: target.name, dirty: !!agentDraft?.agent_owned, openKey: createId('tab') }],
+      activeId: id,
+      ...(agentDraft?.agent_owned ? { syncNotice: '已恢复 Agent 未保存草稿；退出仅暂存，不会自动保存定义。' } : {})
     }))
   },
 
@@ -639,28 +713,52 @@ export const useApp = create<AppState>((set, get) => ({
     for (const id of ids) {
       unwrap(await window.api.targets.delete(project.project_id, id))
     }
-    const removed = new Set(ids)
     await get().reloadTargets()
-    for (const id of ids) get().closeTab(id)
-    set((state) => {
-      const drafts = { ...state.drafts }
-      for (const id of removed) delete drafts[id]
-      return { drafts }
-    })
+    get().discardTargets(ids)
   },
 
-  closeTab: (id) => {
+  closeTab: (id) => get().discardTargets([id]),
+
+  discardTargets: (ids) => {
+    if (ids.length === 0) return
+    const removed = new Set(ids)
     set((state) => {
-      const index = state.tabs.findIndex((t) => t.id === id)
-      const tabs = state.tabs.filter((t) => t.id !== id)
+      const activeIndex = state.activeId
+        ? state.tabs.findIndex((tab) => tab.id === state.activeId)
+        : -1
+      const tabs = state.tabs.filter((tab) => !removed.has(tab.id))
       let activeId = state.activeId
-      if (state.activeId === id) {
-        activeId = tabs[Math.max(0, index - 1)]?.id ?? tabs[0]?.id ?? null
+      if (activeId && removed.has(activeId)) {
+        let next: string | null = null
+        for (let index = activeIndex - 1; index >= 0; index -= 1) {
+          const candidate = state.tabs[index]
+          if (!removed.has(candidate.id)) {
+            next = candidate.id
+            break
+          }
+        }
+        activeId = next ?? tabs[0]?.id ?? null
       }
-      const drafts = { ...state.drafts }, baselines = { ...state.baselines }, pendingUpdates = { ...state.pendingUpdates }, editLocks = { ...state.editLocks }
-      delete drafts[id]; delete baselines[id]; delete pendingUpdates[id]; delete editLocks[id]
-      return { tabs, activeId, drafts, baselines, pendingUpdates, editLocks,
-        saveConflict: state.saveConflict?.id === id ? null : state.saveConflict }
+      const drafts = { ...state.drafts }
+      const baselines = { ...state.baselines }
+      const pendingUpdates = { ...state.pendingUpdates }
+      const editLocks = { ...state.editLocks }
+      for (const id of removed) {
+        delete drafts[id]
+        delete baselines[id]
+        delete pendingUpdates[id]
+        delete editLocks[id]
+      }
+      return {
+        tabs,
+        activeId,
+        drafts,
+        baselines,
+        pendingUpdates,
+        editLocks,
+        saveConflict:
+          state.saveConflict && removed.has(state.saveConflict.id) ? null : state.saveConflict
+      }
     })
   },
 

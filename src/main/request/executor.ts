@@ -6,6 +6,7 @@ import type {
   BodyModel,
   ConsoleEntry,
   Environment,
+  FlowFileDependency,
   Param,
   RequestModel,
   SendRecord,
@@ -15,13 +16,14 @@ import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { generateModelExample } from '../schema/example'
 import { mergeScriptVariables, requestScript } from './scripts'
+import { captureFileDependencies, verifiedFileResolver } from './files'
 
 const runtime = require('postman-runtime') as any
 const { Collection, VariableScope } = require('postman-collection') as any
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 
-interface ResolvedRequest {
+export interface ResolvedRequest {
   disabledSystemHeaders: Record<string, boolean>
   url: string
   method: string
@@ -36,6 +38,43 @@ interface ResolvedRequest {
   cookies: Record<string, string>
   protocolVersion: 'http1' | 'auto' | 'http2'
   baseUrl: string
+}
+
+/** In-memory execution snapshot. Captured once; never persisted into a Target definition. */
+export interface RequestExecutionContext {
+  projectId: string
+  target: Target
+  settings: ReturnType<typeof store.getSettings>
+  env: Environment | null
+  globals: ReturnType<typeof store.getGlobalVars>
+  resolved: ResolvedRequest
+  dependencies: Array<Target | RequestModel>
+  /** Cookie jar captured with the frozen run; never re-read for an approved continuation. */
+  cookieJar?: Record<string, string>
+  variables?: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }
+}
+export interface RequestExecutionPolicy {
+  beforeRequest(request: { method: string; url: { toString(): string }; headers?: { get(name: string): string | undefined } }, variables: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }): void
+  fileResolver: unknown
+  followRedirects: boolean
+  persistVariables: boolean
+  onVariables?(variables: { environment: Record<string, unknown>; globals: Record<string, unknown>; local?: Record<string, unknown> }): void
+  /** Historical values written by a script, including ones unset before the run ends. */
+  onSensitiveValues?(values: string[]): void
+}
+/** Raw definition dependencies for scope checks; does not re-resolve live model references. */
+export function requestDefinitionDependencies(projectId: string, target: Target): Array<Target | RequestModel> {
+  return [store.readProjectRequestDefaults(projectId), ...getChain(projectId, target)]
+}
+export function captureRequestContext(projectId: string, target: Target, environmentId?: string): RequestExecutionContext {
+  // Explicit absence means no environment for this captured run, never the manual fallback.
+  const env = environmentId ? store.listEnvironments(projectId).find(env => env.env_id === environmentId) : null
+  if (environmentId && !env) throw new Error('环境不存在')
+  const resolved = resolveRequest(projectId, target, env ?? null)
+  return structuredClone({ projectId, target, settings: store.getSettings(), env: env ?? null,
+    globals: store.getGlobalVars(projectId), resolved,
+    dependencies: requestDefinitionDependencies(projectId, target),
+    cookieJar: store.getCookieJarForUrl(projectId, resolved.url) })
 }
 
 /** 供代码生成复用的有效请求描述（已完成环境变量/服务前缀替换）。 */
@@ -97,9 +136,19 @@ function getChain(projectId: string, target: Target): Target[] {
   return chain
 }
 
-function resolveRequest(projectId: string, target: Target, env: Environment | null): ResolvedRequest {
-  const chain = getChain(projectId, target) // nearest -> root
-  const root = store.readProjectRequestDefaults(projectId)
+/** Frozen dependencies captured with an approved plan; live reads remain the manual/MCP default. */
+export interface FrozenRequestDefinition {
+  dependencies: Array<Target | RequestModel>
+  bodyModel?: BodyModel
+  cookieJar?: Record<string, string>
+}
+function resolveRequest(projectId: string, target: Target, env: Environment | null, frozen?: FrozenRequestDefinition): ResolvedRequest {
+  const frozenDeps = frozen?.dependencies
+  // The modified target is the nearest node; ancestors stay frozen from the approved snapshot.
+  const chain: Target[] = frozenDeps
+    ? [target, ...frozenDeps.slice(2).filter((item): item is Target => !!item && typeof item === 'object' && 'target_id' in item)]
+    : getChain(projectId, target) // nearest -> root
+  const root: RequestModel = (frozenDeps?.[0] as RequestModel | undefined) ?? store.readProjectRequestDefaults(projectId)
 
   const disabledSystemHeaders: Record<string, boolean> = {}
   for (const request of [root, ...[...chain].reverse().map(node => node.request)]) {
@@ -134,17 +183,24 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
   // 引用了数据模型时，发送前按模型实时重新生成，忽略手改的 raw。
   // 模型失效时保留最近一次生成的 raw，避免发送 "null"。
   if (body?.model_id) {
-    const generated = generateModelExample(projectId, body.model_id)
-    const broken = generated.warnings.some(
-      (warning) => warning.code === 'missing-model' || warning.code === 'invalid-ref'
-    )
-    if (!broken) {
-      body = {
-        ...body,
-        mode: body.mode === 'none' ? 'json' : body.mode,
-        raw: JSON.stringify(generated.value, null, 2)
-      }
+    // A frozen run reuses the example generated when the plan was approved; definition files
+    // continue to store live model ids, but this turn must not re-read a changed model.
+    if (frozen?.bodyModel && frozen.bodyModel.model_id === body.model_id) {
+      body = frozen.bodyModel
       if (bodyMode === 'none') bodyMode = 'json'
+    } else {
+      const generated = generateModelExample(projectId, body.model_id)
+      const broken = generated.warnings.some(
+        (warning) => warning.code === 'missing-model' || warning.code === 'invalid-ref'
+      )
+      if (!broken) {
+        body = {
+          ...body,
+          mode: body.mode === 'none' ? 'json' : body.mode,
+          raw: JSON.stringify(generated.value, null, 2)
+        }
+        if (bodyMode === 'none') bodyMode = 'json'
+      }
     }
   }
 
@@ -202,7 +258,7 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
 
   // Cookie 优先级：全局 jar < 请求 Cookie 参数 < 显式 Cookie 头。
   const mergedCookies: Record<string, string> = {
-    ...store.getCookieJarForUrl(projectId, url)
+    ...(frozen?.cookieJar ?? store.getCookieJarForUrl(projectId, url))
   }
   for (const [key, value] of Object.entries(cookies)) mergedCookies[key] = value
   const explicitCookieHeaders = headers.filter(
@@ -248,6 +304,24 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
   }
 }
 
+/** Resolved definitions are immutable for one Flow Run; variables stay mutable and separate. */
+export interface RequestExecutionDefinition {
+  target: Target
+  resolved: ResolvedRequest
+  files: FlowFileDependency[]
+}
+
+export interface RequestRunScopes {
+  environment: Record<string, unknown>
+  globals: Record<string, unknown>
+  local: Record<string, unknown>
+}
+
+export function captureRequestDefinition(projectId: string, target: Target, env: Environment | null): RequestExecutionDefinition {
+  const resolved = resolveRequest(projectId, target, env)
+  return JSON.parse(JSON.stringify({ target, resolved, files: captureFileDependencies(resolved.bodyModel) }))
+}
+
 function stripHeaderBreaks(value: string): string {
   return String(value ?? '').replace(/[\r\n]/g, '')
 }
@@ -276,6 +350,15 @@ function loadScopes(
 }
 
 /** 为代码生成等场景提供已完成环境替换与 Cookie 合并的请求。 */
+/** Re-resolve an approved continuation target against its frozen dependency/model/cookie snapshot. */
+export function resolveFrozenRequest(context: RequestExecutionContext): ResolvedRequest {
+  return resolveRequest(context.projectId, context.target, context.env, {
+    dependencies: context.dependencies,
+    bodyModel: context.resolved.bodyModel,
+    cookieJar: context.cookieJar
+  })
+}
+
 export function resolveEffectiveRequest(
   projectId: string,
   target: Target,
@@ -387,13 +470,27 @@ export async function sendRequest(
   projectId: string,
   target: Target,
   environmentId?: string,
-  options: { signal?: AbortSignal } = {}
+  options: {
+    requireResolvedVariables?: boolean
+    onRequestStart?: (auth: unknown) => void
+    signal?: AbortSignal
+    definition?: RequestExecutionDefinition
+    scopes?: RequestRunScopes
+    settings?: ReturnType<typeof store.getSettings>
+    context?: RequestExecutionContext
+    policy?: RequestExecutionPolicy
+  } = {}
 ): Promise<SendRecord> {
-  const settings = store.getSettings()
-  const { env, globals } = loadScopes(projectId, environmentId)
-  const resolved = resolveRequest(projectId, target, env)
+  const context = options.context
+  if (context && (context.projectId !== projectId || context.target.target_id !== target.target_id)) throw new Error('执行快照不属于当前项目和接口')
+  if (context) target = structuredClone(context.target)
+  const settings = options.settings ?? context?.settings ?? store.getSettings()
+  const { env, globals } = options.scopes ? { env: null, globals: { vars: {} } } : context ?? loadScopes(projectId, environmentId)
+  const resolved = options.definition?.resolved ?? context?.resolved ?? resolveRequest(projectId, target, env)
+  target = options.definition?.target ?? target
+  const files = options.definition ? verifiedFileResolver(options.definition.files) : undefined
 
-  const environmentValues: Record<string, { current_value?: string; value?: string }> = env
+  const environmentValues: Record<string, { current_value?: string; value?: string }> = options.scopes ? Object.fromEntries(Object.entries(options.scopes.environment).map(([k, v]) => [k, { current_value: String(v ?? '') }])) : env
     ? Object.fromEntries(
         Object.entries(env.env_var_list)
           .filter(([, v]) => v.is_checked > 0)
@@ -406,7 +503,7 @@ export async function sendRequest(
       value: resolved.baseUrl
     }
   }
-  const globalValues = Object.fromEntries(
+  const globalValues = options.scopes ? Object.fromEntries(Object.entries(options.scopes.globals).map(([k, v]) => [k, { current_value: String(v ?? '') }])) : Object.fromEntries(
     Object.entries(globals.vars).map(([k, v]) => [
       k,
       { current_value: v.current_value, value: v.initial_value }
@@ -442,8 +539,12 @@ export async function sendRequest(
   const startedAt = Date.now()
   let timingOffsets: Record<string, number> | null = null
   let networkInfo: Record<string, unknown> | null = null
-  const environmentScope = new VariableScope({ values: toValues(environmentValues) })
-  const globalScope = new VariableScope({ values: toValues(globalValues) })
+  const environmentScope = new VariableScope({ values: context?.variables ? Object.entries(context.variables.environment).map(([key, value]) => ({ key, value })) : toValues(environmentValues) })
+  const globalScope = new VariableScope({ values: context?.variables ? Object.entries(context.variables.globals).map(([key, value]) => ({ key, value })) : toValues(globalValues) })
+  const localScope = new VariableScope({ values: Object.entries(context?.variables?.local ?? options.scopes?.local ?? {}).map(([key, value]) => ({ key, value })) })
+  let finalLocalScope = localScope
+  // Postman replaces state._variables after each script (environment/globals mutate in place).
+  let readLocalValues = (): Record<string, unknown> => localScope.toObject()
   const environmentBefore = environmentScope.toObject()
   const globalsBefore = globalScope.toObject()
 
@@ -457,6 +558,7 @@ export async function sendRequest(
     let requestRef: any = null
     const activeRequests = new Map<string, { abort: () => void }>()
     const abort = (): void => {
+      if (settled) return
       // run.abort 只清后续队列，正在等待网络/脚本时还需中止实际资源。
       runtimeRun?.abort()
       for (const request of activeRequests.values()) request.abort()
@@ -482,7 +584,7 @@ export async function sendRequest(
       {
         requester: {
           strictSSL: !(settings.ignore_tls > 0),
-          followRedirects: settings.auto_redirect > 0,
+          followRedirects: options.policy?.followRedirects ?? settings.auto_redirect > 0,
           maxRedirects: Math.max(settings.max_redirect_time, 5),
           followOriginalHttpMethod: settings.follow_original_method > 0,
           protocolVersion: resolved.protocolVersion,
@@ -497,10 +599,10 @@ export async function sendRequest(
         abortOnError: true,
         stopOnScriptError: true,
         iterationCount: 1,
-        fileResolver: fs,
+        fileResolver: options.policy?.fileResolver ?? files ?? fs,
         environment: environmentScope,
         globals: globalScope,
-        localVariables: new VariableScope({ values: [] })
+        localVariables: localScope
       },
       (err: Error | null, run: any) => {
         if (err) {
@@ -508,12 +610,68 @@ export async function sendRequest(
           return
         }
         runtimeRun = run
+        if (settled) { run.abort(); run.host?.dispose(); return }
+        readLocalValues = () => run.state._variables.toObject()
         if (options.signal?.aborted) { abort(); return }
         let responseRef: any = null
         let responseError: Error | null = null
         run.start({
+          script: (_error: unknown, _cursor: unknown, execution: any) => {
+            if (!settled && execution?._variables) finalLocalScope = execution._variables
+            if (runtimeRun?.state?._variables) readLocalValues = () => runtimeRun.state._variables.toObject()
+            // Final variable snapshots cannot see set→log→unset inside one script. The runtime
+            // retains the MutationTracker stream on each result scope; project those historical
+            // values into the per-turn redactor before any report/console/model projection.
+            if (!options.policy?.onSensitiveValues || !execution) return
+            const values: string[] = []
+            const collectValue = (value: unknown): void => {
+              if (typeof value === 'string') { if (value) values.push(value); return }
+              if (Array.isArray(value)) { for (const item of value) collectValue(item); return }
+              if (value && typeof value === 'object') for (const item of Object.values(value)) collectValue(item)
+            }
+            for (const scopeName of ['environment', 'globals', '_variables', 'collectionVariables', 'localVariables']) {
+              const tracker = execution?.[scopeName]?.mutations
+              // SET is [key, value, metadata?]; UNSET is [key] and carries no value.
+              // The installed sandbox auto-compacts, so inspect both the stream and the last
+              // mutation retained in `compacted`.
+              for (const mutation of [...(tracker?.stream ?? []), ...Object.values(tracker?.compacted ?? {})]) {
+                if (Array.isArray(mutation) && mutation.length >= 2) collectValue(mutation[1])
+              }
+            }
+            if (values.length) options.policy.onSensitiveValues([...new Set(values)])
+          },
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
-            requestRef = request
+            if (settled || options.signal?.aborted) { controls.abort(); return }
+            if (options.policy) {
+              try { options.policy.beforeRequest(request as any, { environment: environmentScope.toObject(), globals: globalScope.toObject(), local: readLocalValues() }) }
+              catch (error) {
+                controls.abort()
+                runtimeRun?.abort()
+                for (const active of activeRequests.values()) active.abort()
+                runtimeRun?.host?.dispose()
+                finish({ error: { type: 'authorization', message: error instanceof Error ? error.message : '请求超出授权范围' }, response: null, request: null })
+                return
+              }
+            }
+            try { files?.check() } catch (error) {
+              controls.abort()
+              finish({ error: { type: 'file-changed', message: (error as Error).message }, response: null, request: null })
+              return
+            }
+            if (options.requireResolvedVariables) {
+              // Postman has applied API pre-scripts and variable scopes at this point.
+              const outgoing = request as { url?: { toString(): string }; headers?: { toJSON(): unknown }; body?: { toJSON(): unknown }; auth?: { toJSON(): unknown } }
+              let text = JSON.stringify({ url: outgoing.url?.toString(), headers: outgoing.headers?.toJSON(), body: outgoing.body?.toJSON(), auth: outgoing.auth?.toJSON() })
+              try { text = decodeURIComponent(text) } catch { /* preserve malformed URL escapes */ }
+              const missing = text.match(/\{\{\s*([^{}]+?)\s*\}\}/)
+              if (missing) {
+                controls.abort()
+                finish({ error: { type: 'missing-variable', message: `缺少运行变量 ${missing[1]}，无法满足请求前置条件` }, response: null, request })
+                return
+              }
+            }
+            if (!options.policy || !responseRef) requestRef = request
+            options.onRequestStart?.((request as { auth?: { toJSON(): unknown } }).auth?.toJSON())
             activeRequests.set(controls.httpRequestId, controls)
             if (options.signal?.aborted) controls.abort()
           },
@@ -542,6 +700,7 @@ export async function sendRequest(
             }
           },
           assertion: (_cursor: unknown, results: any[]) => {
+            if (settled) return
             for (const item of results ?? []) {
               const errorText = item.error
                 ? String(item.error.message ?? item.error)
@@ -555,9 +714,24 @@ export async function sendRequest(
             }
           },
           exception: (_cursor: unknown, error: Error) => {
+            if (settled) return
             responseError = error
           },
           console: (_cursor: unknown, level: string, ...args: unknown[]) => {
+            if (settled) return
+            // A set→log→unset transient is already compacted away in the final tracker. For
+            // Agent runs, conservatively treat console payload strings as potential secrets so
+            // they can never reach plan/report/model projections. Manual/MCP paths keep output.
+            if (options.policy?.onSensitiveValues) {
+              const values: string[] = []
+              const collectValue = (value: unknown): void => {
+                if (typeof value === 'string') { if (value) values.push(value); return }
+                if (Array.isArray(value)) { for (const item of value) collectValue(item); return }
+                if (value && typeof value === 'object') for (const item of Object.values(value)) collectValue(item)
+              }
+              for (const arg of args) collectValue(arg)
+              if (values.length) options.policy.onSensitiveValues([...new Set(values)])
+            }
             consoleEntries.push({
               time: Date.now(),
               level,
@@ -587,8 +761,15 @@ export async function sendRequest(
     )
   })
 
+  options.policy?.onVariables?.({ environment: environmentScope.toObject(), globals: globalScope.toObject(), local: readLocalValues() })
   const finishedAt = Date.now()
-  if (result.error?.type !== 'cancelled') {
+  if (result.error?.type !== 'cancelled' && options.scopes) {
+    for (const [destination, source] of [[options.scopes.environment, environmentScope], [options.scopes.globals, globalScope], [options.scopes.local, finalLocalScope]] as const) {
+      for (const key of Object.keys(destination)) delete destination[key]
+      for (const [key, value] of Object.entries(source.toObject())) destination[key] = String(value)
+    }
+  }
+  if (result.error?.type !== 'cancelled' && !options.scopes && (!options.policy || options.policy.persistVariables !== false)) {
     if (env) {
       const current = store.listEnvironments(projectId).find(item => item.env_id === env.env_id)
       if (current) {

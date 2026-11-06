@@ -193,8 +193,13 @@ function submittedDocumentationPaths(args: Obj): Set<string> {
 }
 
 export function assertStrictDocumentation(target: Target, args: Obj, created: boolean): void {
+  assertDocumentationPaths(target, created ? null : submittedDocumentationPaths(args))
+}
+
+/** Shared hard gate; null validates all fields of a newly created definition. */
+export function assertDocumentationPaths(target: Target, submitted: Set<string> | null): void {
+  const created = submitted === null
   const gaps = strictDocumentationGaps(target)
-  const submitted = created ? null : submittedDocumentationPaths(args)
   const relevant = submitted ? gaps.filter(gap => submitted.has(gap.path)) : gaps
   if (!relevant.length) return
   const lines = relevant.map(gap =>
@@ -315,7 +320,7 @@ function removeFieldsFromExample(raw: string | undefined, input: unknown): strin
   return JSON.stringify(value, null, 2)
 }
 
-function validateFieldExamples(raw: string | undefined, docs: FieldDoc[], scope: string): void {
+export function validateFieldExamples(raw: string | undefined, docs: FieldDoc[], scope: string): void {
   const byPath = new Map(docs.map(doc => [doc.pointer, doc]))
   for (const doc of docs) {
     const parts = doc.pointer.split('/')
@@ -511,7 +516,7 @@ export function documentationIssues(target: Target): Array<{ path: string; missi
   return result
 }
 
-export function writeApiDocumentation(args: Obj, allowNew = false): unknown {
+export function prepareApiDocumentation(args: Obj, allowNew = false): { target: Target; created: boolean; issues: DocumentationGap[] } {
   checkKeys(args, [...Object.keys(apiDocumentationProperties), 'response_example'], 'api')
   const projectId = string(args.project_id, 'project_id')
   let existing: Target | null = null
@@ -548,9 +553,14 @@ export function writeApiDocumentation(args: Obj, allowNew = false): unknown {
   if (args.success_response !== undefined || args.response_example !== undefined) patchSuccessResponse(target, object(args.success_response ?? args.response_example, 'success_response'))
   const issues = documentationIssues(target)
   assertStrictDocumentation(target, args, !existing)
-  const saved = store.saveTarget(projectId, target)
+  return { target, created: !existing, issues }
+}
+
+export function writeApiDocumentation(args: Obj, allowNew = false): unknown {
+  const { target, created, issues } = prepareApiDocumentation(args, allowNew)
+  const saved = store.saveTarget(target.project_id, target)
   const api = structuredClone(saved)
   if (api.request?.body.field_docs) api.request.body.field_docs = api.request.body.field_docs.map(withDisplayPath)
   for (const example of api.response?.example ?? []) if (example.field_docs) example.field_docs = example.field_docs.map(withDisplayPath)
-  return { api, target_id: api.target_id, created: !existing, documentation: { complete: issues.length === 0, issues } }
+  return { api, target_id: api.target_id, created, documentation: { complete: issues.length === 0, issues } }
 }

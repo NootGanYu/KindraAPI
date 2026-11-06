@@ -1,3 +1,4 @@
+import { connectAgentDraftSync, flushAgentDrafts } from './agentDraftSync'
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { App as AntApp, Spin } from 'antd'
@@ -13,6 +14,7 @@ import SchemasPage from './pages/SchemasPage'
 import DocsPage from './pages/DocsPage'
 import GitPage from './pages/GitPage'
 import MqttPage from './pages/MqttPage'
+import AgentDock from './components/AgentDock'
 
 function Shell(): JSX.Element {
   return (
@@ -34,13 +36,13 @@ function Shell(): JSX.Element {
           </Routes>
         </div>
       </div>
+      <AgentDock />
     </div>
   )
 }
 
 function QuitGuard(): JSX.Element {
-  const { message } = AntApp.useApp()
-  const saveTarget = useApp((s) => s.saveTarget)
+  const { message, modal } = AntApp.useApp()
   const closing = useRef(false)
 
   useEffect(() => {
@@ -49,17 +51,43 @@ function QuitGuard(): JSX.Element {
       closing.current = true
       void (async () => {
         try {
-          const dirty = useApp.getState().tabs.filter((tab) => tab.dirty)
-          for (const tab of dirty) await saveTarget(tab.id)
+          const active = await window.api.flows.activeRuns()
+          if (!active.ok) throw new Error(active.error)
+          if (active.data.length) {
+            const confirmed = await new Promise<boolean>((resolve) => modal.confirm({
+              title: '退出将终止活动运行',
+              content: `当前有 ${active.data.length} 个活动 Run。已完成结果会保留；在途请求的远端结果可能未知，重启后不会自动续跑。`,
+              okText: '终止运行并退出', cancelText: '留在应用',
+              onOk: () => resolve(true), onCancel: () => resolve(false)
+            }))
+            if (!confirmed) { closing.current = false; return }
+          }
+          await flushAgentDrafts()
+          const activity = await window.api.agent.getActivity()
+          if (!activity.ok) throw new Error(activity.error)
+          if (activity.data.running) {
+            const confirmed = await new Promise<boolean>(resolve => modal.confirm({ title: '退出将停止 Agent 任务', content: `当前有 ${activity.data.running} 个 Agent 任务。退出仅暂存 Agent 草稿，不保存定义；重启不会自动重放请求。`, okText: '停止并退出', cancelText: '继续工作', onOk: () => resolve(true), onCancel: () => resolve(false) }))
+            if (!confirmed) { await window.api.app.cancelClose(); closing.current = false; return }
+          }
+          const prepared = await window.api.agent.prepareQuit()
+          if (!prepared.ok) throw new Error(prepared.error)
+          await flushAgentDrafts()
+          const state = useApp.getState()
+          for (const tab of state.tabs.filter(tab => tab.dirty)) {
+            if (!state.project || !state.drafts[tab.id]) continue
+            const saved = await window.api.agent.saveManualDraftOnQuit(state.project.project_id, state.drafts[tab.id], state.baselines[tab.id]?.revision ?? '')
+            if (!saved.ok) throw new Error(saved.error)
+          }
           await window.api.app.confirmClose()
         } catch (error) {
           // 保存失败时不退出，避免丢失未保存内容；用户可修正后再次关闭。
+          await window.api.app.cancelClose()
           closing.current = false
           message.error(`自动保存失败，窗口保持打开：${(error as Error).message}`)
         }
       })()
     })
-  }, [message, saveTarget])
+  }, [message, modal])
 
   return <></>
 }
@@ -71,8 +99,9 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     const off = connectTargetSync()
+    const offAgent = connectAgentDraftSync()
     init().catch((e: Error) => setError(e.message))
-    return off
+    return () => { off(); offAgent() }
   }, [init])
 
   if (error) {

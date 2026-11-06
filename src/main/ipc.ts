@@ -1,3 +1,5 @@
+import { cancelRelaunch, requestRelaunch } from './appLifecycle'
+import { registerAgentIpc } from './agent/ipc'
 import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -25,6 +27,7 @@ import type {
   ModelSchema,
   ModelType,
   Project,
+  ProjectImportRequest,
   RequestModel,
   Result,
   SendRecord,
@@ -32,12 +35,13 @@ import type {
   Target
 } from '@shared/types'
 import * as store from './storage/store'
+import { inspectProjectImport, importProjectFile } from './project/importer'
 import { withTargetChanges } from './storage/changes'
 import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
-import { runFlow } from './flow/engine'
+import { getActiveFlowRuns, listFlowRuns, runSavedFlow, startFlowRun, getFlowRun, pauseFlowRun, resumeFlowRun, previewFlowRunRefresh, approveFlowRunScope, applyFlowRunRefresh, resolveFlowRunConflict, cancelFlowRun } from './flow/service'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
@@ -109,6 +113,7 @@ function handle<T>(
 }
 
 export function registerIpc(): void {
+  registerAgentIpc()
   handle('app:paths', () => store.getPaths())
   handle('app:openPath', (targetPath: string) => shell.openPath(targetPath))
   handle('app:copyText', (text: string) => {
@@ -123,17 +128,9 @@ export function registerIpc(): void {
     await shell.openExternal(parsed.toString())
     return true
   })
-  handle('app:relaunch', () => {
-    setTimeout(() => {
-      // 调试端口由设置项决定，重启时丢弃手动附加的启动参数。
-      const args = process.argv
-        .slice(1)
-        .filter((arg) => !arg.startsWith('--remote-debugging-port'))
-      app.relaunch({ args })
-      app.exit(0)
-    }, 300)
-    return true
-  })
+  // 重启同样经过退出确认与 prepareQuit；只有确认后才安排 relaunch。
+  handle('app:relaunch', () => { requestRelaunch(); return true })
+  handle('app:cancel-close', () => { cancelRelaunch(); return true })
 
   handle('debug:get', () => store.getDebugState())
   handle('debug:save', (config: DebugConfig) => store.saveDebugConfig(config))
@@ -143,6 +140,23 @@ export function registerIpc(): void {
   handle('project:save', (project: Project) => store.saveProject(project))
   handle('project:api-statuses', (projectId: string, statuses: ApiStatus[], defaultId: string) => store.saveApiStatuses(projectId, statuses, defaultId), true)
   handle('project:ensureDefault', () => store.ensureDefaultProject())
+  handle('project:import:pick', async () => {
+    const picked = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'API 导入文件', extensions: ['json'] }]
+    })
+    const filePath = picked.canceled ? undefined : picked.filePaths[0]
+    if (!filePath) return null
+    let size = 0
+    try {
+      size = fs.statSync(filePath).size
+    } catch {
+      size = 0
+    }
+    return { path: filePath, name: path.basename(filePath), size }
+  })
+  handle('project:import:inspect', (filePath: string) => inspectProjectImport(filePath))
+  handle('project:import', (input: ProjectImportRequest) => importProjectFile(input), true)
 
   handle('target:list', (projectId: string) => store.listTargets(projectId))
   handle('target:get', (projectId: string, targetId: string) => store.getTarget(projectId, targetId))
@@ -222,6 +236,25 @@ export function registerIpc(): void {
   handle(
     'target:clone',
     (projectId: string, targetId: string) => store.cloneTarget(projectId, targetId),
+    true
+  )
+  handle(
+    'target:transfer-preview',
+    (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) => store.previewTargetTransfer(sourceProjectId, targetId, destinationProjectId, mode)
+  )
+  handle(
+    'target:transfer',
+    (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) => store.transferTargetToProject(sourceProjectId, targetId, destinationProjectId, mode),
     true
   )
   handle('target:versions:list', (projectId: string, targetId: string) =>
@@ -307,6 +340,8 @@ export function registerIpc(): void {
     return true
   })
 
+  handle('flow:runs:active', () => getActiveFlowRuns())
+
   // M2 · flows
   handle('flow:list', (projectId: string) => store.listFlows(projectId))
   handle('flow:get', (projectId: string, flowId: string) => store.getFlow(projectId, flowId))
@@ -315,19 +350,33 @@ export function registerIpc(): void {
     const flow = createFlow(projectId, name, environments[0]?.env_id ?? '')
     return store.saveFlow(projectId, flow)
   })
-  handle('flow:save', (projectId: string, flow: Flow) => store.saveFlow(projectId, flow))
+  handle('flow:save', (projectId: string, flow: Flow, expectedRevision: string) => {
+    const outcome = store.saveFlowChecked(projectId, flow, expectedRevision)
+    if (outcome.status !== 'saved') {
+      throw new Error(outcome.status === 'conflict' ? '流程保存冲突：定义已变化，请重新读取流程' : '流程不存在或已删除')
+    }
+    return outcome.flow
+  })
   handle('flow:delete', (projectId: string, flowId: string) => {
     store.deleteFlow(projectId, flowId)
     return true
   })
-  handle('flow:run', (projectId: string, flowId: string, environmentId?: string) => {
-    const flow = store.getFlow(projectId, flowId)
-    if (!flow) throw new Error('流程不存在')
-    return runFlow(projectId, flow, environmentId)
-  })
-  handle('flow:runs', (projectId: string, limit?: number) => store.listFlowRuns(projectId, limit))
+  handle('flow:run', (projectId: string, flowId: string, environmentId?: string) =>
+    runSavedFlow(projectId, flowId, environmentId)
+  )
+  handle('flow:run:start', (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
+    startFlowRun(projectId, flowId, environmentId, requestId, 'ui')
+  )
+  handle('flow:run:cancel', (projectId: string, runId: string) => cancelFlowRun(projectId, runId))
+  handle('flow:run:pause', (projectId: string, runId: string) => pauseFlowRun(projectId, runId))
+  handle('flow:run:refresh:preview', (projectId: string, runId: string) => previewFlowRunRefresh(projectId, runId))
+  handle('flow:run:refresh:resolve-conflict', (projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override') => resolveFlowRunConflict(projectId, runId, previewId, eventId, field, choice))
+  handle('flow:run:scope:approve', (projectId: string, runId: string, previewId: string) => approveFlowRunScope(projectId, runId, previewId))
+  handle('flow:run:refresh:apply', (projectId: string, runId: string, previewId: string) => applyFlowRunRefresh(projectId, runId, previewId))
+  handle('flow:run:resume', (projectId: string, runId: string) => resumeFlowRun(projectId, runId))
+  handle('flow:runs', (projectId: string, limit?: number) => listFlowRuns(projectId, limit))
   handle('flow:run:get', (projectId: string, runId: string) =>
-    store.getFlowRun(projectId, runId)
+    getFlowRun(projectId, runId)
   )
 
   // Data dictionary
@@ -488,7 +537,7 @@ export function registerIpc(): void {
     git.unstagePaths(projectDirOf(projectId), paths)
   )
   handle('git:discard', (projectId: string, targets: GitDiscardTarget[]) =>
-    git.discardPaths(projectDirOf(projectId), targets)
+    store.withExternalDefinitionChanges(projectId, () => git.discardPaths(projectDirOf(projectId), targets))
   )
   handle('git:commit', (projectId: string, message: string, stageAll: boolean) =>
     git.commitChanges(projectDirOf(projectId), message, stageAll)
@@ -498,10 +547,10 @@ export function registerIpc(): void {
   )
   handle('git:branches', (projectId: string) => git.listBranches(projectDirOf(projectId)))
   handle('git:branch:create', (projectId: string, name: string, checkout: boolean) =>
-    git.createBranch(projectDirOf(projectId), name, checkout)
+    store.withExternalDefinitionChanges(projectId, () => git.createBranch(projectDirOf(projectId), name, checkout))
   )
   handle('git:branch:checkout', (projectId: string, name: string) =>
-    git.checkoutBranch(projectDirOf(projectId), name)
+    store.withExternalDefinitionChanges(projectId, () => git.checkoutBranch(projectDirOf(projectId), name))
   )
   handle('git:branch:delete', (projectId: string, name: string) =>
     git.deleteBranch(projectDirOf(projectId), name)
@@ -519,7 +568,7 @@ export function registerIpc(): void {
     git.fetchRepo(projectDirOf(projectId), remote)
   )
   handle('git:pull', (projectId: string, options: GitPullOptions) =>
-    git.pullRepo(projectDirOf(projectId), options)
+    store.withExternalDefinitionChanges(projectId, () => git.pullRepo(projectDirOf(projectId), options))
   )
   handle('git:push', (projectId: string, options: GitPushOptions) =>
     git.pushRepo(projectDirOf(projectId), options)

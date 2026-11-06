@@ -1,3 +1,4 @@
+import { AgentCandidateNotice } from '../components/AgentCandidates'
 import { useEffect, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -32,7 +33,7 @@ import {
   SearchOutlined,
   ShareAltOutlined
 } from '@ant-design/icons'
-import type { Target } from '@shared/types'
+import type { Target, TargetSummary, TargetTransferMode } from '@shared/types'
 import { methodColor, methodLabel } from '@shared/httpMethods'
 import { useApp } from '../store'
 import ApiTree from '../components/ApiTree'
@@ -42,6 +43,7 @@ import ResponsePanel from '../components/ResponsePanel'
 import DesignEditor from '../components/DesignEditor'
 import CasesEditor from '../components/CasesEditor'
 import DocShareDialog from '../components/DocShareDialog'
+import TargetTransferDialog from '../components/TargetTransferDialog'
 import DocShareLinkDialog, {
   type DocShareLinkInfo
 } from '../components/DocShareLinkDialog'
@@ -49,6 +51,7 @@ import ApiDescriptionDialog from '../components/ApiDescriptionDialog'
 import TargetVersionDrawer from '../components/TargetVersionDrawer'
 import CodeGenDialog from '../components/CodeGenDialog'
 import EnvironmentModal from '../components/EnvironmentModal'
+import ProjectImportModal from '../components/ProjectImportModal'
 import { TargetEditScope, useTargetEditLock } from '../components/TargetEditScope'
 
 const ENTRIES = [
@@ -92,6 +95,7 @@ export default function ApisPage(): JSX.Element {
   const syncNotice = useApp(s => s.syncNotice)
 
   const [creating, setCreating] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('调试')
   const [splitDir, setSplitDir] = useState<SplitDir>('vertical')
   const [debugToolbar, setDebugToolbar] = useState<HTMLDivElement | null>(null)
@@ -104,6 +108,10 @@ export default function ApisPage(): JSX.Element {
     scope: 'api' | 'folder'
   } | null>(null)
   const [shareLink, setShareLink] = useState<DocShareLinkInfo | null>(null)
+  const [transfer, setTransfer] = useState<{
+    item: TargetSummary
+    mode: TargetTransferMode
+  } | null>(null)
   const [descOpen, setDescOpen] = useState(false)
   const [versionOpen, setVersionOpen] = useState(false)
   const [codeOpen, setCodeOpen] = useState(false)
@@ -284,6 +292,8 @@ export default function ApisPage(): JSX.Element {
     }
     if (!summary || summary.name === name) return
     try {
+      const agentDraft = projectId ? await window.api.agent.getDraft(projectId, active.target_id) : null
+      if (agentDraft?.ok && agentDraft.data.agent_owned) return
       await saveTarget(active.target_id)
     } catch (error) {
       message.error((error as Error).message)
@@ -379,6 +389,7 @@ export default function ApisPage(): JSX.Element {
             onCreate={handleCreate}
             onDelete={handleDelete}
             onShare={(item) => void openShareNode(item)}
+            onTransfer={(item, mode) => setTransfer({ item, mode })}
           />
         </Panel>
         <PanelResizeHandle className="resize-handle resize-handle-v" />
@@ -544,6 +555,7 @@ export default function ApisPage(): JSX.Element {
               </Tooltip>
             </div>
 
+            {projectId && activeId && <AgentCandidateNotice projectId={projectId} targetId={activeId} onReview={() => setVersionOpen(true)} />}
             {syncNotice ? <div className="target-sync-banner" role="status"><span>{syncNotice}</span><Button size="small" type="text" onClick={() => useApp.setState({ syncNotice: '' })}>知道了</Button></div> : null}
             {activeId && (pending || activeTab?.syncError) ? <div className="target-sync-banner" role="status">
               <span>{activeTab?.syncError ? `同步失败：${activeTab.syncError}` : pending?.target === null
@@ -558,7 +570,10 @@ export default function ApisPage(): JSX.Element {
                 </>}
             </div> : null}
             {!active ? (
-              <Welcome onCreate={() => void handleCreate('0', 'api')} />
+              <Welcome
+                onCreate={() => void handleCreate('0', 'api')}
+                onImport={() => setImportOpen(true)}
+              />
             ) : active.target_type === 'folder' ? (
               <FolderInfo key={editorKey} target={active} />
             ) : (
@@ -778,6 +793,11 @@ export default function ApisPage(): JSX.Element {
         }}
       />
       <DocShareLinkDialog share={shareLink} onClose={() => setShareLink(null)} />
+      <TargetTransferDialog
+        item={transfer?.item ?? null}
+        mode={transfer?.mode ?? 'move'}
+        onClose={() => setTransfer(null)}
+      />
 
       <ApiDescriptionDialog
         key={editorKey}
@@ -812,6 +832,7 @@ export default function ApisPage(): JSX.Element {
           setEnvModalInitial(undefined)
         }}
       />
+      <ProjectImportModal open={importOpen} onClose={() => setImportOpen(false)} />
     </div></TargetEditScope>
   )
 }
@@ -847,7 +868,7 @@ function ModePlaceholder({ mode, draft }: { mode: Exclude<Mode, '调试'>; draft
   )
 }
 
-function Welcome({ onCreate }: { onCreate: () => void }): JSX.Element {
+function Welcome({ onCreate, onImport }: { onCreate: () => void; onImport: () => void }): JSX.Element {
   const { message } = AntApp.useApp()
   return (
     <div className="surface welcome">
@@ -863,11 +884,11 @@ function Welcome({ onCreate }: { onCreate: () => void }): JSX.Element {
             <div
               key={entry.label}
               className="entry"
-              onClick={() =>
-                entry.label === 'HTTP'
-                  ? onCreate()
-                  : message.info(`${entry.label} 将在后续里程碑支持`)
-              }
+              onClick={() => {
+                if (entry.label === 'HTTP') onCreate()
+                else if (entry.label === '导入项目') onImport()
+                else message.info(`${entry.label} 将在后续里程碑支持`)
+              }}
             >
               <span className="entry-icon" style={{ background: entry.color }}>
                 {entry.icon}

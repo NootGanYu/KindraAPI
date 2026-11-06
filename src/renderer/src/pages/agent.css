@@ -1,0 +1,84 @@
+.agent-dock-fab {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  z-index: 1100;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border, #e6dfd4);
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: var(--panel, #fff);
+  color: inherit;
+  box-shadow: 0 10px 30px rgba(60, 45, 20, .18);
+  cursor: pointer;
+  font-weight: 600;
+}
+.agent-dock-fab:hover { background: rgba(160, 125, 70, .12); }
+.agent-dock-fab .anticon { font-size: 18px; }
+/* Floating card: leave breathing room above and below, and a small gap from the window edge. */
+body.agent-resizing { cursor: col-resize; user-select: none; }
+body.agent-resizing .agent-dock-drawer-root .ant-drawer-content-wrapper { transition: none !important; }
+.agent-dock-shell { position: relative; height: 100%; min-height: 0; }
+.agent-dock-resize-handle { position: absolute; left: 0; top: 12px; bottom: 12px; width: 8px; cursor: col-resize; z-index: 20; border-radius: 8px; outline: none; }
+.agent-dock-resize-handle::after { content: ''; position: absolute; left: 3px; top: 50%; transform: translateY(-50%); width: 2px; height: 36px; border-radius: 2px; background: var(--border, #e6dfd4); opacity: 0; transition: opacity .15s; }
+.agent-dock-resize-handle:hover::after, .agent-dock-resize-handle:focus-visible::after { opacity: 1; }
+.agent-dock-drawer-root .ant-drawer-content-wrapper {
+  top: 56px !important;
+  bottom: 16px !important;
+  right: 16px !important;
+  height: auto !important;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(60, 45, 20, .2);
+}
+.agent-dock-subview { flex: 1; min-height: 0; overflow: auto; padding: 4px 4px 8px 0; }
+.agent-dock-subview-content { display: flex; flex-direction: column; gap: 12px; }
+.agent-dock-subview-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-dock-subview-title h5 { margin: 0 !important; }
+.agent-dock-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 16px 18px; gap: 10px; }
+.agent-dock-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid var(--border, #e6dfd4); }
+.agent-dock-controls { display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; min-width: 0; flex: 1 1 auto; }
+.agent-dock-project { white-space: nowrap; }
+.agent-session-title { min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.agent-session-title { padding: 0 4px; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: text; }
+button.agent-session-title:hover { text-decoration: underline; }
+.agent-session-title-input { width: 140px !important; flex: 0 0 140px !important; }
+.agent-dock-controls > .ant-btn { flex: 0 0 auto; }
+.agent-permission-hint { font-size: 12px; line-height: 1.5; }
+.agent-messages { flex: 1; overflow: auto; min-height: 0; padding: 8px 0; }
+.agent-messages .ant-empty { margin-top: 40px; }
+.agent-message { max-width: 92%; margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--border, #e6dfd4); border-radius: 12px; background: rgba(255,255,255,.4); }
+.agent-message.user { margin-left: auto; background: rgba(160,125,70,.09); }
+.agent-message-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; margin-top: 6px; user-select: text; }
+.agent-plans { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+.agent-plan-step { border-left: 2px solid var(--border-color, #ddd); padding-left: 12px; margin-bottom: 12px; }
+.agent-plan-changes { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-plan-result { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-plan-explanation { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-compose { display: flex; flex-direction: column; gap: 8px; }
+.agent-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; overflow-x: auto; }
+.agent-compose-bar > .ant-space { flex-wrap: nowrap; }
+.agent-compose-bar > .ant-space:first-child { flex: 1 1 auto; min-width: 0; }
+.agent-compose-bar > .ant-space:last-child { flex: 0 0 auto; }
+.agent-compose-bar .ant-select-selector { padding-inline: 6px !important; }
+.agent-fixed-connection { font-size: 12px; line-height: 1.4; }
+.agent-timeline { display: flex; flex-direction: column; }
+.agent-timeline-tools { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px 8%; padding-left: 12px; border-left: 2px solid rgba(160,125,70,.25); }
+.agent-tool-card { border: 1px solid var(--border, #e6dfd4); border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.55); }
+.agent-tool-card.running { border-color: rgba(22,119,255,.35); }
+.agent-tool-card.failed { border-color: rgba(207,19,34,.35); }
+.agent-tool-card.cancelled { opacity: .75; }
+.agent-tool-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agent-tool-summary { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary, #666); font-size: 12px; }
+.agent-tool-error { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-tool-output { max-height: 220px; overflow: auto; margin: 8px 0 4px; padding: 8px; border-radius: 8px; background: rgba(0,0,0,.035); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; user-select: text; }
+.agent-tool-cursor { font-size: 12px; }
+
+.agent-tool-card.awaiting-approval { border-color: rgba(250,173,20,.7); background: rgba(250,173,20,.06); }
+.agent-tool-diff { border: 1px dashed rgba(160,125,70,.35); background: rgba(160,125,70,.05); }
+.agent-tool-card .ant-btn { margin-top: 2px; }
+.agent-connection-settings { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.agent-connection-scroll { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; }
+.agent-connection-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border, #e6dfd4); background: var(--panel, #fff); }

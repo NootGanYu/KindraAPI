@@ -17,6 +17,83 @@ const subscribe = (
 }
 
 const api = {
+  agent: {
+    cancelTurnUndo: (pid: string, id: string) => invoke('agent:cancelTurnUndo', pid, id),
+    listUndoTurns: (pid: string) => invoke('agent:listUndoTurns', pid),
+    listTurnUndos: (pid: string) => invoke('agent:listTurnUndos', pid),
+    previewTurnUndo: (pid: string, planId: string) => invoke('agent:previewTurnUndo', pid, planId),
+    applyTurnUndo: (pid: string, id: string, reviewId: string, choices: unknown) => invoke('agent:applyTurnUndo', pid, id, reviewId, choices),
+    deleteProjectAgentRecords: (pid: string) => invoke('agent:deleteProjectAgentRecords', pid),
+    getDeletedObject: (pid: string, kind: 'api' | 'flow', id: string) => invoke('agent:getDeletedObject', pid, kind, id),
+    restoreDeletedApiDraft: (pid: string, id: string, deletionId: string) => invoke('agent:restoreDeletedApiDraft', pid, id, deletionId),
+    saveDeletedApiDraft: (pid: string, id: string, deletionId: string, signature: string) => invoke('agent:saveDeletedApiDraft', pid, id, deletionId, signature),
+    restoreDeletedFlowDraft: (pid: string, id: string, deletionId: string) => invoke('agent:restoreDeletedFlowDraft', pid, id, deletionId),
+    saveDeletedFlowDraft: (pid: string, id: string, deletionId: string, signature: string) => invoke('agent:saveDeletedFlowDraft', pid, id, deletionId, signature),
+    listFlowVersions: (pid: string, id: string) => invoke('agent:listFlowVersions', pid, id),
+    getFlowVersion: (pid: string, id: string, versionId: string) => invoke('agent:getFlowVersion', pid, id, versionId),
+    restoreFlowVersionDraft: (pid: string, id: string, versionId: string) => invoke('agent:restoreFlowVersionDraft', pid, id, versionId),
+    restoreFlowCandidate: (pid: string, id: string) => invoke('agent:restoreFlowCandidate', pid, id),
+    reloadFlowDraft: (pid: string, id: string, signature: string) => invoke('agent:reloadFlowDraft', pid, id, signature),
+    getFlowDraft: (pid: string, id: string) => invoke('agent:getFlowDraft', pid, id),
+    syncFlowEditorDraft: (pid: string, flow: unknown) => invoke('agent:syncFlowEditorDraft', pid, flow),
+    saveManualFlowForRun: (pid: string, flow: unknown) => invoke('agent:saveManualFlowForRun', pid, flow),
+    listAgentFlowDrafts: (pid: string) => invoke('agent:listAgentFlowDrafts', pid),
+    listFlowCandidates: (pid: string, id?: string) => invoke('agent:listFlowCandidates', pid, id),
+    applyFlowCandidate: (pid: string, id: string) => invoke('agent:applyFlowCandidate', pid, id),
+    rejectFlowCandidate: (pid: string, id: string) => invoke('agent:rejectFlowCandidate', pid, id),
+    resolveFlowCandidate: (pid: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveFlowCandidate', pid, id, reviewId, choices),
+    onFlowDraftChanged: (callback: (event: unknown) => void) => subscribe('agent:flow-draft-changed', callback),
+    releaseEditorDraft: (projectId: string, id: string) => invoke('agent:releaseEditorDraft', projectId, id),
+    resolveCandidate: (projectId: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveCandidate', projectId, id, reviewId, choices),
+    saveManualDraftOnQuit: (projectId: string, target: unknown, revision: string) => invoke('agent:saveManualDraftOnQuit', projectId, target, revision),
+    getDraft: (projectId: string, targetId: string) => invoke('agent:getDraft', projectId, targetId),
+    syncEditorDraft: (projectId: string, target: unknown, baseRevision?: string | null) => invoke('agent:syncEditorDraft', projectId, target, baseRevision),
+    listAgentDrafts: (projectId: string) => invoke('agent:listAgentDrafts', projectId),
+    listCandidates: (projectId: string, targetId?: string) => invoke('agent:listCandidates', projectId, targetId),
+    restoreCandidate: (projectId: string, id: string) => invoke('agent:restoreCandidate', projectId, id),
+    rejectCandidate: (projectId: string, id: string) => invoke('agent:rejectCandidate', projectId, id),
+    undoCandidate: (projectId: string, id: string) => invoke('agent:undoCandidate', projectId, id),
+    resolveCandidateUndo: (projectId: string, id: string, reviewId: string, choices: unknown) => invoke('agent:resolveCandidateUndo', projectId, id, reviewId, choices),
+    applyCandidate: (projectId: string, candidateId: string) => invoke('agent:applyCandidate', projectId, candidateId),
+    onDraftChanged: (callback: (event: unknown) => void) => subscribe('agent:draft-changed', callback),
+    getActivity: () => invoke('agent:getActivity'),
+    prepareQuit: () => invoke('agent:prepareQuit'),
+    proposeCreateApiPlan: (projectId: string, input: unknown) => invoke('agent:proposeCreateApiPlan', projectId, input),
+    listProjectCandidates: (projectId: string) => invoke('agent:listProjectCandidates', projectId),
+    proposeSavePlan: (projectId: string, input: unknown) => invoke('agent:proposeSavePlan', projectId, input),
+    proposeExecuteCasePlan: (projectId: string, input: unknown) => invoke('agent:proposeExecuteCasePlan', projectId, input),
+    proposeExecutePlan: (projectId: string, input: unknown) => invoke('agent:proposeExecutePlan', projectId, input),
+    cancelPlan: (projectId: string, id: string) => invoke('agent:cancelPlan', projectId, id),
+    proposeEditPlan: (projectId: string, input: unknown) => invoke('agent:proposeEditPlan', projectId, input),
+    proposeReadPlan: (projectId: string, input: unknown) => invoke('agent:proposeReadPlan', projectId, input),
+    proposeTaskPlan: (projectId: string, input: unknown) => invoke('agent:proposeTaskPlan', projectId, input),
+    getPlan: (projectId: string, id: string) => invoke('agent:getPlan', projectId, id),
+    listPlans: (projectId: string) => invoke('agent:listPlans', projectId),
+    resumePlan: (projectId: string, id: string, stepIds: string[]) => invoke('agent:resumePlan', projectId, id, stepIds),
+    approvePlan: (projectId: string, id: string, expectedRevision?: number) => invoke('agent:approvePlan', projectId, id, expectedRevision),
+    rejectPlan: (projectId: string, id: string) => invoke('agent:rejectPlan', projectId, id),
+    deletePlan: (projectId: string, id: string) => invoke('agent:deletePlan', projectId, id),
+    onPlanChanged: (callback: (event: unknown) => void) => subscribe('agent:plan-changed', callback),
+    getConnection: (connectionId?: string) => invoke('agent:getConnection', connectionId),
+    listConnections: () => invoke('agent:listConnections'),
+    createConnection: (input: unknown) => invoke('agent:createConnection', input),
+    deleteConnection: (connectionId: string) => invoke('agent:deleteConnection', connectionId),
+    getProjectConnection: (projectId: string) => invoke('agent:getProjectConnection', projectId),
+    setProjectConnection: (projectId: string, connectionId: string | null) => invoke('agent:setProjectConnection', projectId, connectionId),
+    saveConnection: (input: unknown, connectionId?: string) => invoke('agent:saveConnection', input, connectionId),
+    testConnection: (connectionId?: string) => invoke('agent:testConnection', connectionId),
+    createConversation: (projectId: string) => invoke('agent:createConversation', projectId),
+    renameConversation: (projectId: string, id: string, title: string) => invoke('agent:renameConversation', projectId, id, title),
+    listConversations: (projectId: string) => invoke('agent:listConversations', projectId),
+    getConversation: (projectId: string, id: string) => invoke('agent:getConversation', projectId, id),
+    deleteConversation: (projectId: string, id: string) => invoke('agent:deleteConversation', projectId, id),
+    sendMessage: (projectId: string, id: string, content: string, connectionId?: string, options?: { activeTargetId?: string; activeFlowId?: string; activeEnvId?: string; permissionMode?: string }) => invoke('agent:sendMessage', projectId, id, content, connectionId, options),
+    cancelMessage: (projectId: string, id: string) => invoke('agent:cancelMessage', projectId, id),
+    respondToolApproval: (projectId: string, conversationId: string, activityId: string, decision: 'approved' | 'denied') => invoke('agent:respondToolApproval', projectId, conversationId, activityId, decision),
+    listConfigAudits: (projectId: string) => invoke('agent:listConfigAudits', projectId),
+    undoConfigChange: (projectId: string, auditId: string) => invoke('agent:undoConfigChange', projectId, auditId),
+    onChanged: (callback: (event: unknown) => void) => subscribe('agent:changed', callback)
+  },
   paths: () => invoke('app:paths'),
   app: {
     openPath: (targetPath: string) => invoke('app:openPath', targetPath),
@@ -25,7 +102,8 @@ const api = {
     relaunch: () => invoke('app:relaunch'),
     onRequestClose: (callback: () => void) => subscribe('app:request-close', callback),
     onCloseTabShortcut: (callback: () => void) => subscribe('app:close-tab', callback),
-    confirmClose: () => invoke('app:confirm-close')
+    confirmClose: () => invoke('app:confirm-close'),
+    cancelClose: () => invoke('app:cancel-close')
   },
 
   dialog: {
@@ -46,7 +124,10 @@ const api = {
     create: (name: string) => invoke('project:create', name),
     save: (project: unknown) => invoke('project:save', project),
     saveApiStatuses: (projectId: string, statuses: unknown, defaultId: string) => invoke('project:api-statuses', projectId, statuses, defaultId),
-    ensureDefault: () => invoke('project:ensureDefault')
+    ensureDefault: () => invoke('project:ensureDefault'),
+    pickImportFile: () => invoke('project:import:pick'),
+    inspectImport: (filePath: string) => invoke('project:import:inspect', filePath),
+    importFile: (input: unknown) => invoke('project:import', input)
   },
 
   targets: {
@@ -65,6 +146,19 @@ const api = {
       invoke('target:reorder', projectId, parentId, orderedIds),
     clone: (projectId: string, targetId: string) =>
       invoke('target:clone', projectId, targetId),
+    transferPreview: (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) =>
+      invoke('target:transfer-preview', sourceProjectId, targetId, destinationProjectId, mode),
+    transfer: (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) => invoke('target:transfer', sourceProjectId, targetId, destinationProjectId, mode),
     cases: {
       run: (projectId: string, target: unknown, caseId: string, environmentId?: string) =>
         invoke('target:case:run', projectId, target, caseId, environmentId),
@@ -180,13 +274,23 @@ const api = {
   },
 
   flows: {
+    activeRuns: () => invoke('flow:runs:active'),
     list: (projectId: string) => invoke('flow:list', projectId),
     get: (projectId: string, flowId: string) => invoke('flow:get', projectId, flowId),
     create: (projectId: string, name: string) => invoke('flow:create', projectId, name),
-    save: (projectId: string, flow: unknown) => invoke('flow:save', projectId, flow),
+    save: (projectId: string, flow: unknown, expectedRevision: string) => invoke('flow:save', projectId, flow, expectedRevision),
     delete: (projectId: string, flowId: string) => invoke('flow:delete', projectId, flowId),
     run: (projectId: string, flowId: string, environmentId?: string) =>
       invoke('flow:run', projectId, flowId, environmentId),
+    startRun: (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
+      invoke('flow:run:start', projectId, flowId, environmentId, requestId),
+    cancelRun: (projectId: string, runId: string) => invoke('flow:run:cancel', projectId, runId),
+    pauseRun: (projectId: string, runId: string) => invoke('flow:run:pause', projectId, runId),
+    previewRunRefresh: (projectId: string, runId: string) => invoke('flow:run:refresh:preview', projectId, runId),
+    resolveRunConflict: (projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override') => invoke('flow:run:refresh:resolve-conflict', projectId, runId, previewId, eventId, field, choice),
+    approveRunScope: (projectId: string, runId: string, previewId: string) => invoke('flow:run:scope:approve', projectId, runId, previewId),
+    applyRunRefresh: (projectId: string, runId: string, previewId: string) => invoke('flow:run:refresh:apply', projectId, runId, previewId),
+    resumeRun: (projectId: string, runId: string) => invoke('flow:run:resume', projectId, runId),
     runs: (projectId: string, limit?: number) => invoke('flow:runs', projectId, limit),
     getRun: (projectId: string, runId: string) => invoke('flow:run:get', projectId, runId)
   },
