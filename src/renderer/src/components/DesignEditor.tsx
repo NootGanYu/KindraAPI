@@ -29,7 +29,6 @@ export default function DesignEditor({
   const [errorImportOpen, setErrorImportOpen] = useState(false)
   const currentEnvId = useApp(state => state.currentEnvId)
   const errors = draft.design?.errors ?? []
-  const folders = useApp(state => state.targets).filter(target => target.target_type === 'folder')
 
   const setErrors = (next: DesignError[]): void => {
     onChange({ design: { ...(draft.design ?? {}), errors: next } })
@@ -45,19 +44,16 @@ export default function DesignEditor({
         <>
           <div className="section-title">基本信息</div>
           <div className="design-basic-row">
-            <label htmlFor="design-folder">目录</label>
-            <Select id="design-folder" aria-label="接口目录" value={draft.parent_id || '0'}
-              options={[{ value: '0', label: '根目录' }, ...folders.map(folder => ({ value: folder.target_id, label: folder.name }))]}
-              onChange={parent_id => onChange({ parent_id })} />
             <label htmlFor="design-tags">标签</label>
             <Select id="design-tags" aria-label="接口标签" mode="tags" value={draft.tags ?? []}
               placeholder="添加标签" onChange={tags => onChange({ tags })} />
-          </div>
-          <div className="design-basic-row">
-            <span>详细说明</span>
-            <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
-            <span style={{ flex: 1 }} />
-            <Button size="small" type="text" onClick={onEditDescription}>编辑</Button>
+            <span className="design-basic-divider" aria-hidden="true" />
+            <div className="design-basic-desc">
+              <span>详细说明</span>
+              <span className="muted">{draft.description ? '已填写' : '未填写'}</span>
+              <span style={{ flex: 1 }} />
+              <Button size="small" type="text" onClick={onEditDescription}>编辑</Button>
+            </div>
           </div>
           <CustomAttributeFields
             projectId={projectId}

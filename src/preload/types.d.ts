@@ -181,6 +181,7 @@ export interface ApiBridge {
   }
   paths(): Promise<Result<AppPaths>>
   app: {
+    version(): Promise<Result<string>>
     openPath(targetPath: string): Promise<Result<string>>
     copyText(text: string): Promise<Result<boolean>>
     openExternal(url: string): Promise<Result<boolean>>

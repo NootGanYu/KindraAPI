@@ -5,7 +5,6 @@ import {
   Button,
   Checkbox,
   Collapse,
-  Divider,
   Input,
   InputNumber,
   Select,
@@ -15,11 +14,16 @@ import {
   Tooltip
 } from 'antd'
 import {
+  ApiOutlined,
+  ApartmentOutlined,
   CopyOutlined,
   DeleteOutlined,
+  GithubOutlined,
+  InfoCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
-  SaveOutlined
+  SaveOutlined,
+  SettingOutlined
 } from '@ant-design/icons'
 import type {
   AppSettings,
@@ -39,6 +43,32 @@ interface VarRow {
   initial: string
   description: string
   checked: boolean
+}
+
+type SettingsSection = 'general' | 'env' | 'integration' | 'about'
+
+const REPOSITORY_URL = 'https://github.com/NootGanYu/KindraAPI'
+
+const SETTINGS_SECTIONS: Array<{
+  key: SettingsSection
+  label: string
+  icon: JSX.Element
+}> = [
+  { key: 'general', label: '常规', icon: <SettingOutlined /> },
+  { key: 'env', label: '环境与变量', icon: <ApartmentOutlined /> },
+  { key: 'integration', label: '集成', icon: <ApiOutlined /> },
+  { key: 'about', label: '关于', icon: <InfoCircleOutlined /> }
+]
+
+const HASH_SECTION: Record<string, SettingsSection> = {
+  project: 'general',
+  attributes: 'general',
+  send: 'general',
+  env: 'env',
+  globals: 'env',
+  mcp: 'integration',
+  debug: 'integration',
+  about: 'about'
 }
 
 function envToRows(env: Environment | null): VarRow[] {
@@ -91,12 +121,21 @@ export default function SettingsPage(): JSX.Element {
   const regenerateMcpToken = useApp((s) => s.regenerateMcpToken)
   const location = useLocation()
 
+  const [section, setSection] = useState<SettingsSection>('general')
+  const [version, setVersion] = useState('')
+
   useEffect(() => {
     const id = location.hash.replace(/^#/, '')
     if (!id) return
-    const timer = setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
-    return () => clearTimeout(timer)
+    const next = HASH_SECTION[id]
+    if (next) setSection(next)
   }, [location.hash])
+
+  useEffect(() => {
+    void window.api.app.version().then((result) => {
+      if (result.ok) setVersion(result.data)
+    })
+  }, [])
 
   const [envId, setEnvId] = useState(environments[0]?.env_id ?? '')
   const [envName, setEnvName] = useState('')
@@ -286,6 +325,11 @@ export default function SettingsPage(): JSX.Element {
     }
   }
 
+  const openRepository = async (): Promise<void> => {
+    const result = await window.api.app.openExternal(REPOSITORY_URL)
+    if (!result.ok) message.error(result.error)
+  }
+
   const mcpSnippet = JSON.stringify(
     {
       mcpServers: {
@@ -303,399 +347,448 @@ export default function SettingsPage(): JSX.Element {
   )
 
   return (
-    <div className="settings-page">
-      <div className="settings-card">
-        <div className="section-title">项目</div>
-        <Space direction="vertical" size={4}>
-          <div>
-            名称：<b>{project?.name ?? '-'}</b>
-          </div>
-          <div className="muted">项目 ID：{project?.project_id ?? '-'}</div>
-          <div className="muted">
-            存储位置：<span className="mono">{paths?.projectRoot}</span>
-          </div>
-        </Space>
-      </div>
+    <div className="settings-page settings-page-split">
+      <aside className="settings-nav" role="tablist" aria-label="设置分类">
+        {SETTINGS_SECTIONS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={section === item.key}
+            className={`settings-nav-item${section === item.key ? ' active' : ''}`}
+            onClick={() => setSection(item.key)}
+          >
+            <span className="settings-nav-icon">{item.icon}</span>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </aside>
 
-      <div className="settings-card">
-        <CustomAttributesPanel projectId={project?.project_id} />
-      </div>
+      <div className="settings-content">
+        <section className="settings-section" hidden={section !== 'general'}>
+          <header className="settings-section-head">
+            <h2>常规</h2>
+            <p>项目信息、自定义属性与请求发送设置。</p>
+          </header>
 
-      <div className="settings-card">
-        <div className="section-title">环境与请求前缀</div>
-        <Space style={{ marginBottom: 12 }}>
-          <Select
-            value={envId || undefined}
-            style={{ width: 180 }}
-            onChange={setEnvId}
-            options={environments.map((item) => ({ value: item.env_id, label: item.name }))}
-            placeholder="选择环境"
-          />
-          <Input
-            value={envName}
-            onChange={(e) => setEnvName(e.target.value)}
-            style={{ width: 180 }}
-            placeholder="环境名称"
-          />
-          <Input
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            style={{ width: 320 }}
-            placeholder="服务前缀，例如 https://api.example.com"
-          />
-          <Button type="primary" icon={<SaveOutlined />} onClick={() => void saveEnv()}>
-            保存环境
-          </Button>
-        </Space>
-        <VarEditor rows={envRows} onChange={setEnvRows} nameLabel="变量名" />
-        <div className="muted" style={{ marginTop: 6 }}>
-          请求 URL 不以 http(s) 开头时，会拼接到该前缀；变量用 {'{{name}}'} 引用。
-        </div>
-      </div>
-
-      <div className="settings-card">
-        <div className="section-title">全局变量</div>
-        <VarEditor rows={globalRows} onChange={setGlobalRows} nameLabel="变量名" />
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          onClick={() => void saveGlobals()}
-          style={{ marginTop: 10 }}
-        >
-          保存全局变量
-        </Button>
-      </div>
-
-      <div className="settings-card">
-        <div className="section-title">发送设置</div>
-        {form ? (
-          <Space direction="vertical" size={10} style={{ width: '100%' }}>
-            <Space>
-              <span style={{ width: 120 }} className="muted">
-                请求超时
-              </span>
-              <InputNumber
-                min={0}
-                step={1000}
-                value={form.send_timeout}
-                onChange={(value) => setForm({ ...form, send_timeout: Number(value ?? 0) })}
-              />
-              <span className="muted">毫秒，0 表示不限制</span>
-            </Space>
-            <Space>
-              <span style={{ width: 120 }} className="muted">
-                最大重定向次数
-              </span>
-              <InputNumber
-                min={0}
-                value={form.max_redirect_time}
-                onChange={(value) => setForm({ ...form, max_redirect_time: Number(value ?? 0) })}
-              />
-            </Space>
-            <Checkbox
-              checked={form.auto_redirect > 0}
-              onChange={(e) => setForm({ ...form, auto_redirect: e.target.checked ? 1 : -1 })}
-            >
-              自动跟随重定向
-            </Checkbox>
-            <Checkbox
-              checked={form.follow_original_method > 0}
-              onChange={(e) =>
-                setForm({ ...form, follow_original_method: e.target.checked ? 1 : -1 })
-              }
-            >
-              重定向后保持原请求方法
-            </Checkbox>
-            <Tooltip title="开发调试常用；生产环境建议关闭">
-              <Checkbox
-                checked={form.ignore_tls > 0}
-                onChange={(e) => setForm({ ...form, ignore_tls: e.target.checked ? 1 : -1 })}
-              >
-                忽略 TLS 证书错误
-              </Checkbox>
-            </Tooltip>
-            <Button type="primary" icon={<SaveOutlined />} onClick={() => void saveForm()}>
-              保存发送设置
-            </Button>
-          </Space>
-        ) : null}
-      </div>
-
-      <div className="settings-card">
-        <div className="section-title">MCP 服务</div>
-        {mcpForm ? (
-          <Space direction="vertical" size={10} style={{ width: '100%' }}>
-            <Space wrap>
-              <span className="muted" style={{ width: 120 }}>
-                服务状态
-              </span>
-              <Switch
-                checked={mcpForm.enabled}
-                onChange={(enabled) => setMcpForm({ ...mcpForm, enabled })}
-              />
-              {mcpStatus?.running ? (
-                <Tag color="success">
-                  运行中 · {mcpStatus.host}:{mcpStatus.port}
-                </Tag>
-              ) : mcpStatus?.error ? (
-                <Tag color="error">{mcpStatus.error}</Tag>
-              ) : (
-                <Tag>未启动</Tag>
-              )}
-            </Space>
-
-            <Space wrap>
-              <span className="muted" style={{ width: 120 }}>
-                监听地址
-              </span>
-              <Input value={mcpForm.host} disabled style={{ width: 150 }} />
-              <InputNumber
-                min={1024}
-                max={65535}
-                value={mcpForm.port}
-                onChange={(value) => setMcpForm({ ...mcpForm, port: Number(value ?? 39121) })}
-                style={{ width: 130 }}
-              />
-              <span className="muted">仅监听本机回环地址</span>
-            </Space>
-
-            <Space wrap>
-              <span className="muted" style={{ width: 120 }}>
-                访问 token
-              </span>
-              <Input.Password
-                value={mcpForm.token}
-                onChange={(event) => setMcpForm({ ...mcpForm, token: event.target.value })}
-                style={{ width: 360 }}
-              />
-              <Tooltip title="复制 token">
-                <Button icon={<CopyOutlined />} onClick={() => void copyText(mcpForm.token)} />
-              </Tooltip>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={() => {
-                  void regenerateMcpToken()
-                    .then(() => message.success('token 已重新生成，服务已重启'))
-                    .catch((error: Error) => message.error(error.message))
-                }}
-              >
-                重新生成
-              </Button>
-            </Space>
-
-            <Space wrap>
-              <span className="muted" style={{ width: 120 }}>
-                写入权限
-              </span>
-              <Switch
-                checked={mcpForm.allow_write}
-                onChange={(allow_write) => setMcpForm({ ...mcpForm, allow_write })}
-              />
-              <span className="muted">允许创建 / 更新 / 删除接口、环境、变量与流程</span>
-            </Space>
-
-            <Space wrap>
-              <span className="muted" style={{ width: 120 }}>
-                执行权限
-              </span>
-              <Switch
-                checked={mcpForm.allow_execute}
-                onChange={(allow_execute) => setMcpForm({ ...mcpForm, allow_execute })}
-              />
-              <span className="muted">允许执行接口与流程</span>
-            </Space>
-
-            <div>
-              <div className="muted" style={{ marginBottom: 4 }}>
-                授权项目
+          <div className="settings-card" id="project">
+            <div className="section-title">项目</div>
+            <Space direction="vertical" size={4}>
+              <div>
+                名称：<b>{project?.name ?? '-'}</b>
               </div>
-              <Checkbox.Group
-                options={projects.map((item) => ({
-                  label: item.name,
-                  value: item.project_id
-                }))}
-                value={mcpForm.allowed_project_ids}
-                onChange={(values) =>
-                  setMcpForm({
-                    ...mcpForm,
-                    allowed_project_ids: values.map((value) => String(value))
-                  })
-                }
-              />
-            </div>
+              <div className="muted">项目 ID：{project?.project_id ?? '-'}</div>
+              <div className="muted">
+                存储位置：<span className="mono">{paths?.projectRoot}</span>
+              </div>
+            </Space>
+          </div>
 
-            <Space>
-              <Button type="primary" icon={<SaveOutlined />} onClick={() => void saveMcpForm()}>
-                保存 MCP 配置
-              </Button>
-              <Button icon={<CopyOutlined />} onClick={() => void copyText(mcpSnippet)}>
-                复制 Claude Desktop 配置
+          <div className="settings-card" id="attributes">
+            <CustomAttributesPanel projectId={project?.project_id} />
+          </div>
+
+          <div className="settings-card" id="send">
+            <div className="section-title">发送设置</div>
+            {form ? (
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                <Space>
+                  <span style={{ width: 120 }} className="muted">
+                    请求超时
+                  </span>
+                  <InputNumber
+                    min={0}
+                    step={1000}
+                    value={form.send_timeout}
+                    onChange={(value) => setForm({ ...form, send_timeout: Number(value ?? 0) })}
+                  />
+                  <span className="muted">毫秒，0 表示不限制</span>
+                </Space>
+                <Space>
+                  <span style={{ width: 120 }} className="muted">
+                    最大重定向次数
+                  </span>
+                  <InputNumber
+                    min={0}
+                    value={form.max_redirect_time}
+                    onChange={(value) => setForm({ ...form, max_redirect_time: Number(value ?? 0) })}
+                  />
+                </Space>
+                <Checkbox
+                  checked={form.auto_redirect > 0}
+                  onChange={(e) => setForm({ ...form, auto_redirect: e.target.checked ? 1 : -1 })}
+                >
+                  自动跟随重定向
+                </Checkbox>
+                <Checkbox
+                  checked={form.follow_original_method > 0}
+                  onChange={(e) =>
+                    setForm({ ...form, follow_original_method: e.target.checked ? 1 : -1 })
+                  }
+                >
+                  重定向后保持原请求方法
+                </Checkbox>
+                <Tooltip title="开发调试常用；生产环境建议关闭">
+                  <Checkbox
+                    checked={form.ignore_tls > 0}
+                    onChange={(e) => setForm({ ...form, ignore_tls: e.target.checked ? 1 : -1 })}
+                  >
+                    忽略 TLS 证书错误
+                  </Checkbox>
+                </Tooltip>
+                <Button type="primary" icon={<SaveOutlined />} onClick={() => void saveForm()}>
+                  保存发送设置
+                </Button>
+              </Space>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="settings-section" hidden={section !== 'env'}>
+          <header className="settings-section-head">
+            <h2>环境与变量</h2>
+            <p>管理环境前缀、环境变量与项目级全局变量。</p>
+          </header>
+
+          <div className="settings-card" id="env">
+            <div className="section-title">环境与请求前缀</div>
+            <Space style={{ marginBottom: 12 }}>
+              <Select
+                value={envId || undefined}
+                style={{ width: 180 }}
+                onChange={setEnvId}
+                options={environments.map((item) => ({ value: item.env_id, label: item.name }))}
+                placeholder="选择环境"
+              />
+              <Input
+                value={envName}
+                onChange={(e) => setEnvName(e.target.value)}
+                style={{ width: 180 }}
+                placeholder="环境名称"
+              />
+              <Input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                style={{ width: 320 }}
+                placeholder="服务前缀，例如 https://api.example.com"
+              />
+              <Button type="primary" icon={<SaveOutlined />} onClick={() => void saveEnv()}>
+                保存环境
               </Button>
             </Space>
-
-            <div className="muted" style={{ fontSize: 11, lineHeight: 1.7 }}>
-              描述文件：<span className="mono">{mcpInfo || '—'}</span>
-              <br />
-              stdio 入口：<span className="mono">{mcpStdio || '—'}</span>
+            <VarEditor rows={envRows} onChange={setEnvRows} nameLabel="变量名" />
+            <div className="muted" style={{ marginTop: 6 }}>
+              请求 URL 不以 http(s) 开头时，会拼接到该前缀；变量用 {'{{name}}'} 引用。
             </div>
+          </div>
 
-            <pre
-              style={{
-                margin: 0,
-                background: 'var(--color-bg-page)',
-                border: '1px solid var(--color-border)',
-                padding: 8,
-                borderRadius: 4,
-                maxHeight: 180,
-                overflow: 'auto',
-                fontFamily:
-                  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-                fontSize: 11.5,
-                lineHeight: 1.55,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all'
-              }}
+          <div className="settings-card" id="globals">
+            <div className="section-title">全局变量</div>
+            <VarEditor rows={globalRows} onChange={setGlobalRows} nameLabel="变量名" />
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              onClick={() => void saveGlobals()}
+              style={{ marginTop: 10 }}
             >
-              {mcpSnippet}
-            </pre>
+              保存全局变量
+            </Button>
+          </div>
+        </section>
 
-            <Collapse
-              size="small"
-              items={[
-                {
-                  key: 'mcp-tools',
-                  label: `已注册工具（${mcpTools.length}）`,
-                  children: (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                      <thead>
-                        <tr>
-                          <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                            工具
-                          </th>
-                          <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                            权限
-                          </th>
-                          <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                            说明
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mcpTools.map((tool) => (
-                          <tr key={tool.name}>
-                            <td className="mono" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                              {tool.name}
-                            </td>
-                            <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                              {tool.requires_write ? <Tag color="warning">write</Tag> : null}
-                              {tool.requires_execute ? <Tag color="processing">execute</Tag> : null}
-                              {!tool.requires_write && !tool.requires_execute ? (
-                                <Tag>read</Tag>
-                              ) : null}
-                            </td>
-                            <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
-                              {tool.description}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )
-                }
-              ]}
-            />
-          </Space>
-        ) : (
-          <div className="muted">MCP 配置未加载</div>
-        )}
-      </div>
+        <section className="settings-section" hidden={section !== 'integration'}>
+          <header className="settings-section-head">
+            <h2>集成</h2>
+            <p>连接外部 AI Agent 与开发调试通道。</p>
+          </header>
 
-      <div className="settings-card">
-        <div className="section-title">开发者调试（CDP）</div>
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
-          <Space wrap>
-            <span className="muted" style={{ width: 120 }}>
-              远程调试
-            </span>
-            <Switch
-              checked={debugForm.enabled}
-              onChange={(enabled) => setDebugForm({ ...debugForm, enabled })}
-            />
-            {debugActive?.active_port ? (
-              debugForm.enabled ? (
-                <Tag color="warning">
-                  已生效 · 127.0.0.1:{debugActive.active_port}
-                </Tag>
-              ) : (
-                <Tag color="warning">已保存关闭，重启后停止监听</Tag>
-              )
-            ) : debugForm.enabled ? (
-              <Tag color="processing">已保存，重启后生效</Tag>
+          <div className="settings-card" id="mcp">
+            <div className="section-title">MCP 服务</div>
+            {mcpForm ? (
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                <Space wrap>
+                  <span className="muted" style={{ width: 120 }}>
+                    服务状态
+                  </span>
+                  <Switch
+                    checked={mcpForm.enabled}
+                    onChange={(enabled) => setMcpForm({ ...mcpForm, enabled })}
+                  />
+                  {mcpStatus?.running ? (
+                    <Tag color="success">
+                      运行中 · {mcpStatus.host}:{mcpStatus.port}
+                    </Tag>
+                  ) : mcpStatus?.error ? (
+                    <Tag color="error">{mcpStatus.error}</Tag>
+                  ) : (
+                    <Tag>未启动</Tag>
+                  )}
+                </Space>
+
+                <Space wrap>
+                  <span className="muted" style={{ width: 120 }}>
+                    监听地址
+                  </span>
+                  <Input value={mcpForm.host} disabled style={{ width: 150 }} />
+                  <InputNumber
+                    min={1024}
+                    max={65535}
+                    value={mcpForm.port}
+                    onChange={(value) => setMcpForm({ ...mcpForm, port: Number(value ?? 39121) })}
+                    style={{ width: 130 }}
+                  />
+                  <span className="muted">仅监听本机回环地址</span>
+                </Space>
+
+                <Space wrap>
+                  <span className="muted" style={{ width: 120 }}>
+                    访问 token
+                  </span>
+                  <Input.Password
+                    value={mcpForm.token}
+                    onChange={(event) => setMcpForm({ ...mcpForm, token: event.target.value })}
+                    style={{ width: 360 }}
+                  />
+                  <Tooltip title="复制 token">
+                    <Button icon={<CopyOutlined />} onClick={() => void copyText(mcpForm.token)} />
+                  </Tooltip>
+                  <Button
+                    icon={<ReloadOutlined />}
+                    onClick={() => {
+                      void regenerateMcpToken()
+                        .then(() => message.success('token 已重新生成，服务已重启'))
+                        .catch((error: Error) => message.error(error.message))
+                    }}
+                  >
+                    重新生成
+                  </Button>
+                </Space>
+
+                <Space wrap>
+                  <span className="muted" style={{ width: 120 }}>
+                    写入权限
+                  </span>
+                  <Switch
+                    checked={mcpForm.allow_write}
+                    onChange={(allow_write) => setMcpForm({ ...mcpForm, allow_write })}
+                  />
+                  <span className="muted">允许创建 / 更新 / 删除接口、环境、变量与流程</span>
+                </Space>
+
+                <Space wrap>
+                  <span className="muted" style={{ width: 120 }}>
+                    执行权限
+                  </span>
+                  <Switch
+                    checked={mcpForm.allow_execute}
+                    onChange={(allow_execute) => setMcpForm({ ...mcpForm, allow_execute })}
+                  />
+                  <span className="muted">允许执行接口与流程</span>
+                </Space>
+
+                <div>
+                  <div className="muted" style={{ marginBottom: 4 }}>
+                    授权项目
+                  </div>
+                  <Checkbox.Group
+                    options={projects.map((item) => ({
+                      label: item.name,
+                      value: item.project_id
+                    }))}
+                    value={mcpForm.allowed_project_ids}
+                    onChange={(values) =>
+                      setMcpForm({
+                        ...mcpForm,
+                        allowed_project_ids: values.map((value) => String(value))
+                      })
+                    }
+                  />
+                </div>
+
+                <Space>
+                  <Button type="primary" icon={<SaveOutlined />} onClick={() => void saveMcpForm()}>
+                    保存 MCP 配置
+                  </Button>
+                  <Button icon={<CopyOutlined />} onClick={() => void copyText(mcpSnippet)}>
+                    复制 Claude Desktop 配置
+                  </Button>
+                </Space>
+
+                <div className="muted" style={{ fontSize: 11, lineHeight: 1.7 }}>
+                  描述文件：<span className="mono">{mcpInfo || '—'}</span>
+                  <br />
+                  stdio 入口：<span className="mono">{mcpStdio || '—'}</span>
+                </div>
+
+                <pre
+                  style={{
+                    margin: 0,
+                    background: 'var(--color-bg-page)',
+                    border: '1px solid var(--color-border)',
+                    padding: 8,
+                    borderRadius: 4,
+                    maxHeight: 180,
+                    overflow: 'auto',
+                    fontFamily:
+                      'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+                    fontSize: 11.5,
+                    lineHeight: 1.55,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}
+                >
+                  {mcpSnippet}
+                </pre>
+
+                <Collapse
+                  size="small"
+                  items={[
+                    {
+                      key: 'mcp-tools',
+                      label: `已注册工具（${mcpTools.length}）`,
+                      children: (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                          <thead>
+                            <tr>
+                              <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                                工具
+                              </th>
+                              <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                                权限
+                              </th>
+                              <th align="left" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                                说明
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {mcpTools.map((tool) => (
+                              <tr key={tool.name}>
+                                <td className="mono" style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                                  {tool.name}
+                                </td>
+                                <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                                  {tool.requires_write ? <Tag color="warning">write</Tag> : null}
+                                  {tool.requires_execute ? <Tag color="processing">execute</Tag> : null}
+                                  {!tool.requires_write && !tool.requires_execute ? (
+                                    <Tag>read</Tag>
+                                  ) : null}
+                                </td>
+                                <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--color-border)' }}>
+                                  {tool.description}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )
+                    }
+                  ]}
+                />
+              </Space>
             ) : (
-              <Tag>未启用</Tag>
+              <div className="muted">MCP 配置未加载</div>
             )}
-          </Space>
+          </div>
 
-          <Space wrap>
-            <span className="muted" style={{ width: 120 }}>
-              调试端口
-            </span>
-            <InputNumber
-              min={1024}
-              max={65535}
-              value={debugForm.port}
-              disabled={!debugForm.enabled}
-              onChange={(value) => setDebugForm({ ...debugForm, port: Number(value ?? 9222) })}
-              style={{ width: 130 }}
-            />
-            <span className="muted">仅监听本机回环地址</span>
-          </Space>
+          <div className="settings-card" id="debug">
+            <div className="section-title">开发者调试（CDP）</div>
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              <Space wrap>
+                <span className="muted" style={{ width: 120 }}>
+                  远程调试
+                </span>
+                <Switch
+                  checked={debugForm.enabled}
+                  onChange={(enabled) => setDebugForm({ ...debugForm, enabled })}
+                />
+                {debugActive?.active_port ? (
+                  debugForm.enabled ? (
+                    <Tag color="warning">
+                      已生效 · 127.0.0.1:{debugActive.active_port}
+                    </Tag>
+                  ) : (
+                    <Tag color="warning">已保存关闭，重启后停止监听</Tag>
+                  )
+                ) : debugForm.enabled ? (
+                  <Tag color="processing">已保存，重启后生效</Tag>
+                ) : (
+                  <Tag>未启用</Tag>
+                )}
+              </Space>
 
-          <Alert
-            type="warning"
-            showIcon
-            message="CDP 没有鉴权"
-            description="启用后，本机任意程序都能通过 DevTools 协议控制本应用（读写项目、发送请求、修改设置）。仅在需要调试时开启，用完请关闭；正式分发时保持关闭。"
-          />
+              <Space wrap>
+                <span className="muted" style={{ width: 120 }}>
+                  调试端口
+                </span>
+                <InputNumber
+                  min={1024}
+                  max={65535}
+                  value={debugForm.port}
+                  disabled={!debugForm.enabled}
+                  onChange={(value) => setDebugForm({ ...debugForm, port: Number(value ?? 9222) })}
+                  style={{ width: 130 }}
+                />
+                <span className="muted">仅监听本机回环地址</span>
+              </Space>
 
-          {debugActive?.active_port ? (
-            <div className="muted" style={{ fontSize: 11 }}>
-              调试地址：
-              <span className="mono">http://127.0.0.1:{debugActive.active_port}/json</span>
-              <Button
-                size="small"
-                type="link"
-                icon={<CopyOutlined />}
-                onClick={() =>
-                  void copyText(`http://127.0.0.1:${debugActive.active_port}/json`)
-                }
-              >
-                复制
+              <Alert
+                type="warning"
+                showIcon
+                message="CDP 没有鉴权"
+                description="启用后，本机任意程序都能通过 DevTools 协议控制本应用（读写项目、发送请求、修改设置）。仅在需要调试时开启，用完请关闭；正式分发时保持关闭。"
+              />
+
+              {debugActive?.active_port ? (
+                <div className="muted" style={{ fontSize: 11 }}>
+                  调试地址：
+                  <span className="mono">http://127.0.0.1:{debugActive.active_port}/json</span>
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={<CopyOutlined />}
+                    onClick={() =>
+                      void copyText(`http://127.0.0.1:${debugActive.active_port}/json`)
+                    }
+                  >
+                    复制
+                  </Button>
+                </div>
+              ) : null}
+
+              <Button type="primary" icon={<SaveOutlined />} onClick={requestSaveDebug}>
+                保存调试设置
               </Button>
-            </div>
-          ) : null}
+            </Space>
+          </div>
+        </section>
 
-          <Button type="primary" icon={<SaveOutlined />} onClick={requestSaveDebug}>
-            保存调试设置
-          </Button>
-        </Space>
-      </div>
+        <section className="settings-section" hidden={section !== 'about'}>
+          <header className="settings-section-head">
+            <h2>关于</h2>
+            <p>当前版本与项目仓库。</p>
+          </header>
 
-      <div className="settings-card">
-        <div className="section-title">能力状态</div>
-        <Space direction="vertical" size={4}>
-          <span>
-            <Tag color="success">M1</Tag> 接口 CRUD、环境/全局变量、HTTP 调试、发送记录
-          </span>
-          <span>
-            <Tag color="success">M2</Tag> 流程编排、脚本、断言、条件/循环、运行记录
-          </span>
-          <span>
-            <Tag color="success">M3</Tag> MCP stdio/TCP 桥、三层权限、项目/接口/执行/环境/变量/流程工具
-          </span>
-          <Divider style={{ margin: '8px 0' }} />
-          <span className="muted">后续：设计契约、接口用例、压测、Mock、文档分享、字典、Git/回收站</span>
-        </Space>
+          <div className="settings-card">
+            <div className="section-title">版本</div>
+            <Space direction="vertical" size={4}>
+              <div>
+                KindraAPI <b>{version || '—'}</b>
+              </div>
+              <div className="muted">当前运行版本</div>
+            </Space>
+          </div>
+
+          <div className="settings-card">
+            <div className="section-title">项目仓库</div>
+            <Space direction="vertical" size={10}>
+              <span className="mono muted">{REPOSITORY_URL}</span>
+              <Button icon={<GithubOutlined />} onClick={() => void openRepository()}>
+                打开 GitHub 仓库
+              </Button>
+            </Space>
+          </div>
+        </section>
       </div>
     </div>
   )

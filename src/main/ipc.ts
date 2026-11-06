@@ -115,6 +115,7 @@ function handle<T>(
 export function registerIpc(): void {
   registerAgentIpc()
   handle('app:paths', () => store.getPaths())
+  handle('app:version', () => app.getVersion())
   handle('app:openPath', (targetPath: string) => shell.openPath(targetPath))
   handle('app:copyText', (text: string) => {
     clipboard.writeText(String(text ?? ''))

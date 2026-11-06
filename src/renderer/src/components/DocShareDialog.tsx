@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   App as AntApp,
   Button,
@@ -9,6 +9,7 @@ import {
   Radio,
   Select,
   Switch,
+  Tooltip,
   Tree,
   TreeSelect
 } from 'antd'
@@ -24,6 +25,25 @@ import type {
   TargetSummary
 } from '@shared/types'
 import { createDocSettings } from '@shared/factories'
+
+function Hint({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <Tooltip title={children} placement="top">
+      <span className="docs-hint">{children}</span>
+    </Tooltip>
+  )
+}
+
+const DEFAULT_LOGO_KEY = 'kindra.docs.defaultLogo'
+
+function readDefaultLogo(): string {
+  try {
+    const value = localStorage.getItem(DEFAULT_LOGO_KEY)
+    return value && value.startsWith('data:image/') ? value : ''
+  } catch {
+    return ''
+  }
+}
 
 export interface DocShareInitial {
   shareId?: string
@@ -165,7 +185,7 @@ export default function DocShareDialog({
     showScripts: false,
     showDesign: true,
     showCases: true,
-    openapi: false,
+    openapi: true,
     openapiVersion: '3.0',
     logo: '',
     envId: '',
@@ -185,6 +205,22 @@ export default function DocShareDialog({
       if (result.ok) setAttributes(result.data.filter((item) => item.enable))
     })
   }, [open, projectId])
+
+  const defaultAttributesApplied = useRef(false)
+
+  useEffect(() => {
+    if (!open) {
+      defaultAttributesApplied.current = false
+      return
+    }
+    if (initial || defaultAttributesApplied.current || attributes.length === 0) return
+    defaultAttributesApplied.current = true
+    setDraft((current) =>
+      current.attributeList.length
+        ? current
+        : { ...current, attributeList: attributes.map((item) => item.attribute_id) }
+    )
+  }, [open, initial, attributes])
 
   const tree = useMemo(() => buildTree(targets), [targets])
   const apiCount = useMemo(
@@ -219,7 +255,7 @@ export default function DocShareDialog({
       showCases: settings.show_cases,
       openapi: settings.openapi,
       openapiVersion: settings.openapi_version ?? '3.0',
-      logo: settings.logo ?? '',
+      logo: settings.logo || readDefaultLogo(),
       envId: settings.env_id ?? '',
       attributeList: settings.attribute_list ?? [],
       allowDebug: settings.allow_debug === true
@@ -231,22 +267,69 @@ export default function DocShareDialog({
   }
 
   const logoInput = useRef<HTMLInputElement>(null)
-  const MAX_LOGO_BYTES = 140 * 1024
+  const MAX_LOGO_INPUT_BYTES = 10 * 1024 * 1024
   const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+  const LOGO_MAX_SIDE = 256
+  const LOGO_MAX_DATA_URL = 190 * 1024
+
+  const compressLogo = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('读取图片失败'))
+      reader.onload = () => {
+        const image = new Image()
+        image.onerror = () => reject(new Error('无法解析图片'))
+        image.onload = () => {
+          const scale = Math.min(1, LOGO_MAX_SIDE / Math.max(image.width, image.height))
+          const width = Math.max(1, Math.round(image.width * scale))
+          const height = Math.max(1, Math.round(image.height * scale))
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const context = canvas.getContext('2d')
+          if (!context) {
+            reject(new Error('无法处理图片'))
+            return
+          }
+          context.drawImage(image, 0, 0, width, height)
+          let quality = 0.92
+          let dataUrl = canvas.toDataURL('image/webp', quality)
+          while (dataUrl.length > LOGO_MAX_DATA_URL && quality > 0.5) {
+            quality -= 0.1
+            dataUrl = canvas.toDataURL('image/webp', quality)
+          }
+          if (dataUrl.length > LOGO_MAX_DATA_URL) {
+            reject(new Error('图片压缩后仍然过大，请换一张'))
+            return
+          }
+          resolve(dataUrl)
+        }
+        image.src = String(reader.result ?? '')
+      }
+      reader.readAsDataURL(file)
+    })
+
   const pickLogo = (file: File | undefined): void => {
     if (!file) return
     if (!LOGO_TYPES.includes(file.type)) {
       message.warning('仅支持 PNG / JPEG / WebP / GIF')
       return
     }
-    if (file.size > MAX_LOGO_BYTES) {
-      message.warning('图片请小于 140KB')
+    if (file.size > MAX_LOGO_INPUT_BYTES) {
+      message.warning('原始图片请小于 10MB')
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => patchDraft({ logo: String(reader.result ?? '') })
-    reader.onerror = () => message.error('读取图片失败')
-    reader.readAsDataURL(file)
+    void compressLogo(file)
+      .then((logo) => {
+        patchDraft({ logo })
+        try {
+          localStorage.setItem(DEFAULT_LOGO_KEY, logo)
+        } catch {
+          // 本地存储不可用时仍保留本次分享的 logo。
+        }
+        message.success('Logo 已保存，后续分享将默认使用')
+      })
+      .catch((error: Error) => message.error(error.message))
   }
 
   const changeScope = (scope: DocScope): void => {
@@ -343,17 +426,10 @@ export default function DocShareDialog({
           />
         </div>
 
-        {lockScope ? (
-          <div className="docs-field">
+        {lockScope ? null : (
+          <div className="docs-field docs-scope-row">
             <label>分享范围</label>
-            <div className="docs-hint" style={{ marginTop: 0 }}>
-              当前接口：{lockTargetName || lockTarget || '—'}
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="docs-field">
-              <label>分享范围</label>
+            <div className="docs-scope-control">
               <Radio.Group
                 value={draft.scope}
                 size="small"
@@ -366,15 +442,12 @@ export default function DocShareDialog({
                 <Radio.Button value="api">接口</Radio.Button>
                 <Radio.Button value="custom">自定义</Radio.Button>
               </Radio.Group>
-            </div>
-
-            <div className="docs-field docs-target-picker">
               {draft.scope === 'project' ? (
-                <div className="docs-hint">
+                <Hint>
                   将分享「{projectName || '当前项目'}」内全部接口，共 {apiCount} 个。
-                </div>
+                </Hint>
               ) : draft.scope === 'custom' ? (
-                <>
+                <div className="docs-target-picker" style={{ width: '100%' }}>
                   <Tree
                     checkable
                     selectable={false}
@@ -386,11 +459,11 @@ export default function DocShareDialog({
                       patchDraft({ targetIds: list.map(String) })
                     }}
                   />
-                  <div className="docs-hint">勾选目录会包含其下全部接口。</div>
-                </>
+                  <Hint>勾选目录会包含其下全部接口。</Hint>
+                </div>
               ) : (
                 <TreeSelect
-                  style={{ width: '100%' }}
+                  style={{ flex: 1, minWidth: 180 }}
                   placeholder={draft.scope === 'folder' ? '请选择目录' : '请选择接口'}
                   value={draft.targetIds[0]}
                   treeData={toSelectData(tree, draft.scope === 'folder' ? 'folder' : 'api')}
@@ -403,7 +476,7 @@ export default function DocShareDialog({
                 />
               )}
             </div>
-          </>
+          </div>
         )}
 
         <div className="docs-field">
@@ -416,9 +489,9 @@ export default function DocShareDialog({
             onChange={(value) => patchDraft({ envId: value ?? '' })}
             options={environments.map((item) => ({ value: item.env_id, label: item.name }))}
           />
-          <div className="docs-hint">
+          <Hint>
             选择后，文档中的 {'{{变量}}'} 会替换为该环境的当前值，并在页面标注所用环境。
-          </div>
+          </Hint>
         </div>
 
         {attributes.length ? (
@@ -436,49 +509,43 @@ export default function DocShareDialog({
               }))}
               onChange={(value) => patchDraft({ attributeList: value })}
             />
-            <div className="docs-hint">未选择的属性不会出现在分享文档中。</div>
+            <Hint>未选择的属性不会出现在分享文档中。</Hint>
           </div>
         ) : null}
 
-        <div className="docs-field-row">
-          <div className="docs-field">
-            <label>访问方式</label>
-            <Radio.Group
-              value={draft.passwordEnabled ? 'password' : 'public'}
-              size="small"
-              onChange={(event) =>
-                patchDraft({ passwordEnabled: event.target.value === 'password' })
-              }
-            >
-              <Radio value="public">公开访问</Radio>
-              <Radio value="password">密码访问</Radio>
-            </Radio.Group>
-          </div>
-          <div className="docs-field">
-            <label>有效期</label>
-            <div className="docs-inline">
-              <Select
-                value={draft.expireMode}
-                style={{ width: 126 }}
-                onChange={(value) => patchDraft({ expireMode: value as ExpireMode })}
-                options={[
-                  { value: 'permanent', label: '永久有效' },
-                  { value: '7', label: '7 天' },
-                  { value: '30', label: '30 天' },
-                  { value: 'custom', label: '自定义' }
-                ]}
-              />
-              {draft.expireMode === 'custom' ? (
-                <InputNumber
-                  min={1}
-                  max={3650}
-                  value={draft.customDays}
-                  addonAfter="天"
-                  onChange={(value) => patchDraft({ customDays: Number(value ?? 1) })}
-                />
-              ) : null}
-            </div>
-          </div>
+        <div className="docs-field">
+          <label>访问方式</label>
+          <Radio.Group
+            value={draft.passwordEnabled ? 'password' : 'public'}
+            size="small"
+            onChange={(event) =>
+              patchDraft({ passwordEnabled: event.target.value === 'password' })
+            }
+          >
+            <Radio value="public">公开访问</Radio>
+            <Radio value="password">密码访问</Radio>
+          </Radio.Group>
+          <span className="docs-inline-label">有效期</span>
+          <Select
+            value={draft.expireMode}
+            style={{ width: 126 }}
+            onChange={(value) => patchDraft({ expireMode: value as ExpireMode })}
+            options={[
+              { value: 'permanent', label: '永久有效' },
+              { value: '7', label: '7 天' },
+              { value: '30', label: '30 天' },
+              { value: 'custom', label: '自定义' }
+            ]}
+          />
+          {draft.expireMode === 'custom' ? (
+            <InputNumber
+              min={1}
+              max={3650}
+              value={draft.customDays}
+              addonAfter="天"
+              onChange={(value) => patchDraft({ customDays: Number(value ?? 1) })}
+            />
+          ) : null}
         </div>
 
         {draft.passwordEnabled ? (
@@ -540,11 +607,8 @@ export default function DocShareDialog({
           </div>
         </div>
 
-        <div className="docs-field docs-switch-row">
-          <div>
-            <label style={{ margin: 0 }}>分享 Logo</label>
-            <div className="docs-hint">建议正方形图片，不超过 140KB；未上传时使用内置图标。</div>
-          </div>
+        <div className="docs-field">
+          <label>分享 Logo</label>
           <div className="docs-inline">
             {draft.logo ? (
               <img
@@ -573,49 +637,54 @@ export default function DocShareDialog({
               {draft.logo ? '更换' : '上传'}
             </Button>
             {draft.logo ? (
-              <Button size="small" onClick={() => patchDraft({ logo: '' })}>
+              <Button
+                size="small"
+                onClick={() => {
+                  patchDraft({ logo: '' })
+                  try {
+                    localStorage.removeItem(DEFAULT_LOGO_KEY)
+                  } catch {
+                    // 本地存储不可用时仅清除本次分享的 logo。
+                  }
+                }}
+              >
                 移除
               </Button>
             ) : null}
           </div>
+          <Hint>支持 PNG / JPEG / WebP / GIF，上传后自动压缩到 256×256 以内；GIF 会转为静态图。</Hint>
         </div>
 
-        <div className="docs-field docs-switch-row">
-          <div>
-            <label style={{ margin: 0 }}>允许 OpenAPI 导出</label>
-            <div className="docs-hint">开启后访问者可下载 OpenAPI / Swagger 文档。</div>
-          </div>
-          <div className="docs-inline">
-            <Select
-              size="small"
-              style={{ width: 132 }}
-              disabled={!draft.openapi}
-              value={draft.openapiVersion}
-              onChange={(value) => patchDraft({ openapiVersion: value as OpenApiVersion })}
-              options={[
-                { value: '3.1', label: 'OpenAPI 3.1' },
-                { value: '3.0', label: 'OpenAPI 3.0' },
-                { value: '2.0', label: 'Swagger 2.0' }
-              ]}
-            />
-            <Switch
-              checked={draft.openapi}
-              onChange={(checked) => patchDraft({ openapi: checked })}
-            />
-          </div>
+        <div className="docs-field">
+          <label>允许 OpenAPI 导出</label>
+          <Select
+            size="small"
+            style={{ width: 132 }}
+            disabled={!draft.openapi}
+            value={draft.openapiVersion}
+            onChange={(value) => patchDraft({ openapiVersion: value as OpenApiVersion })}
+            options={[
+              { value: '3.1', label: 'OpenAPI 3.1' },
+              { value: '3.0', label: 'OpenAPI 3.0' },
+              { value: '2.0', label: 'Swagger 2.0' }
+            ]}
+          />
+          <Switch
+            checked={draft.openapi}
+            onChange={(checked) => patchDraft({ openapi: checked })}
+          />
+          <Hint>开启后访问者可下载 OpenAPI / Swagger 文档。</Hint>
         </div>
 
-        <div className="docs-field docs-switch-row">
-          <div>
-            <label style={{ margin: 0 }}>允许在线调试</label>
-            <div className="docs-hint">
-              访问者可在分享页直接发送请求；只允许调用本次分享范围内的接口。
-            </div>
-          </div>
+        <div className="docs-field">
+          <label>允许在线调试</label>
           <Switch
             checked={draft.allowDebug}
             onChange={(checked) => patchDraft({ allowDebug: checked })}
           />
+          <Hint>
+            访问者可在分享页直接发送请求；只允许调用本次分享范围内的接口。
+          </Hint>
         </div>
       </div>
     </Modal>

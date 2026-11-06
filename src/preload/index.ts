@@ -96,6 +96,7 @@ const api = {
   },
   paths: () => invoke('app:paths'),
   app: {
+    version: () => invoke('app:version'),
     openPath: (targetPath: string) => invoke('app:openPath', targetPath),
     copyText: (text: string) => invoke('app:copyText', text),
     openExternal: (url: string) => invoke('app:openExternal', url),
