@@ -139,7 +139,9 @@ async function stop() { if (app) { await app.evaluate(({ app }) => app.exit(0)).
   await panel.waitFor()
 
   const goalBox = page.getByRole('textbox', { name: '告诉 Agent 要做什么' })
-  await page.getByRole('button', { name: '旧计划模式' }).click()
+  assert.equal(await page.getByRole('button', { name: '旧计划模式' }).count(), 0, 'legacy plan toggle must not be visible')
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('kindra:legacy-plan-mode', { detail: true })))
+  await page.locator('.agent-dock-panel[data-legacy-plan-mode="true"]').waitFor()
   await goalBox.fill('你好')
   await goalBox.press('Enter')
   await panel.getByText('你好！我是项目 Agent，可以帮你读取、修改和测试接口与 Flow。', { exact: true }).waitFor()

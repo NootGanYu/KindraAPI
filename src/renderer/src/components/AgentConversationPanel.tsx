@@ -34,7 +34,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const [selected, setSelected] = useState<string | null>(null)
   const [text, setText] = useState('')
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>('ask')
-  const [legacyPlanMode, setLegacyPlanMode] = useState(() => localStorage.getItem('kindra.agent.legacyPlanMode') === '1')
+  const [legacyPlanMode, setLegacyPlanMode] = useState(() => localStorage.getItem('kindra.agent.legacyPlanModeTest') === '1')
   const [busy, setBusy] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -44,6 +44,17 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
   const end = useRef<HTMLDivElement>(null)
   const conversation = conversations.find(item => item.conversation_id === selected)
   const running = conversation?.status === 'running'
+
+  useEffect(() => {
+    // Legacy plan mode is internal compatibility tooling; tests opt in explicitly.
+    const handler = (event: Event): void => {
+      const enabled = (event as CustomEvent<boolean>).detail === true
+      localStorage.setItem('kindra.agent.legacyPlanModeTest', enabled ? '1' : '0')
+      setLegacyPlanMode(enabled)
+    }
+    window.addEventListener('kindra:legacy-plan-mode', handler)
+    return () => window.removeEventListener('kindra:legacy-plan-mode', handler)
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -170,7 +181,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     } catch (e) { setError((e as Error).message) }
   }
 
-  return <div className="agent-dock-panel">
+  return <div className="agent-dock-panel" data-legacy-plan-mode={legacyPlanMode ? 'true' : 'false'}>
     <header className="agent-dock-header">
       <div className="agent-dock-controls">
         <Typography.Text type="secondary" className="agent-dock-project">{projectName}</Typography.Text>
@@ -198,7 +209,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
       <Space wrap size={8}>
         <Tooltip title="整轮撤销与记录"><Button size="small" type={view === 'undo' ? 'primary' : 'default'} aria-label="整轮撤销与记录" icon={<UndoOutlined />} onClick={() => setView(view === 'undo' ? 'chat' : 'undo')} /></Tooltip>
         <Tooltip title="项目候选汇总"><Button size="small" type={view === 'candidates' ? 'primary' : 'default'} aria-label="项目候选汇总" icon={<AppstoreOutlined />} onClick={() => setView(view === 'candidates' ? 'chat' : 'candidates')} /></Tooltip>
-        <Tooltip title="旧计划记录（legacy）"><Button size="small" type={view === 'plans' ? 'primary' : 'default'} aria-label="旧计划记录" icon={<HistoryOutlined />} onClick={() => setView(view === 'plans' ? 'chat' : 'plans')} /></Tooltip>
+        <Tooltip title="历史计划记录"><Button size="small" type={view === 'plans' ? 'primary' : 'default'} aria-label="历史计划记录" icon={<HistoryOutlined />} onClick={() => setView(view === 'plans' ? 'chat' : 'plans')} /></Tooltip>
         <Tooltip title="Agent 设置"><Button size="small" type={view === 'settings' ? 'primary' : 'default'} aria-label="Agent 设置" icon={<SettingOutlined />} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')} /></Tooltip>
         <Tooltip title="收起面板"><Button size="small" aria-label="收起面板" icon={<CloseOutlined />} onClick={onClose} /></Tooltip>
       </Space>
@@ -224,7 +235,6 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
           <Space size={4} wrap={false}>
             <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 88 }} />
             <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 190, minWidth: 0 }} />
-            <Tooltip title="旧计划模式：先用待批准计划再执行（legacy）"><Button size="small" type={legacyPlanMode ? 'primary' : 'text'} aria-label="旧计划模式" aria-pressed={legacyPlanMode} onClick={() => setLegacyPlanMode(value => { localStorage.setItem('kindra.agent.legacyPlanMode', value ? '0' : '1'); return !value })}>旧计划</Button></Tooltip>
           </Space>
           <Space size={8}>
             {running ? <Button onClick={() => void window.api.agent.cancelMessage(projectId, conversation!.conversation_id).then(unwrap).catch(e => setError(e.message))}>停止回复</Button> : <Button type="primary" icon={<SendOutlined />} disabled={!connection || !text.trim()} loading={busy} onClick={() => void send()}>发送</Button>}
