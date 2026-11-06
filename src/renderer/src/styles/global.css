@@ -1717,10 +1717,10 @@ body {
 .json-body-input.is-highlighted .editor-input.ant-input,
 .json-body-input.is-highlighted .editor-input.ant-input[readonly] { color: transparent; background: transparent !important; caret-color: #252525; }
 .json-body-input.is-highlighted .editor-input.ant-input::selection { color: transparent; background: rgba(74, 139, 226, .25); }
-.json-k { color: #b51b1b; }
-.json-s { color: #0451a5; }
-.json-n { color: #00875a; }
-.json-l { color: #7951a5; }
+.json-code-key { color: #b51b1b; }
+.json-code-string { color: #0451a5; }
+.json-code-number { color: #00875a; }
+.json-code-literal { color: #7951a5; }
 .json-code-block { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .json-type { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .json-type-string { color: #0451a5; }

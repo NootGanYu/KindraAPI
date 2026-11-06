@@ -1,6 +1,10 @@
 import { ruleCells, rulesToSchema } from '@shared/fieldRules'
 import { optionLabel } from '@shared/customAttributes'
-import { pickLanAddress } from '@shared/lanAddress'
+import {
+  pickLanAddress,
+  pickShareAddress,
+  type NetworkAddressEntry
+} from '@shared/lanAddress'
 import { documentedRequestExample, modelDocumentationWarnings, resolveDocumentedTarget } from './definition'
 import crypto from 'node:crypto'
 import http from 'node:http'
@@ -23,6 +27,7 @@ import { descriptionToHtml, htmlToText } from '@shared/richText'
 import { buildFieldRows, buildFieldSchema, typeLabel, type JsonFieldRow } from '@shared/jsonFields'
 import { createZip } from './zip'
 import { DEBUG_SCRIPT } from './debug-client'
+import { SHARE_SCRIPT } from './share-client'
 import { generateModelExample, type ExampleWarning } from '../schema/example'
 
 const DOC_HOST = '0.0.0.0'
@@ -67,17 +72,29 @@ function executeAllowed(ip: string): boolean {
 // Basics
 // ---------------------------------------------------------------------------
 
+function networkEntries(): NetworkAddressEntry[] {
+  return Object.entries(os.networkInterfaces()).flatMap(([name, items]) =>
+    (items ?? []).map((item) => ({
+      name,
+      address: item.address,
+      family: item.family,
+      internal: item.internal
+    }))
+  )
+}
+
 function lanAddress(): string {
   try {
-    const entries = Object.entries(os.networkInterfaces()).flatMap(([name, items]) =>
-      (items ?? []).map((item) => ({
-        name,
-        address: item.address,
-        family: item.family,
-        internal: item.internal
-      }))
-    )
-    return pickLanAddress(entries)
+    return pickLanAddress(networkEntries())
+  } catch {
+    // fall through
+  }
+  return '127.0.0.1'
+}
+
+function shareAddress(): string {
+  try {
+    return pickShareAddress(networkEntries())
   } catch {
     // fall through
   }
@@ -91,7 +108,7 @@ function baseUrlFor(port: number): string {
       ? override.replace(/\/+$/, '')
       : `http://${override}:${port}`
   }
-  return `http://${lanAddress()}:${port}`
+  return `http://${shareAddress()}:${port}`
 }
 
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1'])
@@ -455,6 +472,15 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .api-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px 26px;margin:16px 0;box-shadow:0 1px 2px rgba(70,55,30,.03)}
 .api-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .api-head h2{margin:0;font-size:19px;line-height:1.35}
+.api-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.api-copy-actions{display:flex;align-items:center;gap:6px}
+.copy-btn{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--muted);font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.copy-btn:hover{border-color:#8a6b3b;color:#8a6b3b;background:#faf7f1}
+.copy-btn:disabled{opacity:.55;cursor:default}
+.copy-icon{pointer-events:none}
+.copy-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(8px);z-index:50;background:#2f2a22;color:#fff;padding:8px 16px;border-radius:999px;font-size:13px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.copy-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.copy-toast.error{background:#a33a2f}
 .method{display:inline-flex;align-items:center;justify-content:center;height:22px;padding:0 8px;border-radius:5px;color:#fff;background:var(--green);font:700 10.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;flex:none}
 .method.POST{background:var(--blue)}
 .method.PUT,.method.PATCH{background:#b7791f}
@@ -462,7 +488,7 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .method.HEAD,.method.OPTIONS{background:#7a6b55}
 .api-attrs{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0 0;font-size:12.5px;color:var(--text)}
 .api-attr b{color:var(--muted);font-weight:500;margin-right:6px}
-.try-toggle{display:none;margin-left:auto;border:1px solid var(--line);background:#fff;color:var(--text);padding:4px 12px;border-radius:5px;font-size:12px;cursor:pointer}
+.try-toggle{display:none;margin-left:0;border:1px solid var(--line);background:#fff;color:var(--text);padding:4px 12px;border-radius:5px;font-size:12px;cursor:pointer}
 .try-toggle.on{background:#8a6b3b;border-color:#8a6b3b;color:#fff}
 .js-ready .try-toggle{display:inline-block}
 .value-view{display:none}
@@ -495,10 +521,10 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .try-headers summary{cursor:pointer;color:var(--muted)}
 .try-headers td{border-bottom:1px solid var(--line);padding:4px 6px;word-break:break-all}
 .try-body{background:#faf9f6;border:1px solid var(--line);border-radius:4px;padding:12px;max-height:520px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace);margin:0}
-.json-k{color:#b51b1b}
-.json-s{color:#0451a5}
-.json-n{color:#00875a}
-.json-l{color:#7951a5}
+.json-code-key{color:#b51b1b}
+.json-code-string{color:#0451a5}
+.json-code-number{color:#00875a}
+.json-code-literal{color:#7951a5}
 .try-result{max-width:960px;margin:0 auto;padding:24px 0}
 .try-result-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .try-result-head a{margin-left:auto;color:#2f6bb0}
@@ -548,10 +574,12 @@ details.raw-request summary{cursor:pointer;color:var(--gold);font-size:12.5px}
 .breadcrumb{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;margin-bottom:14px}
 .breadcrumb a{color:var(--gold)}
 .breadcrumb .sep{color:#c9bfae}
-.download-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.download-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.dl-group{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--line);border-radius:9px;padding:6px 9px 6px 11px}
+.dl-label{font-size:11.5px;font-weight:600;color:var(--gold);letter-spacing:.02em;margin-right:2px}
+.dl-divider{width:1px;height:30px;background:var(--line)}
 .dl-btn{display:inline-flex;align-items:center;height:30px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:#fff;color:var(--text);font-size:12.5px;text-decoration:none}
 .dl-btn:hover{border-color:var(--gold);color:var(--gold)}
-.dl-btn.disabled{background:var(--soft);color:#b8ae9d;border-color:var(--line);cursor:not-allowed}
 .folder-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin:14px 0;box-shadow:0 1px 2px rgba(70,55,30,.03)}
 .folder-card h2{margin:0;font-size:17px}
 .folder-card .folder-count{margin-top:8px;color:var(--muted);font-size:12px}
@@ -942,6 +970,25 @@ function renderApi(
         .join('')}</div>`
     : ''
   const debug = Boolean(shareId && settings.allow_debug)
+  const copyBase = shareId
+    ? `/share/${encodeURIComponent(shareId)}/a/${encodeURIComponent(target.target_id)}`
+    : ''
+  const copyActions = copyBase
+    ? `<div class="api-copy-actions">
+<button type="button" class="copy-btn" data-copy-endpoint="${escapeHtml(`${copyBase}/download?format=md&copy=1`)}" data-copy-label="已复制 Markdown" title="复制 Markdown" aria-label="复制 Markdown"><span class="copy-icon" aria-hidden="true">M↓</span></button>${
+        settings.openapi
+          ? `<button type="button" class="copy-btn" data-copy-endpoint="${escapeHtml(`${copyBase}/download?format=openapi`)}" data-copy-label="已复制 OpenAPI" title="复制 OpenAPI" aria-label="复制 OpenAPI"><span class="copy-icon" aria-hidden="true">{ }</span></button>`
+          : ''
+      }</div>`
+    : ''
+  const headActions =
+    copyActions || (debug && settings.show_request)
+      ? `<div class="api-head-actions">${
+          debug && settings.show_request
+            ? '<button type="button" class="try-toggle" data-debug-toggle>在线调试</button>'
+            : ''
+        }${copyActions}</div>`
+      : ''
   const method = methodClass(target.method)
   const label = methodText(target.method)
   const request = target.request
@@ -972,11 +1019,11 @@ function renderApi(
   const requestDetails =
     paramBlock || bodyBlock
       ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${requestNote}${paramBlock}${bodyBlock}${actionsInBody ? '' : debugActions}</div>`
-      : debug
+      : debug && settings.show_request
         ? `<div class="api-block"><h3>在线调试</h3><pre>${escapeHtml(requestExample)}</pre>${requestNote}${debugActions}</div>`
         : ''
   const requestSection =
-    debug && shareId
+    debug && shareId && settings.show_request
       ? `<form class="try-form" method="post" action="/share/${escapeHtml(shareId)}/execute" data-debug-form><input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">${requestDetails}</form><div class="try-response" hidden></div>`
       : requestDetails
 
@@ -1016,12 +1063,12 @@ ${
 <div class="api-head">
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${heading}</h2>
-${debug ? '<button type="button" class="try-toggle" data-debug-toggle>在线调试</button>' : ''}
+${headActions}
 </div>
 ${attributeBlock}
 ${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
-    target.url || '（未设置 URL）'
+    displayUrl.url || '（未设置 URL）'
   )}</div>
 ${modelWarnings.length ? `<div class="api-block"><h3>模型定义待修复</h3><p>以下引用暂时无法解析，相关字段可能不完整：</p>${modelWarnings.map(warning => `<p>${escapeHtml(warning.message)}</p>`).join('')}</div>` : ''}
 ${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}
@@ -1050,10 +1097,19 @@ export type ShareContentIntent =
   | { type: 'page'; selection: ShareSelection }
   | { type: 'zip'; selection: { type: 'share' } | { type: 'folder'; targetId: string } }
   | {
-      type: 'html' | 'markdown'
+      type: 'html'
       selection: { type: 'share' } | { type: 'api'; targetId: string }
     }
-  | { type: 'openapi'; selection: { type: 'share' } }
+  | {
+      type: 'markdown'
+      selection: { type: 'share' } | { type: 'api'; targetId: string }
+      /** 复制到剪贴板时省略分享标题/项目/有效期等头部信息。 */
+      includeShareHeader?: boolean
+    }
+  | {
+      type: 'openapi'
+      selection: { type: 'share' } | { type: 'api'; targetId: string }
+    }
 
 export type ShareContentResult =
   | { kind: 'success'; bytes: Buffer; contentType: string; filename?: string }
@@ -1265,14 +1321,36 @@ function renderDownloadBar(
   apiId: string | null
 ): string {
   const base = shareBase(share)
-  const all = `<a class="dl-btn" href="${base}/download?scope=all&amp;format=zip">下载全部</a>`
-  const folder = folderId
-    ? `<a class="dl-btn" href="${base}/f/${encodeURIComponent(folderId)}/download?format=zip">下载当前文件夹</a>`
-    : '<span class="dl-btn disabled" title="仅在文件夹页可用">下载当前文件夹</span>'
-  const api = apiId
-    ? `<a class="dl-btn" href="${base}/a/${encodeURIComponent(apiId)}/download?format=html">下载当前接口</a>`
-    : '<span class="dl-btn disabled" title="仅在接口页可用">下载当前接口</span>'
-  return `<div class="download-bar">${all}${folder}${api}</div>`
+  const links = (endpoint: string, formats: Array<[string, string]>): string =>
+    formats
+      .map(
+        ([format, label]) =>
+          `<a class="dl-btn" href="${endpoint}?format=${format}" download>${label}</a>`
+      )
+      .join('')
+  const group = (aria: string, label: string, content: string): string =>
+    `<span class="dl-group" role="group" aria-label="${aria}"><span class="dl-label">${label}</span>${content}</span>`
+  const formats: Array<[string, string]> = [
+    ['html', 'HTML'],
+    ['md', 'Markdown']
+  ]
+  if (share.settings.openapi) formats.push(['openapi', 'OpenAPI'])
+  const current = apiId
+    ? group(
+        '当前接口',
+        'This API',
+        links(`${base}/a/${encodeURIComponent(apiId)}/download`, formats)
+      )
+    : folderId
+      ? group(
+          '当前文件夹',
+          'This Folder',
+          links(`${base}/f/${encodeURIComponent(folderId)}/download`, [['zip', 'ZIP']])
+        )
+      : ''
+  const all = group('整个分享', 'All', links(`${base}/download`, [['zip', 'ZIP'], ...formats]))
+  const divider = current ? '<span class="dl-divider" aria-hidden="true"></span>' : ''
+  return `<div class="download-bar">${current}${divider}${all}</div>`
 }
 
 function renderNav(ctx: RenderCtx, currentFolderId?: string, currentApiId?: string): string {
@@ -1342,11 +1420,12 @@ function renderShareShell(
   <main class="doc-main">${main}</main>
 </div>
 <footer class="doc-footer">由 KindraAPI 生成 · ${escapeHtml(formatTime(view.lastUpdated))}</footer>`
-  const debugScript =
-    !ctx.offline && ctx.share.settings.allow_debug
-      ? '<script src="/share-assets/debug.js"></script>'
-      : ''
-  return pageShell(title, `${body}${debugScript}`)
+  const scripts = !ctx.offline
+    ? `<script src="/share-assets/share.js"></script>${
+        ctx.share.settings.allow_debug ? '<script src="/share-assets/debug.js"></script>' : ''
+      }`
+    : ''
+  return pageShell(title, `${body}${scripts}`)
 }
 
 function folderCounts(view: ShareView, folderId: string): string {
@@ -1618,14 +1697,21 @@ function mdFieldDocs(rows: JsonFieldRow[], title = '请求体字段说明'): str
   return rows.length ? '\n**' + title + '**\n\n' + mdDocumentationTable(['字段', '类型', ...RULE_HEADINGS], rows.map(row => [row.path || row.name, row.type, ...ruleCells({ ...row.doc, example: row.doc?.example !== undefined ? row.doc.example : row.value })])) : ''
 }
 
-function buildMarkdown(share: DocShare, view: ShareView, lanHost = ''): string {
+function buildMarkdown(
+  share: DocShare,
+  view: ShareView,
+  lanHost = '',
+  options: { includeShareHeader?: boolean } = {}
+): string {
   const settings = share.settings
   const lines: string[] = []
-  lines.push(`# ${share.name}`, '')
-  lines.push(`> 项目：${view.project.name}`)
-  if (view.environment) lines.push(`> 展示环境：${view.environment.name}（变量已解析为实际值）`)
-  lines.push(`> 最后更新：${formatTime(view.lastUpdated)}`)
-  lines.push(`> 有效期：${store.docShareExpireInfo(share).expire_label}`, '')
+  if (options.includeShareHeader !== false) {
+    lines.push(`# ${share.name}`, '')
+    lines.push(`> 项目：${view.project.name}`)
+    if (view.environment) lines.push(`> 展示环境：${view.environment.name}（变量已解析为实际值）`)
+    lines.push(`> 最后更新：${formatTime(view.lastUpdated)}`)
+    lines.push(`> 有效期：${store.docShareExpireInfo(share).expire_label}`, '')
+  }
 
   const apis = view.targets.filter((target) => target.target_type === 'api')
   for (const stored of apis) {
@@ -2437,7 +2523,12 @@ export function produceShareContent(
     if (!scoped) return { kind: 'not-found' }
     return {
       kind: 'success',
-      bytes: Buffer.from(buildMarkdown(share, scoped, lanHost), 'utf8'),
+      bytes: Buffer.from(
+        buildMarkdown(share, scoped, lanHost, {
+          includeShareHeader: intent.includeShareHeader !== false
+        }),
+        'utf8'
+      ),
       contentType: 'text/markdown; charset=utf-8',
       filename:
         intent.selection.type === 'api'
@@ -2447,6 +2538,31 @@ export function produceShareContent(
   }
   if (intent.type === 'openapi') {
     if (!share.settings.openapi) return { kind: 'openapi-disabled' }
+    if (intent.selection.type === 'api') {
+      const scoped = apiSelectionView(view, intent.selection.targetId)
+      if (!scoped) return { kind: 'not-found' }
+      const api = scoped.targets[0]
+      const base = buildOpenApi(share, scoped, lanHost)
+      const info =
+        base.info && typeof base.info === 'object'
+          ? { ...(base.info as Record<string, unknown>) }
+          : {}
+      const description = htmlToText(descriptionToHtml(api.description ?? ''))
+      const spec = {
+        ...base,
+        info: {
+          ...info,
+          title: api.name || info.title,
+          ...(description ? { description } : {})
+        }
+      }
+      return {
+        kind: 'success',
+        bytes: Buffer.from(JSON.stringify(spec, null, 2), 'utf8'),
+        contentType: 'application/json; charset=utf-8',
+        filename: `${sanitizeSegment(api.name, 'api')}.openapi.json`
+      }
+    }
     const spec = buildOpenApi(share, view, lanHost)
     return {
       kind: 'success',
@@ -2565,14 +2681,26 @@ function handleDownload(
     intent = { type: 'zip', selection: { type: 'folder', targetId: scope.folderId } }
   } else if (scope.apiId) {
     const format = (url.searchParams.get('format') || 'html').toLowerCase()
-    if (format !== 'html' && format !== 'md' && format !== 'markdown') {
+    if (
+      format !== 'html' &&
+      format !== 'md' &&
+      format !== 'markdown' &&
+      format !== 'openapi'
+    ) {
       sendText(res, 400, '不支持的导出格式')
       return
     }
-    intent = {
-      type: format === 'html' ? 'html' : 'markdown',
-      selection: { type: 'api', targetId: scope.apiId }
-    }
+    const isCopy = url.searchParams.get('copy') === '1'
+    intent =
+      format === 'html'
+        ? { type: 'html', selection: { type: 'api', targetId: scope.apiId } }
+        : format === 'openapi'
+          ? { type: 'openapi', selection: { type: 'api', targetId: scope.apiId } }
+          : {
+              type: 'markdown',
+              selection: { type: 'api', targetId: scope.apiId },
+              includeShareHeader: !isCopy
+            }
   } else {
     const format = (
       url.searchParams.get('format') ||
@@ -2596,7 +2724,7 @@ function handleDownload(
 
 const FORBIDDEN_HEADERS = /^(host|content-length|connection|transfer-encoding)$/i
 
-/** 只覆盖接口已声明的参数；目标地址与未声明字段不可修改。 */
+/** 参数按已声明项覆盖；JSON/raw 请求体整段可编辑；目标地址不受表单影响。 */
 function applyShareForm(target: Target, form: URLSearchParams): Target {
   const next = structuredClone(target)
   const request = next.request
@@ -2863,6 +2991,19 @@ async function handleRequest(
 
   if (url.pathname === '/health') {
     sendText(res, 200, 'ok')
+    return
+  }
+
+  if (url.pathname === '/share-assets/share.js') {
+    if (req.method !== 'GET') {
+      sendText(res, 405, 'Method Not Allowed')
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript; charset=utf-8',
+      'Cache-Control': 'no-store'
+    })
+    res.end(SHARE_SCRIPT)
     return
   }
 

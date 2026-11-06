@@ -1916,9 +1916,9 @@ async function main(): Promise<void> {
   assert(folderRes.status === 200, 'live folder page 200')
   const folderHtml = await folderRes.text()
   assert(folderHtml.includes('目录说明文本'), 'folder description rendered')
-  assert(folderHtml.includes('下载全部'), 'download all button')
-  assert(folderHtml.includes('下载当前文件夹'), 'download folder button')
-  assert(folderHtml.includes('dl-btn disabled'), 'api download disabled on folder page')
+  assert(folderHtml.includes('>All<') && folderHtml.includes('format=zip'), 'download all button')
+  assert(folderHtml.includes('This Folder'), 'download folder button')
+  assert(!folderHtml.includes('This API'), 'api download hidden on folder page')
 
   const liveApi = createTargetInProject(project.project_id, liveFolder.target_id, 'api')
   liveApi.name = '新建接口'
@@ -1983,7 +1983,7 @@ async function main(): Promise<void> {
   assert(
     singleRes.status === 200 &&
       singleHtml.includes('改名接口') &&
-      !singleHtml.includes('下载全部'),
+      !singleHtml.includes('class="download-bar"'),
     'single api offline html'
   )
 

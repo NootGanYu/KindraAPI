@@ -88,7 +88,20 @@ export function pickLanAddress(entries: NetworkAddressEntry[]): string {
     ranked[0]
   if (chosen) return chosen.address
 
-  // 全部候选都被排除时，至少退回一个非虚拟的 IPv4，避免直接不可访问。
-  const all = entries.filter((entry) => !entry.internal && isIpv4(entry))
-  return (all.find((entry) => !isVirtualAdapter(entry.name)) ?? all[0])?.address ?? '127.0.0.1'
+  // 只有虚拟网卡或保留网段时，不编造可分享地址：回退到回环，
+  // 调用方据此保留原始地址并提示，用户可手动配置 host_override。
+  return '127.0.0.1'
+}
+
+/**
+ * 分享服务地址（Share Address）的回退选择。
+ * 与 pickLanAddress 不同：识别不到可分享地址时，仍取一个非回环 IPv4，
+ * 避免把分享服务地址展示成 127.0.0.1；部署仍可通过 host_override 修正。
+ */
+export function pickShareAddress(entries: NetworkAddressEntry[]): string {
+  const strict = pickLanAddress(entries)
+  if (strict !== '127.0.0.1') return strict
+  const fallback = entries.filter((entry) => !entry.internal && isIpv4(entry))
+  const chosen = fallback.find((entry) => !isVirtualAdapter(entry.name)) ?? fallback[0]
+  return chosen?.address ?? '127.0.0.1'
 }
