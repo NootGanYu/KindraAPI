@@ -95,7 +95,8 @@
     "test:agent-loop-save": "esbuild scripts/agent-loop-save-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-loop-save-smoke.cjs && electron node_modules/.tmp/agent-loop-save-smoke.cjs && electron node_modules/.tmp/agent-loop-save-smoke.cjs --responses",
     "test:agent-loop-config": "esbuild scripts/agent-loop-config-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-loop-config-smoke.cjs && electron node_modules/.tmp/agent-loop-config-smoke.cjs && electron node_modules/.tmp/agent-loop-config-smoke.cjs --responses",
     "test:agent-config-ui": "node scripts/agent-config-ui-smoke.cjs",
-    "test:agent-loop-hardening": "esbuild scripts/agent-loop-hardening-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-loop-hardening-smoke.cjs && electron node_modules/.tmp/agent-loop-hardening-smoke.cjs && electron node_modules/.tmp/agent-loop-hardening-smoke.cjs --responses"
+    "test:agent-loop-hardening": "esbuild scripts/agent-loop-hardening-smoke.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=node_modules/.tmp/agent-loop-hardening-smoke.cjs && electron node_modules/.tmp/agent-loop-hardening-smoke.cjs && electron node_modules/.tmp/agent-loop-hardening-smoke.cjs --responses",
+    "test:automation-ui": "node scripts/automation-ui-smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
