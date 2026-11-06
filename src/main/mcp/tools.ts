@@ -158,7 +158,7 @@ const S = {
   project: { type: 'string', description: '项目 ID。MCP 客户端配置了 KINDRA_DEFAULT_PROJECT_ID 时可省略，由桥自动补全' },
   target: { type: 'string', description: '接口 target_id，用 list_apis 获取，不要凭记忆填写' },
   flow: { type: 'string', description: '流程 flow_id' },
-  environment: { type: 'string', description: '环境 env_id；配置了 KINDRA_DEFAULT_ENVIRONMENT_ID 时可省略' },
+  environment: { type: 'string', description: '环境 env_id；配置了 KINDRA_DEFAULT_ENVIRONMENT_ID 时，执行、流程、环境与变量的读写类工具可省略；删除类工具必须显式传入' },
   confirm: { type: 'boolean', description: '删除类操作必须显式传 true' }
 }
 
@@ -2648,7 +2648,7 @@ for (const name of ['create_api', 'update_api']) {
     : args => writeApiDocumentation(args)
   tool.description = name === 'create_api'
     ? '创建接口（推荐优先用 upsert_api 一次提交完整文档）。执行硬性文档校验：必须填写接口说明 description 与完整 http(s) URL；每个已知字段必须写明 description、type、required、nullable、enum，有枚举时必须提供 enum_descriptions。缺项拒绝写入且不保存。创建后仍需 execute_api(save_response=true) 保存真实响应示例。'
-    : '增量更新已有接口的 Header/Query/Path/Body 与响应示例，只改传入字段。headers/query/paths/cookies 是整组覆盖，要保留的项必须一起传。修改接口说明请用 update_api_design 或 upsert_api，不要依赖本工具。本次显式提交的字段必须补齐 description、type、required、nullable、enum（有枚举需 enum_descriptions），未提交字段保留；缺项拒绝写入。URL 若提交必须是完整 http(s) 地址。'
+    : '增量更新已有接口的 Header/Query/Path/Body 与响应示例，只改传入字段。headers/query/paths/cookies 按 key 增量合并，未提交的项保留；删除参数用 remove: true。修改接口说明请用 update_api_design 或 upsert_api，不要依赖本工具。本次显式提交的字段必须补齐 description、type、required、nullable、enum（有枚举需 enum_descriptions），未提交字段保留；缺项拒绝写入。URL 若提交必须是完整 http(s) 地址。'
 }
 
 const TOOL_MAP = new Map(TOOLS.map((tool) => [tool.name, tool]))

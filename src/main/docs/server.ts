@@ -495,10 +495,10 @@ code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .try-headers summary{cursor:pointer;color:var(--muted)}
 .try-headers td{border-bottom:1px solid var(--line);padding:4px 6px;word-break:break-all}
 .try-body{background:#faf9f6;border:1px solid var(--line);border-radius:4px;padding:12px;max-height:520px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.6 var(--mono,ui-monospace,Menlo,monospace);margin:0}
-.json-k{color:#b51b1b}
-.json-s{color:#0451a5}
-.json-n{color:#00875a}
-.json-l{color:#7951a5}
+.json-code-key{color:#b51b1b}
+.json-code-string{color:#0451a5}
+.json-code-number{color:#00875a}
+.json-code-literal{color:#7951a5}
 .try-result{max-width:960px;margin:0 auto;padding:24px 0}
 .try-result-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .try-result-head a{margin-left:auto;color:#2f6bb0}
@@ -972,11 +972,11 @@ function renderApi(
   const requestDetails =
     paramBlock || bodyBlock
       ? `<div class="api-block"><h3>请求</h3><h4>请求示例</h4><pre>${escapeHtml(requestExample)}</pre>${requestNote}${paramBlock}${bodyBlock}${actionsInBody ? '' : debugActions}</div>`
-      : debug
+      : debug && settings.show_request
         ? `<div class="api-block"><h3>在线调试</h3><pre>${escapeHtml(requestExample)}</pre>${requestNote}${debugActions}</div>`
         : ''
   const requestSection =
-    debug && shareId
+    debug && shareId && settings.show_request
       ? `<form class="try-form" method="post" action="/share/${escapeHtml(shareId)}/execute" data-debug-form><input type="hidden" name="target_id" value="${escapeHtml(target.target_id)}">${requestDetails}</form><div class="try-response" hidden></div>`
       : requestDetails
 
@@ -1016,12 +1016,12 @@ ${
 <div class="api-head">
 <span class="method ${method}">${escapeHtml(label)}</span>
 <h2>${heading}</h2>
-${debug ? '<button type="button" class="try-toggle" data-debug-toggle>在线调试</button>' : ''}
+${debug && settings.show_request ? '<button type="button" class="try-toggle" data-debug-toggle>在线调试</button>' : ''}
 </div>
 ${attributeBlock}
 ${target.description ? `<div class="api-desc">${descriptionToHtml(target.description)}</div>` : ''}
 <div class="url-line"><b>${escapeHtml(label)}</b>${escapeHtml(
-    target.url || '（未设置 URL）'
+    displayUrl.url || '（未设置 URL）'
   )}</div>
 ${modelWarnings.length ? `<div class="api-block"><h3>模型定义待修复</h3><p>以下引用暂时无法解析，相关字段可能不完整：</p>${modelWarnings.map(warning => `<p>${escapeHtml(warning.message)}</p>`).join('')}</div>` : ''}
 ${requestSection}${responseSection}${designSection}${casesSection}${scriptSection}
@@ -2596,7 +2596,7 @@ function handleDownload(
 
 const FORBIDDEN_HEADERS = /^(host|content-length|connection|transfer-encoding)$/i
 
-/** 只覆盖接口已声明的参数；目标地址与未声明字段不可修改。 */
+/** 参数按已声明项覆盖；JSON/raw 请求体整段可编辑；目标地址不受表单影响。 */
 function applyShareForm(target: Target, form: URLSearchParams): Target {
   const next = structuredClone(target)
   const request = next.request

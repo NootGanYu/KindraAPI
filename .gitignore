@@ -18,8 +18,8 @@ Apipost Offline
 .claude/settings.local.json
 
 # code-only branch: docs and analysis artifacts stay local, not tracked
-docs/
-.scratch/
-prototype/
-ui-inventory/
-.mcp.json
+/docs/
+/.scratch/
+/prototype/
+/ui-inventory/
+/.mcp.json

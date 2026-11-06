@@ -38,7 +38,7 @@ const CORE_INSTRUCTIONS = [
   '一、默认工作流（按此顺序选择工具）',
   '1. 新建接口：list_apis 确认目标目录 → upsert_api 一次提交完整文档（旧版本没有 upsert_api 时用 create_api）→ execute_api(save_response=true) → get_execution_result 核对业务结果。',
   '2. 从 OpenAPI 导入：sync_openapi 一次只导入一个 path（整份大文档会被截断导致 JSON 解析失败）→ 用 update_api/upsert_api 回填 Header、参数与请求示例 → 重新执行并保存真实响应。',
-  '3. 修改已有接口：改完整文档用 upsert_api；只改说明/错误码用 update_api_design；改 Header/参数/示例用 update_api（整组覆盖）。',
+  '3. 修改已有接口：改完整文档用 upsert_api；只改说明/错误码用 update_api_design；改 Header/参数/示例用 update_api（按 key 增量合并，未提交项保留）。',
   '',
   '二、每个接口的交付硬性要求（Header、请求示例、响应示例缺一不可）',
   '1. 接口说明：写清用途、调用方式、参数业务含义、状态口径、错误码与串联关系；不要只写“查询列表”这类空话。',
@@ -56,7 +56,7 @@ const CORE_INSTRUCTIONS = [
   '',
   '四、常见坑（务必避免）',
   '1. sync_openapi（尤其 cover 模式）会重置 Header/Query/Body 的值和响应示例，导入后必须重新回填并执行。',
-  '2. update_api 的 headers/query/paths/cookies 是整组覆盖，不是合并；要保留的项必须一起传。修改接口说明请用 update_api_design 或 upsert_api。',
+  '2. update_api 的 headers/query/paths/cookies 按 key 增量合并，未提交的项保留；删除参数用 remove: true。修改接口说明请用 update_api_design 或 upsert_api。',
   '3. 目录不存在时先用 create_folder 创建；不要凭记忆填写 folder_id / target_id，始终用 list_apis 确认。',
   '4. get_api_detail / upsert_api 返回 documentation.complete=false 时，issues 中列出的缺项必须在交付前补齐；确实无法确定的，在最终回复中逐项说明原因。',
   '5. 服务冷启动时首次执行可能超时，重试即可，不要据此判断接口逻辑错误。',
@@ -70,7 +70,7 @@ function buildInstructions() {
   const lines = CORE_INSTRUCTIONS.slice()
   const known = []
   if (defaults.projectId) known.push(`- project_id：${defaults.projectId}（调用工具时可省略，桥会自动补全）`)
-  if (defaults.environmentId) known.push(`- environment_id：${defaults.environmentId}（可省略）`)
+  if (defaults.environmentId) known.push(`- environment_id：${defaults.environmentId}（执行、流程、环境与变量的读写类工具可省略；删除类工具仍须显式传入）`)
   if (defaults.folderId) known.push(`- folder_id：${defaults.folderId}（sync_openapi 导入、create_api/create_folder 新建时自动补全；upsert_api 新建请显式传 parent_id）`)
   if (defaults.hostPath) known.push(`- host_path：${defaults.hostPath}（sync_openapi 自动补全）`)
   if (defaults.basePath) known.push(`- base_path：${defaults.basePath}（sync_openapi 自动补全）`)
@@ -80,12 +80,30 @@ function buildInstructions() {
   return lines.join('\n')
 }
 
+/**
+ * 接受 environment_id 且允许用 KINDRA_DEFAULT_ENVIRONMENT_ID 补全的工具。
+ * 删除类工具故意不在名单内：删除环境、删除环境服务、删除环境变量必须显式指定目标。
+ */
+const ENV_DEFAULT_TOOLS = new Set([
+  'execute_api',
+  'create_execution_flow',
+  'update_execution_flow',
+  'execute_flow',
+  'switch_environment',
+  'update_environment',
+  'list_environment_servers',
+  'create_environment_server',
+  'update_environment_server',
+  'get_environment_variables',
+  'upsert_environment_variable'
+])
+
 /** 用环境变量补全省略的参数；不覆盖调用方显式传入的值。 */
 function applyDefaults(tool, args) {
   const defaults = bridgeDefaults()
   const next = { ...(args || {}) }
   if (defaults.projectId && next.project_id === undefined) next.project_id = defaults.projectId
-  if (defaults.environmentId && tool === 'execute_api' && next.environment_id === undefined) {
+  if (defaults.environmentId && ENV_DEFAULT_TOOLS.has(tool) && next.environment_id === undefined) {
     next.environment_id = defaults.environmentId
   }
   if (defaults.folderId) {
@@ -105,12 +123,18 @@ function applyDefaults(tool, args) {
 function relaxSchema(tool, inputSchema) {
   const defaults = bridgeDefaults()
   const next = JSON.parse(JSON.stringify(inputSchema || { type: 'object', properties: {} }))
-  if (defaults.projectId && Array.isArray(next.required)) {
-    next.required = next.required.filter((key) => key !== 'project_id')
+  if (Array.isArray(next.required)) {
+    if (defaults.projectId) next.required = next.required.filter((key) => key !== 'project_id')
+    if (defaults.environmentId && ENV_DEFAULT_TOOLS.has(tool)) {
+      next.required = next.required.filter((key) => key !== 'environment_id')
+    }
   }
   if (!next.properties) next.properties = {}
   if (defaults.projectId && next.properties.project_id) {
     next.properties.project_id.description = `${next.properties.project_id.description || '项目 ID'}；本机已配置默认项目，可省略`
+  }
+  if (defaults.environmentId && ENV_DEFAULT_TOOLS.has(tool) && next.properties.environment_id) {
+    next.properties.environment_id.description = `${next.properties.environment_id.description || '环境 env_id'}；本机已配置默认环境，可省略`
   }
   return next
 }

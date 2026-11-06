@@ -104,7 +104,7 @@ npx electron-builder --win nsis zip --x64
 
 已知限制：消息搜索只作用于当前已加载的消息；Connection Profile 导出包含明文凭据（ADR-0004），导出前会提示风险。
 
-术语见 `GLOSSARY.md` 的 MQTT 分组，决策见 `docs/adr/0003-mqtt-as-independent-module.md` 与 `docs/adr/0004-mqtt-plaintext-credentials-in-exports.md`。
+术语见 `GLOSSARY.md` 的 MQTT 分组，决策见 `docs` 分支的 `docs/adr/0003-mqtt-as-independent-module.md` 与 `docs/adr/0004-mqtt-plaintext-credentials-in-exports.md`。
 
 ## MCP
 

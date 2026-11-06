@@ -18,15 +18,15 @@ export function highlightJsonHtml(text: string): string {
   while ((match = tokenPattern.exec(text))) {
     out += escapeHtml(text.slice(cursor, match.index))
     const token = match[0]
-    let cls = 'l'
+    let cls = 'literal'
     if (token.startsWith('"')) {
       let next = match.index + token.length
       while (next < text.length && /\s/.test(text[next])) next += 1
-      cls = text[next] === ':' ? 'k' : 's'
+      cls = text[next] === ':' ? 'key' : 'string'
     } else if (/^-?\d/.test(token)) {
-      cls = 'n'
+      cls = 'number'
     }
-    out += `<span class="json-${cls}">${escapeHtml(token)}</span>`
+    out += `<span class="json-code-${cls}">${escapeHtml(token)}</span>`
     cursor = match.index + token.length
   }
   out += escapeHtml(text.slice(cursor))

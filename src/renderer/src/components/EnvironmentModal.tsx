@@ -421,14 +421,19 @@ export default function EnvironmentModal({
               type="link"
               icon={<PlusOutlined />}
               onClick={() =>
-                setServers((items) => [
-                  ...items,
-                  {
-                    server_id: nextServerId(items),
-                    name: `服务${items.length + 1}`,
-                    uri: ''
-                  }
-                ])
+                setServers((items) => {
+                  const used = new Set(items.map((item) => (item.name ?? '').trim()))
+                  let suffix = items.length + 1
+                  while (used.has(`服务${suffix}`)) suffix += 1
+                  return [
+                    ...items,
+                    {
+                      server_id: nextServerId(items),
+                      name: `服务${suffix}`,
+                      uri: ''
+                    }
+                  ]
+                })
               }
             >
               添加服务

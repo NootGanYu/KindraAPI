@@ -41,7 +41,7 @@ const properties = {
 export const fieldDocsSchema = { type: 'array', description: '字段说明清单。每个已知字段必须同时提供 description、type、required、nullable、enum（无限制时 enum 显式传 null）；有枚举时必须提供逐项对应的 enum_descriptions。不允许根据字段名或示例值猜测业务含义。按路径增量合并，省略保留，remove 显式删除；无需 raw 中存在。', items: {
   type: 'object', properties: { ...properties, path: { type: 'string', description: '如 data.items[].id' }, pointer: { type: 'string', description: '或 JSON Pointer，如 /data/items/*/id' } }, additionalProperties: false
 } }
-export const paramsSchema = { type: 'array', description: '参数清单（headers/query/paths/cookies 通用）。每个已知参数都要有 description 与真实可执行的 value；按 key 增量合并，未提交参数保留，remove:true 删除。headers/query 传入时是整组覆盖，要保留的项必须一起传。Header 至少 Authorization、Content-Type、Accept（JSON 接口）；Long 类型 ID 用字符串，禁止留空或 {} 占位。', items: {
+export const paramsSchema = { type: 'array', description: '参数清单（headers/query/paths/cookies 通用）。每个已知参数都要有 description 与真实可执行的 value；按 key 增量合并，未提交参数保留，remove:true 删除。Header 至少 Authorization、Content-Type、Accept（JSON 接口）；Long 类型 ID 用字符串，禁止留空或 {} 占位。', items: {
   type: 'object', properties: { ...properties, key: { type: 'string' }, value: { type: 'string', description: '参数示例值，必须是真实可执行的取值，禁止留空或占位；数字也建议用字符串' }, checked: { type: 'boolean' }, field_type: { type: 'string', enum: [...FIELD_TYPES, 'file'] } }, required: ['key'], additionalProperties: false
 } }
 export const bodySchema = { type: 'object', properties: {

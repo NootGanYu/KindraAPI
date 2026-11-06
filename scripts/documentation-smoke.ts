@@ -70,6 +70,21 @@ async function main(): Promise<void> {
     '192.168.50.159',
     'VMware adapter must not be selected'
   )
+  assert.equal(
+    pickLanAddress([{ name: 'tailscale0', address: '100.101.102.103', family: 'IPv4' }]),
+    '127.0.0.1',
+    'VPN-only addresses must fall back to loopback'
+  )
+  assert.equal(
+    pickLanAddress([{ name: 'Clash', address: '198.18.0.1', family: 'IPv4' }]),
+    '127.0.0.1',
+    'Clash-only addresses must fall back to loopback'
+  )
+  assert.equal(
+    pickLanAddress([{ name: 'en0', address: '169.254.10.10', family: 'IPv4' }]),
+    '127.0.0.1',
+    'link-local-only addresses must fall back to loopback'
+  )
   const rootDocs = normalizeFieldDocs([{ pointer: '', nullable: true, description: '根对象' }, { pointer: '/id', type: 'integer', required: true }])!
   assert.equal(rootDocs[0].pointer, '')
   const rootSchema = buildFieldSchema('{"id":1}', rootDocs).schema
