@@ -877,7 +877,6 @@ function Welcome({ onCreate, onImport }: { onCreate: () => void; onImport: () =>
           <span className="brand-logo">K</span>
           <span>KindraAPI</span>
         </div>
-        <div className="welcome-title">真正重要的创意，不该经过任何一朵云。</div>
         <div className="welcome-sub">新建接口，或从左侧目录开始整理你的 API。</div>
         <div className="entry-grid">
           {ENTRIES.map((entry) => (

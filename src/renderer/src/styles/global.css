@@ -533,16 +533,10 @@ body {
   max-width: 80%;
 }
 
-.welcome-title {
-  font-size: 21px;
-  font-weight: 600;
-  margin: 18px 0 6px;
-  color: var(--font-title-color);
-}
-
 .welcome-sub {
   color: var(--font-light-color);
-  margin-bottom: 24px;
+  font-size: 15px;
+  margin: 12px 0 24px;
 }
 
 .entry-grid {
@@ -2724,9 +2718,12 @@ button {
 }
 .docs-link-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
   margin-top: 16px;
+}
+.docs-link-actions .ant-btn {
+  padding-inline: 8px;
 }
 .docs-service-state {
   display: flex;
