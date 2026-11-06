@@ -1,8 +1,11 @@
+import { isActiveFlowRunStatus } from '@shared/flow'
+import { redactEvidence } from '../flow/evidence'
 import { app } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeFlowEvents } from '../flow/definition'
 import { apiStatuses, defaultApiStatus } from '@shared/apiStatuses'
 import type {
   AppPaths,
@@ -993,6 +996,10 @@ function flowsDir(projectId: string): string {
 }
 
 function runsDir(projectId: string): string {
+  return path.join(localProjectDir(projectId), 'executions', 'runs')
+}
+
+function legacyRunsDir(projectId: string): string {
   return path.join(projectDir(projectId), 'executions', 'runs')
 }
 
@@ -1012,48 +1019,83 @@ export function listFlows(projectId: string): Flow[] {
     .filter((file) => file.endsWith('.json'))
     .map((file) => readJson<Flow | null>(path.join(dir, file), null))
     .filter((flow): flow is Flow => Boolean(flow))
+    .map(withFlowRevision)
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
 
 export function getFlow(projectId: string, flowId: string): Flow | null {
-  return readJson<Flow | null>(flowPath(projectId, flowId), null)
+  const flow = readJson<Flow | null>(flowPath(projectId, flowId), null)
+  return flow ? withFlowRevision(flow) : null
+}
+
+function withFlowRevision(flow: Flow): Flow {
+  const { revision: _revision, updated_at: _updated, ...definition } = flow
+  return { ...flow, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }
+}
+
+/** Read, validate and write without yielding, including legacy updates without a revision. */
+export function updateFlowChecked(
+  projectId: string, flowId: string, expectedRevision: string | undefined, update: (flow: Flow) => Flow
+): Flow {
+  const current = getFlow(projectId, flowId)
+  if (!current) throw new Error('流程不存在')
+  if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+    throw new Error('流程保存冲突：revision 已过期，请重新读取流程')
+  }
+  return saveFlow(projectId, update(current))
+}
+
+export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision: string): Flow {
+  if (!expectedRevision) throw new Error('流程保存需要 expected revision，请重新读取流程')
+  return updateFlowChecked(projectId, flow.flow_id, expectedRevision, () => flow)
 }
 
 export function saveFlow(projectId: string, flow: Flow): Flow {
   if (flow.project_id !== projectId) throw new Error('项目不匹配')
-  flow.updated_at = new Date().toISOString()
-  writeJson(flowPath(projectId, flow.flow_id), flow)
-  return flow
+  const saved = withFlowRevision({ ...flow, events: normalizeFlowEvents(flow.events), updated_at: new Date().toISOString() })
+  writeJson(flowPath(projectId, flow.flow_id), saved)
+  return saved
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
+  if (readFlowRuns(projectId).some(run => run.flow_id === flowId && isActiveFlowRunStatus(run.status))) {
+    throw new Error('活动运行绑定的流程不可删除')
+  }
   fs.rmSync(flowPath(projectId, flowId), { force: true })
 }
 
 function countResults(
   events: FlowEventResult[],
-  acc: { passed: number; failed: number; skipped: number }
+  acc: { passed: number; failed: number; skipped: number; blocked: number }
 ): void {
   for (const event of events) {
     if (event.status === 'passed') acc.passed += 1
     else if (event.status === 'failed') acc.failed += 1
-    else acc.skipped += 1
+    else if (event.status === 'blocked') acc.blocked += 1
+    else if (event.status === 'skipped') acc.skipped += 1
     if (event.children?.length) countResults(event.children, acc)
   }
 }
 
+/** Local evidence first; existing project reports remain readable without migration. */
+export function readFlowRuns(projectId: string): FlowRun[] {
+  const runs = new Map<string, FlowRun>()
+  for (const dir of [legacyRunsDir(projectId), runsDir(projectId)]) {
+    if (!fs.existsSync(dir)) continue
+    for (const file of fs.readdirSync(dir).filter(file => file.endsWith('.json'))) {
+      const run = readJson<FlowRun | null>(path.join(dir, file), null)
+      if (run?.project_id === projectId) runs.set(run.run_id, redactEvidence(run, [], 'run'))
+    }
+  }
+  return [...runs.values()]
+}
+
 export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
-  const dir = runsDir(projectId)
-  if (!fs.existsSync(dir)) return []
-  return fs
-    .readdirSync(dir)
-    .filter((file) => file.endsWith('.json'))
-    .map((file) => readJson<FlowRun | null>(path.join(dir, file), null))
-    .filter((run): run is FlowRun => Boolean(run))
+  return readFlowRuns(projectId)
     .sort((a, b) => b.started_at - a.started_at)
     .slice(0, Math.max(1, limit))
     .map((run) => {
-      const counts = { passed: 0, failed: 0, skipped: 0 }
+      const counts = { passed: 0, failed: 0, skipped: 0, blocked: 0 }
       countResults(run.events, counts)
       return {
         run_id: run.run_id,
@@ -1069,17 +1111,20 @@ export function listFlowRuns(projectId: string, limit = 30): FlowRunSummary[] {
 }
 
 export function getFlowRun(projectId: string, runId: string): FlowRun | null {
-  return readJson<FlowRun | null>(runPath(projectId, runId), null)
+  return redactEvidence(readJson<FlowRun | null>(runPath(projectId, runId), null)
+    ?? readJson<FlowRun | null>(path.join(legacyRunsDir(projectId), `${assertId(runId, 'run_id')}.json`), null), [], 'run')
 }
 
 export function saveFlowRun(projectId: string, run: FlowRun): FlowRun {
   if (run.project_id !== projectId) throw new Error('项目不匹配')
-  writeJson(runPath(projectId, run.run_id), run)
-  return run
+  const evidence = redactEvidence(run, [], 'run')
+  writeJson(runPath(projectId, run.run_id), evidence)
+  return evidence
 }
 
 export function clearFlowRuns(projectId: string): void {
   fs.rmSync(runsDir(projectId), { recursive: true, force: true })
+  fs.rmSync(legacyRunsDir(projectId), { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------

@@ -461,6 +461,11 @@ export interface FlowAssertion {
 
 export interface FlowEvent {
   event_id: string
+  /** Stable legacy step identity and full-step pause boundary. */
+  step_id?: string
+  logical_step_id?: string
+  /** Omitted: conservative sequence. Empty array: explicitly independent. References event IDs. */
+  depends_on?: string[]
   type: FlowEventType
   name: string
   enabled: boolean
@@ -486,6 +491,8 @@ export interface FlowEvent {
 }
 
 export interface Flow {
+  /** Content signature returned by storage; required for checked updates. */
+  revision?: string
   flow_id: string
   project_id: string
   name: string
@@ -505,11 +512,24 @@ export interface FlowResponseSnapshot {
   response_time: number
 }
 
+export interface FlowIteration {
+  event_id: string
+  iteration: number
+}
+
+export interface FlowExecutionCursor {
+  /** Root to current child list; ancestors still point at their active container. */
+  stack: Array<{ parent_event_id?: string; next_event_index: number; iteration?: number }>
+  after_instance_id?: string
+}
+
 export interface FlowEventResult {
   event_id: string
+  instance_id?: string
+  iteration_path?: FlowIteration[]
   name: string
   type: FlowEventType
-  status: 'passed' | 'failed' | 'skipped'
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked' | 'cancelled'
   started_at: number
   elapsed_ms: number
   detail?: string
@@ -524,9 +544,69 @@ export interface FlowEventResult {
   error?: string
   children?: FlowEventResult[]
   iteration?: number
+  definition_revision?: string
 }
 
+export interface FlowFileDependency {
+  path: string
+  sha256: string | null
+}
+
+export interface FlowExecutionSnapshot {
+  flow_revision: string
+  captured_at: number
+  environment_id: string
+  requests: Array<{ event_id: string; target_id: string; revision: string; files: FlowFileDependency[] }>
+}
+export interface FlowRefreshConflict {
+  event_id: string
+  field: string
+  old_value?: unknown
+  new_value?: unknown
+  override_value?: unknown
+  reason?: 'changed' | 'deleted' | 'type_changed'
+  resolution?: 'api' | 'override'
+}
+export interface FlowRefreshReference {
+  event_id: string
+  target_id: string
+  name: string
+  remaining_instances: number
+  previous_revision: string
+  next_revision: string
+  api_revision: string
+  effective_request: { method: string; url: string; headers: Array<{ key: string; value: string }>; body?: unknown }
+  conflicts: FlowRefreshConflict[]
+  scope_changes: string[]
+}
+export interface FlowScopeApproval {
+  preview_id: string
+  approved_at: number
+  fingerprint: string
+  environment_id: string
+  references: Array<{ event_id: string; next_revision: string; changes: string[] }>
+}
+export interface FlowRefreshPreview {
+  scope_approval?: FlowScopeApproval
+  preview_id: string
+  created_at: number
+  references: FlowRefreshReference[]
+  blockers: string[]
+}
+export interface FlowVersionSwitch {
+  scope_approval?: FlowScopeApproval
+  after_instance_id?: string
+  preview_id: string
+  applied_at: number
+  references: FlowRefreshReference[]
+}
+export type FlowRunStatus = 'permission_revoked' | 'cancelling' | 'cancelled' | 'running' | 'pausing' | 'paused' | 'passed' | 'failed' | 'interrupted' | 'unknown' | 'blocked'
+
 export interface FlowRun {
+  cursor?: FlowExecutionCursor
+  snapshot?: FlowExecutionSnapshot
+  refresh_preview?: FlowRefreshPreview
+  version_switches?: FlowVersionSwitch[]
   run_id: string
   project_id: string
   flow_id: string
@@ -534,11 +614,17 @@ export interface FlowRun {
   env_id: string
   started_at: number
   finished_at: number
-  status: 'passed' | 'failed'
+  status: FlowRunStatus
   elapsed_ms: number
   variables: Record<string, string>
   events: FlowEventResult[]
   console: ConsoleEntry[]
+  request_in_flight?: boolean
+  remote_outcome?: 'unknown'
+  request_id?: string
+  request_environment_id?: string
+  source?: 'ui' | 'mcp'
+  error?: string
 }
 
 export interface FlowRunSummary {
@@ -547,11 +633,12 @@ export interface FlowRunSummary {
   flow_id: string
   flow_name: string
   started_at: number
-  status: 'passed' | 'failed'
+  status: FlowRunStatus
   elapsed_ms: number
   passed: number
   failed: number
   skipped: number
+  blocked?: number
 }
 
 // ---------------------------------------------------------------------------

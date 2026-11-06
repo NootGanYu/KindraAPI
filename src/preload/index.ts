@@ -180,13 +180,23 @@ const api = {
   },
 
   flows: {
+    activeRuns: () => invoke('flow:runs:active'),
     list: (projectId: string) => invoke('flow:list', projectId),
     get: (projectId: string, flowId: string) => invoke('flow:get', projectId, flowId),
     create: (projectId: string, name: string) => invoke('flow:create', projectId, name),
-    save: (projectId: string, flow: unknown) => invoke('flow:save', projectId, flow),
+    save: (projectId: string, flow: unknown, expectedRevision: string) => invoke('flow:save', projectId, flow, expectedRevision),
     delete: (projectId: string, flowId: string) => invoke('flow:delete', projectId, flowId),
     run: (projectId: string, flowId: string, environmentId?: string) =>
       invoke('flow:run', projectId, flowId, environmentId),
+    startRun: (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
+      invoke('flow:run:start', projectId, flowId, environmentId, requestId),
+    cancelRun: (projectId: string, runId: string) => invoke('flow:run:cancel', projectId, runId),
+    pauseRun: (projectId: string, runId: string) => invoke('flow:run:pause', projectId, runId),
+    previewRunRefresh: (projectId: string, runId: string) => invoke('flow:run:refresh:preview', projectId, runId),
+    resolveRunConflict: (projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override') => invoke('flow:run:refresh:resolve-conflict', projectId, runId, previewId, eventId, field, choice),
+    approveRunScope: (projectId: string, runId: string, previewId: string) => invoke('flow:run:scope:approve', projectId, runId, previewId),
+    applyRunRefresh: (projectId: string, runId: string, previewId: string) => invoke('flow:run:refresh:apply', projectId, runId, previewId),
+    resumeRun: (projectId: string, runId: string) => invoke('flow:run:resume', projectId, runId),
     runs: (projectId: string, limit?: number) => invoke('flow:runs', projectId, limit),
     getRun: (projectId: string, runId: string) => invoke('flow:run:get', projectId, runId)
   },

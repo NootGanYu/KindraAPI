@@ -6,6 +6,7 @@ import type {
   BodyModel,
   ConsoleEntry,
   Environment,
+  FlowFileDependency,
   Param,
   RequestModel,
   SendRecord,
@@ -15,13 +16,14 @@ import { createId } from '@shared/factories'
 import * as store from '../storage/store'
 import { generateModelExample } from '../schema/example'
 import { mergeScriptVariables, requestScript } from './scripts'
+import { captureFileDependencies, verifiedFileResolver } from './files'
 
 const runtime = require('postman-runtime') as any
 const { Collection, VariableScope } = require('postman-collection') as any
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 
-interface ResolvedRequest {
+export interface ResolvedRequest {
   disabledSystemHeaders: Record<string, boolean>
   url: string
   method: string
@@ -248,6 +250,24 @@ function resolveRequest(projectId: string, target: Target, env: Environment | nu
   }
 }
 
+/** Resolved definitions are immutable for one Flow Run; variables stay mutable and separate. */
+export interface RequestExecutionDefinition {
+  target: Target
+  resolved: ResolvedRequest
+  files: FlowFileDependency[]
+}
+
+export interface RequestRunScopes {
+  environment: Record<string, string>
+  globals: Record<string, string>
+  local: Record<string, string>
+}
+
+export function captureRequestDefinition(projectId: string, target: Target, env: Environment | null): RequestExecutionDefinition {
+  const resolved = resolveRequest(projectId, target, env)
+  return JSON.parse(JSON.stringify({ target, resolved, files: captureFileDependencies(resolved.bodyModel) }))
+}
+
 function stripHeaderBreaks(value: string): string {
   return String(value ?? '').replace(/[\r\n]/g, '')
 }
@@ -387,13 +407,15 @@ export async function sendRequest(
   projectId: string,
   target: Target,
   environmentId?: string,
-  options: { signal?: AbortSignal } = {}
+  options: { requireResolvedVariables?: boolean; onRequestStart?: (auth: unknown) => void; signal?: AbortSignal; definition?: RequestExecutionDefinition; scopes?: RequestRunScopes; settings?: ReturnType<typeof store.getSettings> } = {}
 ): Promise<SendRecord> {
-  const settings = store.getSettings()
-  const { env, globals } = loadScopes(projectId, environmentId)
-  const resolved = resolveRequest(projectId, target, env)
+  const settings = options.settings ?? store.getSettings()
+  const { env, globals } = options.scopes ? { env: null, globals: { vars: {} } } : loadScopes(projectId, environmentId)
+  const resolved = options.definition?.resolved ?? resolveRequest(projectId, target, env)
+  target = options.definition?.target ?? target
+  const files = options.definition ? verifiedFileResolver(options.definition.files) : undefined
 
-  const environmentValues: Record<string, { current_value?: string; value?: string }> = env
+  const environmentValues: Record<string, { current_value?: string; value?: string }> = options.scopes ? Object.fromEntries(Object.entries(options.scopes.environment).map(([k, v]) => [k, { current_value: v }])) : env
     ? Object.fromEntries(
         Object.entries(env.env_var_list)
           .filter(([, v]) => v.is_checked > 0)
@@ -406,7 +428,7 @@ export async function sendRequest(
       value: resolved.baseUrl
     }
   }
-  const globalValues = Object.fromEntries(
+  const globalValues = options.scopes ? Object.fromEntries(Object.entries(options.scopes.globals).map(([k, v]) => [k, { current_value: v }])) : Object.fromEntries(
     Object.entries(globals.vars).map(([k, v]) => [
       k,
       { current_value: v.current_value, value: v.initial_value }
@@ -444,6 +466,8 @@ export async function sendRequest(
   let networkInfo: Record<string, unknown> | null = null
   const environmentScope = new VariableScope({ values: toValues(environmentValues) })
   const globalScope = new VariableScope({ values: toValues(globalValues) })
+  const localScope = new VariableScope({ values: Object.entries(options.scopes?.local ?? {}).map(([key, value]) => ({ key, value })) })
+  let finalLocalScope = localScope
   const environmentBefore = environmentScope.toObject()
   const globalsBefore = globalScope.toObject()
 
@@ -457,6 +481,7 @@ export async function sendRequest(
     let requestRef: any = null
     const activeRequests = new Map<string, { abort: () => void }>()
     const abort = (): void => {
+      if (settled) return
       // run.abort 只清后续队列，正在等待网络/脚本时还需中止实际资源。
       runtimeRun?.abort()
       for (const request of activeRequests.values()) request.abort()
@@ -497,10 +522,10 @@ export async function sendRequest(
         abortOnError: true,
         stopOnScriptError: true,
         iterationCount: 1,
-        fileResolver: fs,
+        fileResolver: files ?? fs,
         environment: environmentScope,
         globals: globalScope,
-        localVariables: new VariableScope({ values: [] })
+        localVariables: localScope
       },
       (err: Error | null, run: any) => {
         if (err) {
@@ -508,12 +533,35 @@ export async function sendRequest(
           return
         }
         runtimeRun = run
+        if (settled) { run.abort(); run.host?.dispose(); return }
         if (options.signal?.aborted) { abort(); return }
         let responseRef: any = null
         let responseError: Error | null = null
         run.start({
+          script: (_error: unknown, _cursor: unknown, execution: any) => {
+            if (!settled && execution?._variables) finalLocalScope = execution._variables
+          },
           beforeRequest: (_error: unknown, _cursor: unknown, request: unknown, _item: unknown, controls: { httpRequestId: string; abort: () => void }) => {
+            if (settled || options.signal?.aborted) { controls.abort(); return }
+            try { files?.check() } catch (error) {
+              controls.abort()
+              finish({ error: { type: 'file-changed', message: (error as Error).message }, response: null, request: null })
+              return
+            }
+            if (options.requireResolvedVariables) {
+              // Postman has applied API pre-scripts and variable scopes at this point.
+              const outgoing = request as { url?: { toString(): string }; headers?: { toJSON(): unknown }; body?: { toJSON(): unknown }; auth?: { toJSON(): unknown } }
+              let text = JSON.stringify({ url: outgoing.url?.toString(), headers: outgoing.headers?.toJSON(), body: outgoing.body?.toJSON(), auth: outgoing.auth?.toJSON() })
+              try { text = decodeURIComponent(text) } catch { /* preserve malformed URL escapes */ }
+              const missing = text.match(/\{\{\s*([^{}]+?)\s*\}\}/)
+              if (missing) {
+                controls.abort()
+                finish({ error: { type: 'missing-variable', message: `缺少运行变量 ${missing[1]}，无法满足请求前置条件` }, response: null, request })
+                return
+              }
+            }
             requestRef = request
+            options.onRequestStart?.((request as { auth?: { toJSON(): unknown } }).auth?.toJSON())
             activeRequests.set(controls.httpRequestId, controls)
             if (options.signal?.aborted) controls.abort()
           },
@@ -542,6 +590,7 @@ export async function sendRequest(
             }
           },
           assertion: (_cursor: unknown, results: any[]) => {
+            if (settled) return
             for (const item of results ?? []) {
               const errorText = item.error
                 ? String(item.error.message ?? item.error)
@@ -555,9 +604,11 @@ export async function sendRequest(
             }
           },
           exception: (_cursor: unknown, error: Error) => {
+            if (settled) return
             responseError = error
           },
           console: (_cursor: unknown, level: string, ...args: unknown[]) => {
+            if (settled) return
             consoleEntries.push({
               time: Date.now(),
               level,
@@ -588,7 +639,13 @@ export async function sendRequest(
   })
 
   const finishedAt = Date.now()
-  if (result.error?.type !== 'cancelled') {
+  if (result.error?.type !== 'cancelled' && options.scopes) {
+    for (const [destination, source] of [[options.scopes.environment, environmentScope], [options.scopes.globals, globalScope], [options.scopes.local, finalLocalScope]] as const) {
+      for (const key of Object.keys(destination)) delete destination[key]
+      for (const [key, value] of Object.entries(source.toObject())) destination[key] = String(value)
+    }
+  }
+  if (result.error?.type !== 'cancelled' && !options.scopes) {
     if (env) {
       const current = store.listEnvironments(projectId).find(item => item.env_id === env.env_id)
       if (current) {

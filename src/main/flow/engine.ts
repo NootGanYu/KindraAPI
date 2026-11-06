@@ -1,4 +1,6 @@
 import vm from 'node:vm'
+import crypto from 'node:crypto'
+import { FlowFileChangedError, verifiedFileResolver } from '../request/files'
 import type {
   AssertionResult,
   ConsoleEntry,
@@ -7,6 +9,8 @@ import type {
   FlowAssertion,
   FlowEvent,
   FlowEventResult,
+  FlowExecutionCursor,
+  FlowExecutionSnapshot,
   FlowRequestInput,
   FlowResponseSnapshot,
   FlowRun,
@@ -17,14 +21,24 @@ import type {
 } from '@shared/types'
 import { createId, createParam, createRequest, createTarget } from '@shared/factories'
 import * as store from '../storage/store'
-import { sendRequest } from '../request/executor'
+import { captureRequestDefinition, sendRequest, type RequestExecutionDefinition } from '../request/executor'
+import { authenticationSecrets, redactEvidence } from './evidence'
+import { FlowDependencies } from './dependencies'
+import { selectFlowEnvironment } from './environment'
+import { FlowRefreshController, definitionRevision } from './refresh'
 
 const MAX_LOOP = 50
 const MAX_WAIT_MS = 60_000
 const SCRIPT_TIMEOUT_MS = 3_000
+const loopBound = (event: FlowEvent): number => Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const finish = (): void => { clearTimeout(timer); signal?.removeEventListener('abort', finish); resolve() }
+    const timer = setTimeout(finish, ms)
+    if (signal?.aborted) finish()
+    else signal?.addEventListener('abort', finish, { once: true })
+  })
 }
 
 function clone<T>(value: T): T {
@@ -134,8 +148,32 @@ class FlowRuntime {
   localValues: Record<string, string> = {}
   consoleEntries: ConsoleEntry[] = []
   lastResponse: FlowResponseSnapshot | null = null
-  private envDirty = false
-  private globalsDirty = false
+  progressRoot: FlowEventResult[] = []
+  resultStack: FlowEventResult[] = []
+  frames: FlowExecutionCursor['stack'] = []
+  cursor: FlowExecutionCursor = { stack: [] }
+  onProgress?: () => void
+  logicalStepDepth = 0
+  requestInFlight = false
+  remoteUnknown = false
+  dependencies!: FlowDependencies
+  refresh!: FlowRefreshController
+  private readonly authSecrets = new Set<string>()
+  rememberAuth(auth: unknown): void {
+    const variables = { ...this.globalValues, ...this.envValues, ...this.localValues }
+    for (const secret of authenticationSecrets(auth, variables)) this.authSecrets.add(secret)
+  }
+  evidenceSeeds(): unknown[] {
+    for (const definition of this.definitions.values()) this.rememberAuth(definition.resolved.auth)
+    return [this.globalValues, this.envValues, this.localValues, { credential: [...this.authSecrets] }]
+  }
+  readonly definitions = new Map<string, RequestExecutionDefinition>()
+  readonly settings = store.getSettings()
+  onReviewRequired?: (message: string) => Promise<void>
+  signal?: AbortSignal
+  onBeforeStep?: () => Promise<void>
+  onStepBoundary?: () => Promise<void>
+
 
   constructor(projectId: string, env: Environment | null, globals: GlobalVars) {
     this.projectId = projectId
@@ -145,11 +183,11 @@ class FlowRuntime {
     this.globalValues = {}
     if (env) {
       for (const [key, value] of Object.entries(env.env_var_list)) {
-        this.envValues[key] = value.current_value || value.initial_value || ''
+        if (value.is_checked > 0) this.envValues[key] = value.current_value ?? value.initial_value ?? ''
       }
     }
     for (const [key, value] of Object.entries(globals.vars)) {
-      this.globalValues[key] = value.current_value || value.initial_value || ''
+      this.globalValues[key] = value.current_value ?? value.initial_value ?? ''
     }
   }
 
@@ -161,12 +199,10 @@ class FlowRuntime {
 
   setEnv(key: string, value: string): void {
     this.envValues[key] = value
-    this.envDirty = true
   }
 
   setGlobal(key: string, value: string): void {
     this.globalValues[key] = value
-    this.globalsDirty = true
   }
 
   setLocal(key: string, value: string): void {
@@ -189,41 +225,6 @@ class FlowRuntime {
         }
       })
     })
-  }
-
-  persist(): void {
-    if (this.env && this.envDirty) {
-      for (const [key, value] of Object.entries(this.envValues)) {
-        const existing = this.env.env_var_list[key]
-        if (existing) {
-          existing.current_value = value
-          existing.is_checked = existing.is_checked > 0 ? existing.is_checked : 1
-        } else {
-          this.env.env_var_list[key] = {
-            current_value: value,
-            initial_value: '',
-            description: '',
-            is_checked: 1
-          }
-        }
-      }
-      store.saveEnvironment(this.projectId, this.env)
-      this.envDirty = false
-    }
-    if (this.globalsDirty) {
-      for (const [key, value] of Object.entries(this.globalValues)) {
-        const existing = this.globals.vars[key]
-        if (existing) existing.current_value = value
-        else
-          this.globals.vars[key] = {
-            current_value: value,
-            initial_value: '',
-            description: ''
-          }
-      }
-      store.saveGlobalVars(this.projectId, this.globals)
-      this.globalsDirty = false
-    }
   }
 }
 
@@ -444,7 +445,7 @@ function mergeParams(
       existing.value = value
       existing.is_checked = 1
     } else {
-      params.push(createParam({ key, value }))
+      params.push(createParam({ param_id: `flow-input:${keyOf(key)}`, key, value }))
     }
   }
   return params
@@ -528,8 +529,20 @@ function skipped(events: FlowEvent[] | undefined, detail: string): FlowEventResu
   }))
 }
 
+function blockedChildren(events: FlowEvent[] | undefined, detail: string): FlowEventResult[] {
+  return (events ?? []).map(event => result(event, 'blocked', Date.now(), { detail, children: blockedChildren(event.children, detail) }))
+}
+
 function hasFailure(events: FlowEventResult[]): boolean {
   return events.some((event) => event.status === 'failed' || hasFailure(event.children ?? []))
+}
+
+function hasBlocked(events: FlowEventResult[]): boolean {
+  return events.some(event => event.status === 'blocked' || hasBlocked(event.children ?? []))
+}
+
+function completedStatus(events: FlowEventResult[]): 'blocked' | 'failed' | 'passed' {
+  return hasBlocked(events) ? 'blocked' : hasFailure(events) ? 'failed' : 'passed'
 }
 
 function countFailed(events: FlowEventResult[]): number {
@@ -588,25 +601,33 @@ async function runRequestEvent(
   let target: Target | null = null
   if (event.type === 'api') {
     if (!event.target_id) return result(event, 'failed', startedAt, { error: '未选择接口' })
-    target = store.getTarget(projectId, event.target_id)
+    target = runtime.definitions.get(event.event_id)?.target ?? null
     if (!target) return result(event, 'failed', startedAt, { error: '接口不存在或已删除' })
   } else {
     target = inlineTarget(projectId, event)
   }
 
   const prepared = applyRequestInput(target, event.input)
-  runtime.persist()
+  let dispatched = false
   try {
-    const record = await sendRequest(projectId, prepared, flow.env_id || undefined)
-    store.addSendRecord(projectId, record)
+    const record = await sendRequest(projectId, prepared, runtime.env?.env_id || undefined, {
+      signal: runtime.signal,
+      requireResolvedVariables: runtime.refresh.validateDispatch,
+      onRequestStart: auth => { runtime.rememberAuth(auth); dispatched = true; runtime.requestInFlight = true; runtime.onProgress?.() },
+      definition: runtime.definitions.get(event.event_id), settings: runtime.settings,
+      scopes: { environment: runtime.envValues, globals: runtime.globalValues, local: runtime.localValues }
+    })
+    runtime.requestInFlight = false
+    if (dispatched && record.error && record.error.type !== 'file-changed' && !record.response) runtime.remoteUnknown = true
+    store.addSendRecord(projectId, redactEvidence(record, runtime.evidenceSeeds(), 'send'))
     runtime.lastResponse = toFlowResponse(record)
     for (const entry of record.console) runtime.consoleEntries.push(entry)
 
-    const assertions = (event.assertions ?? []).map((assertion) =>
+    const assertions = [...record.assertions, ...(event.assertions ?? []).map((assertion) =>
       evalAssertion(assertion, runtime.lastResponse)
-    )
-    const failed = assertions.some((assertion) => !assertion.passed)
-    const status: FlowEventResult['status'] = record.error || !record.response || failed ? 'failed' : 'passed'
+    )]
+    const failed = assertions.some((assertion) => !assertion.passed && !assertion.skipped)
+    const status: FlowEventResult['status'] = record.error?.type === 'cancelled' ? 'cancelled' : record.error || !record.response || failed ? 'failed' : 'passed'
     const detail = record.error
       ? record.error.message
       : record.response
@@ -615,6 +636,7 @@ async function runRequestEvent(
 
     return result(event, status, startedAt, {
       detail,
+      definition_revision: runtime.definitions.has(event.event_id) ? definitionRevision(runtime.definitions.get(event.event_id)!) : undefined,
       request: {
         method: record.request.method,
         url: record.request.url,
@@ -631,6 +653,14 @@ async function runRequestEvent(
       error: record.error?.message
     })
   } catch (error) {
+    if (error instanceof FlowFileChangedError && runtime.onReviewRequired) {
+      await runtime.onReviewRequired(error.message)
+      if (runtime.signal?.aborted) return result(event, 'cancelled', startedAt)
+      // Verification happens before API scripts or dispatch, so only this unsent request continues.
+      return runRequestEvent(projectId, event, runtime, flow)
+    }
+    if (runtime.requestInFlight) runtime.remoteUnknown = true
+    runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -656,7 +686,6 @@ async function runEvent(
 
     if (event.type === 'script') {
       const scriptResult = runScript(runtime, event.script ?? '')
-      runtime.persist()
       const failed = Boolean(scriptResult.error) || scriptResult.assertions.some((a) => !a.passed)
       const passedCount = scriptResult.assertions.filter((a) => a.passed).length
       const detail = scriptResult.error
@@ -688,8 +717,8 @@ async function runEvent(
 
     if (event.type === 'wait') {
       const ms = Math.min(Math.max(Number(event.wait_ms ?? 500), 0), MAX_WAIT_MS)
-      await sleep(ms)
-      return result(event, 'passed', startedAt, { detail: `等待 ${ms} ms` })
+      await sleep(ms, runtime.signal)
+      return result(event, runtime.signal?.aborted ? 'cancelled' : 'passed', startedAt, { detail: runtime.signal?.aborted ? '等待已取消' : `等待 ${ms} ms` })
     }
 
     if (event.type === 'if') {
@@ -707,32 +736,39 @@ async function runEvent(
           children: skipped(event.children, '条件不成立')
         })
       }
-      const children = await runEvents(projectId, event.children ?? [], runtime, flow)
+      const children = runtime.resultStack.at(-1)!.children = []
+      await runEvents(projectId, event.children ?? [], runtime, flow, children)
       const failed = hasFailure(children)
-      return result(event, failed ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `条件成立：${event.condition ?? ''}`,
         children
       })
     }
 
     if (event.type === 'begin') {
-      const children = await runEvents(projectId, event.children ?? [], runtime, flow)
-      return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
+      const children = runtime.resultStack.at(-1)!.children = []
+      await runEvents(projectId, event.children ?? [], runtime, flow, children)
+      return result(event, completedStatus(children), startedAt, {
         detail: `分组 ${children.length} 个事件`,
         children
       })
     }
 
     if (event.type === 'loop') {
-      const count = Math.min(Math.max(Number(event.loop_count ?? 1), 1), MAX_LOOP)
-      const children: FlowEventResult[] = []
-      for (let index = 0; index < count; index += 1) {
-        runtime.setLocal('loop_index', String(index))
-        const iterationResults = await runEvents(projectId, event.children ?? [], runtime, flow)
-        children.push(...iterationResults.map((item) => ({ ...item, iteration: index })))
+      const count = loopBound(event)
+      const children: FlowEventResult[] = runtime.resultStack.at(-1)!.children = []
+      const previousIndex = runtime.localValues.loop_index
+      try {
+        for (let index = 0; index < count; index += 1) {
+          if (runtime.signal?.aborted) break
+          runtime.setLocal('loop_index', String(index))
+          await runEvents(projectId, event.children ?? [], runtime, flow, children, index)
+        }
+      } finally {
+        if (previousIndex === undefined) runtime.unsetLocal('loop_index')
+        else runtime.setLocal('loop_index', previousIndex)
       }
-      runtime.unsetLocal('loop_index')
-      return result(event, hasFailure(children) ? 'failed' : 'passed', startedAt, {
+      return result(event, completedStatus(children), startedAt, {
         detail: `循环 ${count} 轮`,
         children
       })
@@ -740,6 +776,8 @@ async function runEvent(
 
     return result(event, 'failed', startedAt, { error: `未知事件类型：${event.type}` })
   } catch (error) {
+    if (runtime.requestInFlight) runtime.remoteUnknown = true
+    runtime.requestInFlight = false
     return result(event, 'failed', startedAt, { error: (error as Error).message })
   }
 }
@@ -748,11 +786,85 @@ async function runEvents(
   projectId: string,
   events: FlowEvent[],
   runtime: FlowRuntime,
-  flow: Flow
+  flow: Flow,
+  results: FlowEventResult[] = runtime.progressRoot,
+  iteration?: number
 ): Promise<FlowEventResult[]> {
-  const results: FlowEventResult[] = []
-  for (const event of events) {
-    results.push(await runEvent(projectId, event, runtime, flow))
+  const frame: FlowExecutionCursor['stack'][number] = {
+    parent_event_id: runtime.resultStack.at(-1)?.event_id, next_event_index: 0, iteration
+  }
+  runtime.frames.push(frame)
+  const iterationPath = runtime.frames
+    .filter(item => item.iteration !== undefined && item.parent_event_id)
+    .map(item => ({ event_id: item.parent_event_id!, iteration: item.iteration! }))
+  const identify = (item: FlowEventResult): FlowEventResult => {
+    item.iteration_path ??= clone(iterationPath)
+    item.instance_id ??= JSON.stringify([item.event_id, item.iteration_path])
+    for (const child of item.children ?? []) identify(child)
+    return item
+  }
+  const updateCursor = (afterInstanceId = runtime.cursor.after_instance_id): void => {
+    runtime.cursor = { stack: clone(runtime.frames), after_instance_id: afterInstanceId }
+  }
+  try {
+    for (const [index, event] of events.entries()) {
+      if (runtime.signal?.aborted) break
+      frame.next_event_index = index
+      updateCursor()
+      const logicalId = (item: FlowEvent): string => item.logical_step_id ?? item.step_id ?? item.event_id
+      if (!index || logicalId(events[index - 1]) !== logicalId(event)) {
+        await runtime.onBeforeStep?.()
+        // Check the whole logical step before its first script. A later file change is
+        // checked again by sendRequest before its own scripts, without replaying this group.
+        for (const pending of events.slice(index)) {
+          if (logicalId(pending) !== logicalId(event)) break
+          if (!pending.enabled) continue
+          while (!runtime.signal?.aborted) {
+            try { verifiedFileResolver(runtime.definitions.get(pending.event_id)?.files ?? []); break }
+            catch (error) {
+              if (!(error instanceof FlowFileChangedError) || !runtime.onReviewRequired) throw error
+              runtime.onProgress?.()
+              await runtime.onReviewRequired(error.message)
+            }
+          }
+        }
+      }
+      if (runtime.signal?.aborted) break
+      let current: FlowEventResult
+      {
+        const reason = runtime.dependencies.blockedReason(event, results, iterationPath)
+        if (reason) {
+          current = identify(result(event, 'blocked', Date.now(), { iteration, detail: reason, children: blockedChildren(event.children, reason) }))
+          results.push(current)
+          runtime.dependencies.record(current)
+        } else {
+          current = identify(result(event, 'running', Date.now(), { iteration }))
+          results.push(current)
+          runtime.resultStack.push(current)
+          runtime.onProgress?.()
+          // A container that belongs to a surrounding multi-member logical step
+          // cannot publish a child pause boundary before that outer step finishes.
+          const groupedContainer = Boolean(event.children && (event.logical_step_id || event.step_id) &&
+            ((index > 0 && logicalId(events[index - 1]) === logicalId(event)) ||
+              (events[index + 1] && logicalId(events[index + 1]) === logicalId(event))))
+          if (groupedContainer) runtime.logicalStepDepth++
+          try { Object.assign(current, await runEvent(projectId, event, runtime, flow)) }
+          finally { if (groupedContainer) runtime.logicalStepDepth-- }
+          if (runtime.signal?.aborted) current.status = 'cancelled'
+          identify(current)
+          runtime.dependencies.record(current)
+          runtime.resultStack.pop()
+        }
+      }
+      frame.next_event_index = index + 1
+      updateCursor(current.instance_id)
+      runtime.onProgress?.()
+      const next = events[index + 1]
+      if (!runtime.signal?.aborted && runtime.logicalStepDepth === 0 && (!next || logicalId(event) !== logicalId(next))) await runtime.onStepBoundary?.()
+    }
+  } finally {
+    runtime.frames.pop()
+    updateCursor()
   }
   return results
 }
@@ -760,34 +872,117 @@ async function runEvents(
 export async function runFlow(
   projectId: string,
   flow: Flow,
-  environmentId?: string
+  environmentId?: string,
+  options: { signal?: AbortSignal; runId?: string; startedAt?: number; onProgress?: (run: FlowRun) => void; onSnapshot?: (snapshot: FlowExecutionSnapshot) => void; onStepBoundary?: () => Promise<void>; onBeforeStep?: () => Promise<void>; onReviewRequired?: (message: string) => Promise<void>; onControl?: (controller: FlowRefreshController) => void } = {}
 ): Promise<FlowRun> {
-  const envs = store.listEnvironments(projectId)
-  const settings = store.getSettings()
-  const preferredEnvId = environmentId || flow.env_id || settings.environment_id
-  const env = envs.find((item) => item.env_id === preferredEnvId) ?? envs[0] ?? null
+  const env = selectFlowEnvironment(projectId, flow, environmentId)
   const globals = store.getGlobalVars(projectId)
+  flow = clone(flow)
   const runtime = new FlowRuntime(projectId, env, globals)
-  const startedAt = Date.now()
+  runtime.dependencies = new FlowDependencies(flow.events)
+  runtime.signal = options.signal
+  runtime.onStepBoundary = options.onStepBoundary
+  runtime.onBeforeStep = options.onBeforeStep
+  runtime.onReviewRequired = options.onReviewRequired
+  const capture = (events: FlowEvent[]): void => {
+    for (const event of events) {
+      const target = event.type === 'api' && event.target_id
+        ? store.getTarget(projectId, event.target_id)
+        : event.type === 'request' ? inlineTarget(projectId, event) : null
+      if (target) {
+        runtime.definitions.set(event.event_id,
+          captureRequestDefinition(projectId, applyRequestInput(target, event.input), env))
+      }
+      capture(event.children ?? [])
+    }
+  }
+  capture(flow.events)
+  const byId = new Map<string, FlowEvent>()
+  const indexEvents = (events: FlowEvent[]): void => { for (const event of events) { byId.set(event.event_id, event); indexEvents(event.children ?? []) } }
+  indexEvents(flow.events)
+  const continuationAt = (index: number): { events: FlowEvent[]; suffix: FlowEvent[]; remainingIterations: number } => {
+    const frame = runtime.frames[index]
+    const parent = frame.parent_event_id ? byId.get(frame.parent_event_id) : undefined
+    const events = parent?.children ?? flow.events
+    // Ancestors still point at the active child; the deepest frame already advanced.
+    const offset = frame.next_event_index + (index < runtime.frames.length - 1 ? 1 : 0)
+    return { events, suffix: events.slice(offset),
+      remainingIterations: parent?.type === 'loop' ? loopBound(parent) - (frame.iteration ?? 0) - 1 : 0 }
+  }
+  const remaining = (): Array<{ event: FlowEvent; count: number }> => {
+    const pending = new Map<string, { event: FlowEvent; count: number }>()
+    const add = (events: FlowEvent[], count = 1): void => { for (const event of events) {
+      if (!event.enabled || count < 1) continue
+      if (event.type === 'api' || event.type === 'request') pending.set(event.event_id, { event, count: count + (pending.get(event.event_id)?.count ?? 0) })
+      add(event.children ?? [], count * (event.type === 'loop' ? loopBound(event) : 1))
+    } }
+    if (!runtime.frames.length) add(flow.events)
+    runtime.frames.forEach((_frame, index) => {
+      const { events, suffix, remainingIterations } = continuationAt(index)
+      add(suffix)
+      add(events, remainingIterations)
+    })
+    return [...pending.values()]
+  }
+  const nextEvent = (): FlowEvent | undefined => {
+    // The deepest frame is the continuation position; walk outward if its sequence ended.
+    for (let index = runtime.frames.length - 1; index >= 0; index--) {
+      const { events, suffix, remainingIterations } = continuationAt(index)
+      const next = suffix.find(event => event.enabled)
+      if (next) return next
+      if (remainingIterations > 0) return events.find(event => event.enabled)
+    }
+    return undefined
+  }
+  runtime.refresh = new FlowRefreshController(projectId, env, runtime.definitions, remaining, applyRequestInput,
+    () => ({ ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues }), flow.events, () => runtime.cursor.after_instance_id, nextEvent, () => runtime.evidenceSeeds())
+  options.onControl?.(runtime.refresh)
+  const snapshot: FlowExecutionSnapshot = {
+    flow_revision: flow.revision ?? crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
+    captured_at: Date.now(),
+    environment_id: env?.env_id ?? '',
+    requests: [...runtime.definitions].map(([event_id, definition]) => ({
+      event_id,
+      target_id: definition.target.target_id,
+      files: definition.files,
+      revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex')
+    }))
+  }
+  options.onSnapshot?.(snapshot)
+
+  const startedAt = options.startedAt ?? Date.now()
+  const runId = options.runId ?? createId('run')
+  runtime.onProgress = () => options.onProgress?.(redactEvidence({
+    run_id: runId, project_id: projectId, flow_id: flow.flow_id, flow_name: flow.name,
+    env_id: env?.env_id ?? '', started_at: startedAt, finished_at: 0, status: 'running',
+    elapsed_ms: Date.now() - startedAt, variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
+    cursor: runtime.cursor, events: runtime.progressRoot, console: runtime.consoleEntries, request_in_flight: runtime.requestInFlight,
+    remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined
+  }, runtime.evidenceSeeds(), 'run'))
   const events = await runEvents(projectId, flow.events, runtime, flow)
-  runtime.persist()
   const finishedAt = Date.now()
   const run: FlowRun = {
-    run_id: createId('run'),
+    cursor: runtime.cursor,
+    snapshot,
+    run_id: runId,
     project_id: projectId,
     flow_id: flow.flow_id,
     flow_name: flow.name,
     env_id: env?.env_id ?? '',
     started_at: startedAt,
     finished_at: finishedAt,
-    status: hasFailure(events) ? 'failed' : 'passed',
+    status: runtime.signal?.aborted ? 'cancelled' : runtime.remoteUnknown ? 'unknown' : completedStatus(events),
     elapsed_ms: finishedAt - startedAt,
-    variables: { ...runtime.envValues },
+    variables: { ...runtime.globalValues, ...runtime.envValues, ...runtime.localValues },
+    request_in_flight: false,
+    remote_outcome: runtime.remoteUnknown ? 'unknown' : undefined,
+    error: runtime.signal?.aborted ? (runtime.remoteUnknown ? '运行已取消；已发送请求的远端结果未知，不保证回滚，不会自动重试' : '运行已取消，不会自动重试') : undefined,
     events,
     console: runtime.consoleEntries
   }
-  store.saveFlowRun(projectId, run)
-  return run
+  const evidence = redactEvidence(run, runtime.evidenceSeeds(), 'run')
+  if (!options.onProgress) store.saveFlowRun(projectId, evidence)
+  return evidence
 }
 
 export function flowRunFailureCount(run: FlowRun): number {

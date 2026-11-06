@@ -20,6 +20,7 @@ import type {
   Environment,
   Flow,
   FlowRun,
+  FlowRefreshPreview,
   FlowRunSummary,
   GeneratedExampleResult,
   GitAvailability,
@@ -265,12 +266,21 @@ export interface ApiBridge {
     ): Promise<Result<ImportDbResult>>
   }
   flows: {
+    activeRuns(): Promise<Result<FlowRun[]>>
     list(projectId: string): Promise<Result<Flow[]>>
     get(projectId: string, flowId: string): Promise<Result<Flow | null>>
     create(projectId: string, name: string): Promise<Result<Flow>>
-    save(projectId: string, flow: Flow): Promise<Result<Flow>>
+    save(projectId: string, flow: Flow, expectedRevision: string): Promise<Result<Flow>>
     delete(projectId: string, flowId: string): Promise<Result<boolean>>
     run(projectId: string, flowId: string, environmentId?: string): Promise<Result<FlowRun>>
+    cancelRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    pauseRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    previewRunRefresh(projectId: string, runId: string): Promise<Result<FlowRefreshPreview>>
+    resolveRunConflict(projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override'): Promise<Result<FlowRefreshPreview>>
+    approveRunScope(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
+    applyRunRefresh(projectId: string, runId: string, previewId: string): Promise<Result<FlowRun>>
+    resumeRun(projectId: string, runId: string): Promise<Result<FlowRun>>
+    startRun(projectId: string, flowId: string, environmentId: string | undefined, requestId: string): Promise<Result<FlowRun>>
     runs(projectId: string, limit?: number): Promise<Result<FlowRunSummary[]>>
     getRun(projectId: string, runId: string): Promise<Result<FlowRun | null>>
   }

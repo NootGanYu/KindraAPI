@@ -39,7 +39,7 @@ function Shell(): JSX.Element {
 }
 
 function QuitGuard(): JSX.Element {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const saveTarget = useApp((s) => s.saveTarget)
   const closing = useRef(false)
 
@@ -49,6 +49,17 @@ function QuitGuard(): JSX.Element {
       closing.current = true
       void (async () => {
         try {
+          const active = await window.api.flows.activeRuns()
+          if (!active.ok) throw new Error(active.error)
+          if (active.data.length) {
+            const confirmed = await new Promise<boolean>((resolve) => modal.confirm({
+              title: '退出将终止活动运行',
+              content: `当前有 ${active.data.length} 个活动 Run。已完成结果会保留；在途请求的远端结果可能未知，重启后不会自动续跑。`,
+              okText: '终止运行并退出', cancelText: '留在应用',
+              onOk: () => resolve(true), onCancel: () => resolve(false)
+            }))
+            if (!confirmed) { closing.current = false; return }
+          }
           const dirty = useApp.getState().tabs.filter((tab) => tab.dirty)
           for (const tab of dirty) await saveTarget(tab.id)
           await window.api.app.confirmClose()
@@ -59,7 +70,7 @@ function QuitGuard(): JSX.Element {
         }
       })()
     })
-  }, [message, saveTarget])
+  }, [message, modal, saveTarget])
 
   return <></>
 }

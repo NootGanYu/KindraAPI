@@ -121,17 +121,26 @@ Testing 树中的节点，字段标识：`event_id`、`type`、`data`、`childre
 Testing 的汇总报告用的是 `report_id`，不要与 `run_id` 混用。
 
 **MCP Execution Flow（原应用的 MCP 执行流程）**
-Original App 中由 MCP 工具创建、保存于 `executions/flows/` 的步骤序列。
+Original App 中可由用户或外部 AI 编排、保存并重复运行的 HTTP 接口步骤序列；原应用界面称为“AI 执行计划”。
 字段标识：`flow_id`、`steps[].step_id`。
 **不要**把它与 Testing 事件树都简称为“流程”；必要时写全称。
+_Avoid_: Testing、Agent 操作计划
+
+**Execution Snapshot（运行快照）**
+一次流程运行采用的接口、步骤及相关配置定义的固定版本；暂停后可为尚未执行的步骤形成新版本，步骤间传递的运行变量另行维护。
+_Avoid_: 接口草稿、原应用持久化步骤快照
+
+**Agent Plan（Agent 操作计划）**
+一轮任务中可获批准的目标、修改、执行环境和操作范围；它可以包含运行某个 Execution Flow 的操作。
+_Avoid_: 执行流程、原应用 AI 执行计划
 
 **API Case（接口用例，Kindra）**
 针对单个接口定义的参数覆盖与断言，用于验证该接口的不同情形。
 _Avoid_: 执行流程、原应用 Testing
 
 **Execution Flow（执行流程，Kindra）**
-由跨接口请求、条件、循环等步骤组成的可执行流程。
-_Avoid_: 接口用例、原应用 MCP Execution Flow
+由跨接口请求、条件、循环等步骤组成的可执行流程，可保存后重复运行。
+_Avoid_: 接口用例、Agent 操作计划、原应用 MCP Execution Flow
 
 ## 字典
 

@@ -8,6 +8,7 @@ import { registerIpc } from './ipc'
 import { applyDebugSwitch, ensureDefaultProject } from './storage/store'
 import { shutdownMcp, startMcpServer } from './mcp/server'
 import { shutdownDocs, startDocServer } from './docs/server'
+import { recoverAllFlowRuns } from './flow/service'
 import { shutdownMqtt } from './mqtt/sessionManager'
 
 const appData = app.getPath('appData')
@@ -210,6 +211,7 @@ if (!gotLock) {
     })
 
     ensureDefaultProject()
+    recoverAllFlowRuns()
     registerIpc()
     void startMcpServer()
     void startDocServer()

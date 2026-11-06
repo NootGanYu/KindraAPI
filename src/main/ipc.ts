@@ -37,7 +37,7 @@ import * as git from './git/git'
 import { resolveEffectiveRequest, sendRequest } from './request/executor'
 import { runApiCase, runApiCases } from './request/cases'
 import { generateCurl } from './codegen/curl'
-import { runFlow } from './flow/engine'
+import { getActiveFlowRuns, listFlowRuns, runSavedFlow, startFlowRun, getFlowRun, pauseFlowRun, resumeFlowRun, previewFlowRunRefresh, approveFlowRunScope, applyFlowRunRefresh, resolveFlowRunConflict, cancelFlowRun } from './flow/service'
 import { createFlow } from '@shared/factories'
 import { generateFromSchema, generateModelExample, resolveModelRefs } from './schema/example'
 import { importDbTables, listDbTables, testDbConnection } from './db/mysql'
@@ -307,6 +307,8 @@ export function registerIpc(): void {
     return true
   })
 
+  handle('flow:runs:active', () => getActiveFlowRuns())
+
   // M2 · flows
   handle('flow:list', (projectId: string) => store.listFlows(projectId))
   handle('flow:get', (projectId: string, flowId: string) => store.getFlow(projectId, flowId))
@@ -315,19 +317,29 @@ export function registerIpc(): void {
     const flow = createFlow(projectId, name, environments[0]?.env_id ?? '')
     return store.saveFlow(projectId, flow)
   })
-  handle('flow:save', (projectId: string, flow: Flow) => store.saveFlow(projectId, flow))
+  handle('flow:save', (projectId: string, flow: Flow, expectedRevision: string) =>
+    store.saveFlowChecked(projectId, flow, expectedRevision)
+  )
   handle('flow:delete', (projectId: string, flowId: string) => {
     store.deleteFlow(projectId, flowId)
     return true
   })
-  handle('flow:run', (projectId: string, flowId: string, environmentId?: string) => {
-    const flow = store.getFlow(projectId, flowId)
-    if (!flow) throw new Error('流程不存在')
-    return runFlow(projectId, flow, environmentId)
-  })
-  handle('flow:runs', (projectId: string, limit?: number) => store.listFlowRuns(projectId, limit))
+  handle('flow:run', (projectId: string, flowId: string, environmentId?: string) =>
+    runSavedFlow(projectId, flowId, environmentId)
+  )
+  handle('flow:run:start', (projectId: string, flowId: string, environmentId: string | undefined, requestId: string) =>
+    startFlowRun(projectId, flowId, environmentId, requestId, 'ui')
+  )
+  handle('flow:run:cancel', (projectId: string, runId: string) => cancelFlowRun(projectId, runId))
+  handle('flow:run:pause', (projectId: string, runId: string) => pauseFlowRun(projectId, runId))
+  handle('flow:run:refresh:preview', (projectId: string, runId: string) => previewFlowRunRefresh(projectId, runId))
+  handle('flow:run:refresh:resolve-conflict', (projectId: string, runId: string, previewId: string, eventId: string, field: string, choice: 'api' | 'override') => resolveFlowRunConflict(projectId, runId, previewId, eventId, field, choice))
+  handle('flow:run:scope:approve', (projectId: string, runId: string, previewId: string) => approveFlowRunScope(projectId, runId, previewId))
+  handle('flow:run:refresh:apply', (projectId: string, runId: string, previewId: string) => applyFlowRunRefresh(projectId, runId, previewId))
+  handle('flow:run:resume', (projectId: string, runId: string) => resumeFlowRun(projectId, runId))
+  handle('flow:runs', (projectId: string, limit?: number) => listFlowRuns(projectId, limit))
   handle('flow:run:get', (projectId: string, runId: string) =>
-    store.getFlowRun(projectId, runId)
+    getFlowRun(projectId, runId)
   )
 
   // Data dictionary

@@ -936,6 +936,15 @@ body {
   font-weight: 600;
 }
 
+.automation-results-head {
+  flex-wrap: wrap;
+}
+
+.automation-results-title {
+  flex: 0 0 100%;
+  white-space: nowrap;
+}
+
 .automation-scroll {
   flex: 1;
   min-height: 0;
