@@ -35,6 +35,13 @@ function bridgeDefaults() {
 const CORE_INSTRUCTIONS = [
   'KindraAPI 本地 MCP：接口文档协作与实测工作台。写操作、执行操作需在桌面端「配置 → MCP」显式开启；权限不足或失败时如实报告，绝不声称已写入。',
   '',
+  '文档要求（服务端硬性校验）',
+  '1. 新建接口必须填写接口说明 description，并为每个已知的请求参数、请求体字段和响应字段填写业务含义 description。',
+  '2. 每个已知字段必须明确 type、required、nullable 和 enum（无限制时显式传 null）；有枚举时必须提供逐项对应的 enum_descriptions。缺少任一项，服务端会拒绝写入且不保存。',
+  '3. 创建目录时必须填写目录说明 description；创建或更新数据模型时，同样填写模型说明与每个 schema 字段的 description。',
+  '4. 不要根据字段名或示例值猜测业务含义；无法确定时先向用户确认，再写入。更新接口只校验本次显式提交的字段，未提交字段保持原样。',
+  '5. 接口 URL 必须填写完整的 http:// 或 https:// 地址，包含主机名与路径；使用 {{baseUrl}}/path 时必须确保 baseUrl 会解析为完整地址。',
+  '',
   '一、默认工作流（按此顺序选择工具）',
   '1. 新建接口：list_apis 确认目标目录 → upsert_api 一次提交完整文档（旧版本没有 upsert_api 时用 create_api）→ execute_api(save_response=true) → get_execution_result 核对业务结果。',
   '2. 从 OpenAPI 导入：sync_openapi 一次只导入一个 path（整份大文档会被截断导致 JSON 解析失败）→ 用 update_api/upsert_api 回填 Header、参数与请求示例 → 重新执行并保存真实响应。',

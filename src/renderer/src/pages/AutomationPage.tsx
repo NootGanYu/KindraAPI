@@ -1,4 +1,7 @@
 import { isActiveFlowRunStatus } from '@shared/flow'
+import { flowSignature } from '@shared/flowSync'
+import { syncFlowDraft, flushFlowDrafts } from '../flowDraftSync'
+import FlowVersionDrawer from '../components/FlowVersionDrawer'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntApp,
@@ -110,6 +113,8 @@ export default function AutomationPage(): JSX.Element {
   const environments = useApp((s) => s.environments)
   const currentEnvId = useApp((s) => s.currentEnvId)
 
+  const live = useRef<{ projectId?: string; flow: Flow | null }>({ flow: null })
+  const [agentOwned, setAgentOwned] = useState(false)
   const [flows, setFlows] = useState<Flow[]>([])
   const [flow, setFlow] = useState<Flow | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -125,6 +130,18 @@ export default function AutomationPage(): JSX.Element {
   projectSelection.current = project?.project_id
   const selection = useRef('')
   selection.current = `${project?.project_id ?? ''}/${flow?.flow_id ?? ''}`
+
+  live.current = { projectId: project?.project_id, flow }
+  useEffect(() => window.api.agent.onFlowDraftChanged(event => {
+    if (event.records_deleted && !event.draft && event.project_id === live.current.projectId && event.flow_id === live.current.flow?.flow_id) { setFlow(null); setAgentOwned(false); setDirty(false); return }
+    if (!event.draft || event.project_id !== live.current.projectId || event.flow_id !== live.current.flow?.flow_id) return
+    if (event.previous && flowSignature(event.previous) !== flowSignature(live.current.flow)) { message.warning('审阅期间出现新编辑，已保留人工内容，请重新检查冲突'); return }
+    // Multiple draft events can arrive in one tick (candidate apply followed by save).
+    // Advance the guard synchronously so the save event is not compared with a stale render.
+    live.current = { projectId: event.project_id, flow: event.draft.flow }
+    setFlow(event.draft.flow); setAgentOwned(event.draft.agent_owned); setDirty(!event.saved_revision); setEnvId(event.draft.flow.env_id)
+    if (event.saved_revision) setFlows(items => items.map(item => item.flow_id === event.flow_id ? event.draft!.flow : item))
+  }), [message])
 
   const apiTargets = useMemo(
     () => targets.filter((target) => target.target_type === 'api'),
@@ -142,20 +159,22 @@ export default function AutomationPage(): JSX.Element {
 
   const loadFlow = async (flowId: string): Promise<void> => {
     if (!project) return
-    const result = await window.api.flows.get(project.project_id, flowId)
-    if (projectSelection.current !== project.project_id) return
+    await flushFlowDrafts()
+    const result = await window.api.agent.getFlowDraft(project.project_id, flowId)
+    if (project.project_id !== live.current.projectId) return
     if (!result.ok || !result.data) {
       message.error(result.ok ? '流程不存在' : result.error)
       return
     }
-    setFlow(result.data)
-    setDirty(false)
+    setFlow({ ...result.data.flow, revision: result.data.base_revision ?? result.data.flow.revision })
+    setAgentOwned(result.data.agent_owned)
+    setDirty(Boolean(result.data.dirty ?? result.data.agent_owned))
     setRun(null)
-    setEnvId(result.data.env_id || currentEnvId || environments[0]?.env_id || '')
+    setEnvId(result.data.flow.env_id || currentEnvId || environments[0]?.env_id || '')
     const history = await reloadRuns(flowId)
     if (history[0]) {
       const latest = await window.api.flows.getRun(project.project_id, history[0].run_id)
-      if (projectSelection.current === project.project_id && latest.ok) setRun(latest.data)
+      if (project.project_id === live.current.projectId && latest.ok) setRun(latest.data)
     }
   }
 
@@ -281,8 +300,11 @@ export default function AutomationPage(): JSX.Element {
   }
 
   const patchFlow = (patch: Partial<Flow>): void => {
-    setFlow((current) => (current ? { ...current, ...patch } : current))
-    setDirty(true)
+    const current = live.current.flow
+    if (!current || !project) return
+    const next = { ...current, ...patch }
+    live.current.flow = next; setFlow(next); setDirty(true)
+    void syncFlowDraft(project.project_id, next).catch(error => message.error(error.message))
   }
 
   const createFlow = async (): Promise<void> => {
@@ -300,11 +322,16 @@ export default function AutomationPage(): JSX.Element {
     if (!project || !flow) return false
     setSaving(true)
     try {
-      const result = await window.api.flows.save(project.project_id, { ...flow, env_id: envId }, flow.revision ?? '')
+      await flushFlowDrafts()
+      const result = notify
+        ? await window.api.flows.save(project.project_id, { ...flow, env_id: envId }, flow.revision ?? '')
+        : await window.api.agent.saveManualFlowForRun(project.project_id, { ...flow, env_id: envId })
       if (!result.ok) {
         message.error(result.error)
         return false
       }
+      await syncFlowDraft(project.project_id, result.data)
+      setAgentOwned(false)
       setFlow(result.data)
       setDirty(false)
       setFlows((current) =>
@@ -322,6 +349,10 @@ export default function AutomationPage(): JSX.Element {
 
   const executeFlow = async (): Promise<void> => {
     if (!project || !flow) return
+    if (agentOwned) {
+      message.warning('Agent Flow 草稿请先主动保存后运行；运行不会自动保存。')
+      return
+    }
     if (dirty) {
       message.warning('请先主动保存流程，再运行')
       return
@@ -423,8 +454,10 @@ export default function AutomationPage(): JSX.Element {
           {dirty ? <Tag color="warning">未保存</Tag> : null}
           {flow ? <span className="muted">编辑版本：{flow.revision?.slice(0, 8) ?? '未保存'}</span> : null}
           <span style={{ flex: 1 }} />
+          {flow && project && <FlowVersionDrawer key={`${project.project_id}:${flow.flow_id}`} projectId={project.project_id} flowId={flow.flow_id} />}
           <Button
             size="small"
+            aria-label="保存 Flow"
             icon={<SaveOutlined />}
             loading={saving}
             disabled={!flow}
@@ -435,6 +468,7 @@ export default function AutomationPage(): JSX.Element {
           <Button
             size="small"
             type="primary"
+            aria-label="运行 Flow"
             icon={<PlayCircleOutlined />}
             loading={running}
             disabled={!flow || active}
@@ -446,6 +480,7 @@ export default function AutomationPage(): JSX.Element {
 
         {flow ? (
           <div className="automation-scroll">
+            {agentOwned && <div role="status">已恢复 Agent Flow 草稿 · 退出仅暂存 · 运行前需主动保存</div>}
             <div className="flow-meta">
               <Input
                 value={flow.name}

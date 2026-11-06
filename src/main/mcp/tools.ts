@@ -1,4 +1,5 @@
 import { projectPermissionError } from './permissions'
+import { readApiDetail, withDisplayFieldDocs } from '../business/apiRead'
 import { rulesFromSchema } from '@shared/fieldRules'
 import { DICT_FIELD_TYPES } from '@shared/types'
 import { defaultApiStatus } from '@shared/apiStatuses'
@@ -33,7 +34,7 @@ import {
 } from '@shared/factories'
 import * as store from '../storage/store'
 import { apiDocumentationProperties, HTTP_URL_DESCRIPTION, successSchema, writeApiDocumentation, patchSuccessResponse, patchParams, patchBody, documentationIssues } from './apiDocumentation'
-import { resolveDocumentedTarget, responseDocs } from '../docs/definition'
+import { responseDocs } from '../docs/definition'
 import { sendRequest } from '../request/executor'
 import { runApiCase, runApiCases } from '../request/cases'
 import { normalizeFlowEvents, hasStructuredEvents } from '../flow/definition'
@@ -43,8 +44,7 @@ import { generateSchemaExample } from '../schema/example'
 import {
   fieldDocsFromSchema,
   mergeFieldDocs,
-  normalizeFieldDocs,
-  withDisplayPath
+  normalizeFieldDocs
 } from '@shared/jsonFields'
 import { importDbTables, testDbConnection } from '../db/mysql'
 import * as mqttStore from '../mqtt/store'
@@ -101,13 +101,6 @@ function apiTargetOf(args: Args): Target {
   return target
 }
 
-/** 返回给 MCP 调用方时，为每个字段文档附带可读 path。 */
-function withDisplayFieldDocs(target: Target): Target {
-  const next = resolveDocumentedTarget(target)
-  if (next.request?.body.field_docs) next.request.body.field_docs = next.request.body.field_docs.map(withDisplayPath)
-  for (const example of next.response?.example ?? []) if (example.field_docs) example.field_docs = example.field_docs.map(withDisplayPath)
-  return next
-}
 
 function caseOf(target: Target, caseId: string): ApiCase {
   const apiCase = (target.cases ?? []).find((item) => item.case_id === caseId)
@@ -495,9 +488,7 @@ const TOOLS: ToolDefinition[] = [
     requires_execute: false,
     input_schema: schema({ project_id: S.project, target_id: S.target }, ['project_id', 'target_id']),
     handler: (args) => {
-      const target = store.getTarget(projectIdOf(args), requiredStr(args, 'target_id'))
-      if (!target) throw new Error('接口不存在')
-      return { api: withDisplayFieldDocs(target) }
+      return readApiDetail(projectIdOf(args), requiredStr(args, 'target_id'))
     }
   },
   {
@@ -2751,6 +2742,9 @@ export function checkPermission(
     return config.allow_write ? null : '未开启写入权限 allow_write'
   }
   const projectId = typeof args.project_id === 'string' ? args.project_id : ''
+  if (!projectId) return '缺少 project_id'
+  if (!config.allowed_project_ids.includes(projectId)) return '项目不在授权列表'
+  if (tool.name === 'execute_api' && boolArg(args, 'save_response') && !config.allow_write) return '保存响应示例需要写入权限 allow_write'
   return projectPermissionError(config, projectId, { write: tool.requires_write, execute: tool.requires_execute })
 }
 

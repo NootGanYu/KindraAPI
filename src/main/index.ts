@@ -1,3 +1,4 @@
+import { shutdownAgent, agentCommands } from './agent/service'
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -5,6 +6,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
 import trayIcon from '../../resources/trayTemplate.png?asset'
 import { registerIpc } from './ipc'
+import { registerAppLifecycle } from './appLifecycle'
 import { applyDebugSwitch, ensureDefaultProject } from './storage/store'
 import { shutdownMcp, startMcpServer } from './mcp/server'
 import { shutdownDocs, startDocServer } from './docs/server'
@@ -67,16 +69,34 @@ function sendRequestClose(): void {
   mainWindow.webContents.send('app:request-close')
 }
 
+// 只有经过确认的退出路径才安排真正退出/重启。
+let pendingRelaunch = false
+function relaunchArgs(): string[] {
+  // 调试端口由设置项决定，重启时丢弃手动附加的启动参数。
+  return process.argv.slice(1).filter((arg) => !arg.startsWith('--remote-debugging-port'))
+}
+function finishQuit(): void {
+  const relaunch = pendingRelaunch
+  pendingRelaunch = false
+  allowClose = true
+  if (relaunch) app.relaunch({ args: relaunchArgs() })
+  app.quit()
+}
 // 退出前先把窗口显示出来，渲染层的未保存确认弹窗才可见。
-function requestQuit(): void {
+function requestQuit(relaunch = false): void {
+  if (!relaunch) pendingRelaunch = false
   if (!mainWindow || mainWindow.isDestroyed()) {
-    allowClose = true
-    app.quit()
+    void agentCommands.prepareQuit().then(() => finishQuit())
     return
   }
   showMainWindow()
   sendRequestClose()
 }
+function requestRelaunchDeliberately(): void {
+  pendingRelaunch = true
+  requestQuit(true)
+}
+function cancelDeliberateRelaunch(): void { pendingRelaunch = false }
 
 function createTray(): void {
   if (tray) return
@@ -166,9 +186,9 @@ function createWindow(): void {
   })
 
   ipcMain.removeHandler('app:confirm-close')
-  ipcMain.handle('app:confirm-close', () => {
-    allowClose = true
-    app.quit()
+  ipcMain.handle('app:confirm-close', async () => {
+    await agentCommands.prepareQuit()
+    finishQuit()
     return { ok: true, data: true }
   })
 
@@ -212,6 +232,7 @@ if (!gotLock) {
 
     ensureDefaultProject()
     recoverAllFlowRuns()
+    registerAppLifecycle({ requestRelaunch: requestRelaunchDeliberately, cancelRelaunch: cancelDeliberateRelaunch })
     registerIpc()
     void startMcpServer()
     void startDocServer()
@@ -237,6 +258,7 @@ if (!gotLock) {
 
   // will-quit 在所有窗口关闭后触发；若关闭被未保存守卫拦截，不会执行。
   app.on('will-quit', () => {
+    shutdownAgent()
     tray?.destroy()
     tray = null
     void shutdownMcp()

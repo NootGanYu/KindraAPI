@@ -524,12 +524,14 @@ export interface FlowExecutionCursor {
 }
 
 export interface FlowEventResult {
+  /** A paused/cancelled boundary with no dispatched remote effects. */
+  retryable?: boolean
   event_id: string
   instance_id?: string
   iteration_path?: FlowIteration[]
   name: string
   type: FlowEventType
-  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked' | 'cancelled'
+  status: 'running' | 'passed' | 'failed' | 'skipped' | 'blocked' | 'paused' | 'unknown' | 'cancelled'
   started_at: number
   elapsed_ms: number
   detail?: string

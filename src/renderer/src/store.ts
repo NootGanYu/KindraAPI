@@ -421,14 +421,17 @@ export const useApp = create<AppState>((set, get) => ({
       return
     }
     const snapshot = unwrap(await window.api.targets.read(project.project_id, id))
-    const target = snapshot.target
+    let target = snapshot.target
     if (!target) return
+    const agentDraft = target.target_type === 'api' && window.api.agent?.getDraft ? unwrap(await window.api.agent.getDraft(project.project_id, id)) : null
+    if (agentDraft?.agent_owned) target = agentDraft.target
     if (get().project?.project_id !== project.project_id || get().tabs.some(tab => tab.id === id)) return
     set((state) => ({
       drafts: { ...state.drafts, [id]: target },
       baselines: { ...state.baselines, [id]: snapshot },
-      tabs: [...state.tabs, { id, name: target.name, dirty: false, openKey: createId('tab') }],
-      activeId: id
+      tabs: [...state.tabs, { id, name: target.name, dirty: !!agentDraft?.agent_owned, openKey: createId('tab') }],
+      activeId: id,
+      ...(agentDraft?.agent_owned ? { syncNotice: '已恢复 Agent 未保存草稿；退出仅暂存，不会自动保存定义。' } : {})
     }))
   },
 

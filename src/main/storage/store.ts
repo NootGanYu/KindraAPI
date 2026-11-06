@@ -1,5 +1,8 @@
 import { isActiveFlowRunStatus } from '@shared/flow'
 import { redactEvidence } from '../flow/evidence'
+import { deletedObjects, retainDeletedObject, publishDeletedObject, settleDeletionCheckpoints } from './deletedObjects'
+import { flowSignature, type FlowVersion, type FlowSnapshot, type FlowSaveResult } from '@shared/flowSync'
+import { assertAgentConflictsResolved } from './agentConflicts'
 import { app } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -378,25 +381,9 @@ function readTargetVersions(projectId: string, targetId: string): TargetVersionF
   }
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  const record = value as Record<string, unknown>
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(',')}}`
-}
-
-/** 只对可编辑内容做签名，忽略时间、排序与版本元数据。 */
+/** Versions and revisions share the editable-definition boundary; runtime is never versioned. */
 function targetSignature(target: Target): string {
-  const { updated_at, created_at, version, sort, parent_id, ...content } = target as Target
-  void updated_at
-  void created_at
-  void version
-  void sort
-  void parent_id
-  return crypto.createHash('sha1').update(stableStringify(content)).digest('hex')
+  return crypto.createHash('sha1').update(stableJson(targetDefinition(target))).digest('hex')
 }
 
 function toVersionSummary(version: TargetVersion): TargetVersionSummary {
@@ -418,7 +405,8 @@ function recordTargetVersion(projectId: string, target: Target): void {
   const file = readTargetVersions(projectId, target.target_id)
   const signature = targetSignature(target)
   const newest = file.versions[0]
-  if (newest && newest.signature === signature) {
+  // Recompute old snapshots too, so legacy signatures do not manufacture a migration version.
+  if (newest && targetSignature(newest.snapshot) === signature) {
     target.version = newest.version
     return
   }
@@ -473,22 +461,16 @@ export function restoreTargetVersion(
   if (!live) throw new Error('接口不存在')
   const found = getTargetVersion(projectId, targetId, versionId)
   if (!found) throw new Error('版本不存在')
-  const snapshot = found.snapshot
-  const restored: Target = {
-    ...live,
-    name: snapshot.name,
-    description: snapshot.description,
-    method: snapshot.method,
-    url: snapshot.url,
-    protocol: snapshot.protocol,
-    server_id: snapshot.server_id,
-    status: snapshot.status,
-    tags: snapshot.tags ? [...snapshot.tags] : [],
-    is_exampled: snapshot.is_exampled,
-    request: snapshot.request ? cloneJson(snapshot.request) : live.request,
-    response: snapshot.response ? cloneJson(snapshot.response) : live.response,
+  // Restore the whole editable definition, including removed optional fields, while
+  // keeping this entity's identity and the latest local runtime results.
+  const restored = preserveCaseRuns({
+    ...cloneJson(targetDefinition(found.snapshot)),
+    target_id: live.target_id,
+    project_id: live.project_id,
+    target_type: live.target_type,
+    created_at: live.created_at,
     updated_at: new Date().toISOString()
-  }
+  } as Target, live)
   return saveTarget(projectId, restored)
 }
 
@@ -664,7 +646,24 @@ export function getCookieJarForUrl(projectId: string, rawUrl: string): Record<st
   return result
 }
 
+const approvedAgentCreations = new Set<string>()
+/** Synchronous creation boundary used only by the independently approved Agent save step. */
+export function createAgentTargetChecked(projectId: string, target: Target): TargetSaveOutcome {
+  const current = readTargetSnapshot(projectId, target.target_id)
+  if (current.target) return { status: 'conflict', ...current }
+  if (target.parent_id !== '0' && getTarget(projectId, target.parent_id)?.target_type !== 'folder') throw new Error('父目录已删除，创建已暂停')
+  const key = `${projectId}:${target.target_id}`
+  approvedAgentCreations.add(key)
+  try {
+    const saved = saveTarget(projectId, target)
+    return { status: 'saved', target: saved, revision: targetRevision(saved) }
+  } finally { approvedAgentCreations.delete(key) }
+}
+
 export function saveTarget(projectId: string, target: Target): Target {
+  assertAgentConflictsResolved(getPaths().localRoot, projectId, target.target_id)
+  const localDraft = readJson<{ new_object?: boolean } | null>(path.join(getPaths().localRoot, 'agent', 'projects', projectId, 'drafts', `${target.target_id}.json`), null)
+  if (localDraft?.new_object && !getTarget(projectId, target.target_id) && !approvedAgentCreations.has(`${projectId}:${target.target_id}`)) throw new Error('新接口草稿需要独立获批保存步骤才能正式创建')
   if (target.project_id !== projectId) throw new Error('项目不匹配')
   target.updated_at = new Date().toISOString()
   recordTargetVersion(projectId, target)
@@ -736,14 +735,19 @@ export function deleteTarget(projectId: string, targetId: string): void {
       }
     }
   }
+  // Capture the whole subtree before deleting any file, including MCP and sync callers.
+  for (const id of toDelete) {
+    const snapshot = readTargetSnapshot(projectId, id)
+    if (snapshot.target?.target_type === 'api') retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: id, kind: 'api', snapshot: snapshot.target, revision: snapshot.revision!, versions: readTargetVersions(projectId, id).versions })
+  }
   for (const id of toDelete) {
     const file = path.join(projectDir(projectId), 'apis', `${assertId(id, 'target_id')}.json`)
     fs.rmSync(file, { force: true })
-    fs.rmSync(targetVersionsPath(projectId, id), { force: true })
+    if (!getDeletedObject(projectId, 'api', id)) fs.rmSync(targetVersionsPath(projectId, id), { force: true })
   }
   index.items = index.items.filter((i) => !toDelete.has(i.target_id))
   writeTargetIndex(projectId, index)
-  for (const id of toDelete) recordTargetChange(projectId, id, 'deleted')
+  for (const id of toDelete) { recordTargetChange(projectId, id, 'deleted'); publishDeletedObject(projectId, 'api', id) }
 }
 
 export function reorderTargets(
@@ -1029,8 +1033,12 @@ export function getFlow(projectId: string, flowId: string): Flow | null {
 }
 
 function withFlowRevision(flow: Flow): Flow {
-  const { revision: _revision, updated_at: _updated, ...definition } = flow
-  return { ...flow, revision: crypto.createHash('sha256').update(JSON.stringify(definition)).digest('hex') }
+  return { ...flow, revision: crypto.createHash('sha256').update(flowSignature(flow)).digest('hex') }
+}
+
+/** Stored revision identity; never the canonical JSON itself (it can contain sensitive scripts). */
+export function flowRevision(flow: Flow): string {
+  return flow.revision ?? crypto.createHash('sha256').update(flowSignature(flow)).digest('hex')
 }
 
 /** Read, validate and write without yielding, including legacy updates without a revision. */
@@ -1045,23 +1053,58 @@ export function updateFlowChecked(
   return saveFlow(projectId, update(current))
 }
 
-export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision: string): Flow {
-  if (!expectedRevision) throw new Error('流程保存需要 expected revision，请重新读取流程')
-  return updateFlowChecked(projectId, flow.flow_id, expectedRevision, () => flow)
+function flowVersionsPath(projectId: string, flowId: string): string {
+  return path.join(localProjectDir(projectId), 'flow-versions', `${assertId(flowId, 'flow_id')}.json`)
 }
-
+export function listFlowVersions(projectId: string, flowId: string): FlowVersion[] {
+  return readJson<FlowVersion[]>(flowVersionsPath(projectId, flowId), []).sort((a, b) => b.version - a.version)
+}
+export function getFlowVersion(projectId: string, flowId: string, versionId: string): FlowVersion | null {
+  return listFlowVersions(projectId, flowId).find(version => version.version_id === versionId) ?? null
+}
+export function readFlowSnapshot(projectId: string, flowId: string): FlowSnapshot {
+  const flow = getFlow(projectId, flowId)
+  return { flow, revision: flow ? flowRevision(flow) : null }
+}
 export function saveFlow(projectId: string, flow: Flow): Flow {
+  assertAgentConflictsResolved(getPaths().localRoot, projectId, flow.flow_id, 'flow')
   if (flow.project_id !== projectId) throw new Error('项目不匹配')
-  const saved = withFlowRevision({ ...flow, events: normalizeFlowEvents(flow.events), updated_at: new Date().toISOString() })
+  const current = getFlow(projectId, flow.flow_id)
+  const saved = withFlowRevision({
+    ...structuredClone(flow),
+    events: normalizeFlowEvents(flow.events),
+    created_at: current?.created_at ?? flow.created_at,
+    updated_at: new Date().toISOString()
+  })
+  const versions = listFlowVersions(projectId, flow.flow_id)
+  const record = (snapshot: Flow): void => {
+    const revision = flowRevision(snapshot)
+    if (versions[0]?.revision === revision) return
+    versions.unshift({ version_id: crypto.randomUUID(), version: (versions[0]?.version ?? 0) + 1, revision, flow: structuredClone(snapshot), created_at: new Date().toISOString() })
+  }
+  // Preserve the pre-migration definition when a legacy Flow is first edited.
+  if (current && !versions.length) record(current)
+  record(saved)
   writeJson(flowPath(projectId, flow.flow_id), saved)
+  writeJson(flowVersionsPath(projectId, flow.flow_id), versions)
   return saved
+}
+export function saveFlowChecked(projectId: string, flow: Flow, expectedRevision: string): FlowSaveResult {
+  const snapshot = readFlowSnapshot(projectId, flow.flow_id)
+  if (!snapshot.flow) return { status: 'deleted', ...snapshot }
+  if (!expectedRevision || expectedRevision !== snapshot.revision) return { status: 'conflict', ...snapshot }
+  const saved = saveFlow(projectId, flow)
+  return { status: 'saved', flow: saved, revision: flowRevision(saved), version: listFlowVersions(projectId, flow.flow_id)[0] }
 }
 
 export function deleteFlow(projectId: string, flowId: string): void {
   if (readFlowRuns(projectId).some(run => run.flow_id === flowId && isActiveFlowRunStatus(run.status))) {
     throw new Error('活动运行绑定的流程不可删除')
   }
+  const snapshot = readFlowSnapshot(projectId, flowId)
+  if (snapshot.flow) retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: flowId, kind: 'flow', snapshot: snapshot.flow, revision: snapshot.revision!, versions: listFlowVersions(projectId, flowId) })
   fs.rmSync(flowPath(projectId, flowId), { force: true })
+  publishDeletedObject(projectId, 'flow', flowId)
 }
 
 function countResults(
@@ -2188,4 +2231,30 @@ export function docShareExpireInfo(share: DocShare): {
   expired: boolean
 } {
   return docExpireInfo(share)
+}
+
+export function listDeletedObjects(projectId: string) {
+  settleDeletionCheckpoints(getPaths().localRoot, projectId, item => Boolean(item.kind === 'api' ? getTarget(projectId, item.entity_id) : getFlow(projectId, item.entity_id)))
+  return deletedObjects(getPaths().localRoot, projectId)
+}
+export function getDeletedObject(projectId: string, kind: 'api' | 'flow', id: string) { return listDeletedObjects(projectId).find(item => item.kind === kind && item.entity_id === id) ?? null }
+
+/** Git can remove definitions without using deleteTarget/deleteFlow. Persist evidence before its IO. */
+export async function withExternalDefinitionChanges<T>(projectId: string, action: () => Promise<T>): Promise<T> {
+  const checkpoints: string[] = []
+  const keep = (file: string | undefined): void => { if (file) checkpoints.push(file) }
+  try {
+    for (const summary of listTargets(projectId)) {
+      const snapshot = readTargetSnapshot(projectId, summary.target_id)
+      if (snapshot.target?.target_type === 'api') keep(retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: summary.target_id, kind: 'api', snapshot: snapshot.target, revision: snapshot.revision!, versions: readTargetVersions(projectId, summary.target_id).versions }, true))
+    }
+    for (const flow of listFlows(projectId)) keep(retainDeletedObject(getPaths().localRoot, { project_id: projectId, entity_id: flow.flow_id, kind: 'flow', snapshot: flow, revision: flowRevision(flow), versions: listFlowVersions(projectId, flow.flow_id) }, true))
+    return await action()
+  } finally {
+    const deleted = settleDeletionCheckpoints(getPaths().localRoot, projectId, item => Boolean(item.kind === 'api' ? getTarget(projectId, item.entity_id) : getFlow(projectId, item.entity_id)), checkpoints)
+    for (const item of deleted) {
+      if (item.kind === 'api') recordTargetChange(projectId, item.entity_id, 'deleted')
+      publishDeletedObject(projectId, item.kind, item.entity_id)
+    }
+  }
 }

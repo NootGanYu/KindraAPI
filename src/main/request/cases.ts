@@ -75,56 +75,31 @@ function now(): string {
   return new Date().toISOString()
 }
 
-export async function runApiCase(
-  projectId: string,
-  target: Target,
-  apiCase: ApiCase,
-  environmentId?: string
-): Promise<CaseRunResult> {
-  const prepared = applyCaseOverride(target, apiCase)
+/** Shared real request and assertion path. Callers choose policy and persistence separately. */
+export async function executeApiCase(
+  projectId: string, target: Target, apiCase: ApiCase, environmentId?: string,
+  options?: Parameters<typeof sendRequest>[3]
+): Promise<{ record: Awaited<ReturnType<typeof sendRequest>>; result: CaseRunResult }> {
   const startedAt = Date.now()
-  let record
-  try {
-    record = await sendRequest(projectId, prepared, environmentId)
-  } catch (error) {
-    const result: CaseRunResult = {
-      ran_at: now(),
-      status: 'error',
-      duration_ms: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
-      assertions: []
-    }
-    store.saveCaseRun(projectId, target.target_id, apiCase.case_id, result)
-    return result
-  }
-
+  const record = await sendRequest(projectId, applyCaseOverride(target, apiCase), environmentId, options)
   const httpStatus = record.response?.code
   const duration = record.response?.response_time ?? Date.now() - startedAt
-  if (record.error) {
-    const result: CaseRunResult = {
-      ran_at: now(),
-      status: 'error',
-      http_status: httpStatus,
-      duration_ms: duration,
-      error: record.error.message,
-      assertions: []
-    }
-    store.saveCaseRun(projectId, target.target_id, apiCase.case_id, result)
-    return result
-  }
-
-  const assertions = evaluateCaseAssertions(apiCase.assertions, {
-    status: httpStatus,
-    body: record.response?.body ?? '',
-    durationMs: duration
+  const assertions = record.error ? [] : evaluateCaseAssertions(apiCase.assertions, {
+    status: httpStatus, body: record.response?.body ?? '', durationMs: duration
   })
   const result: CaseRunResult = {
-    ran_at: now(),
-    status: caseStatus(assertions, { status: httpStatus }),
-    http_status: httpStatus,
-    duration_ms: duration,
-    assertions
+    ran_at: now(), status: record.error ? 'error' : caseStatus(assertions, { status: httpStatus }),
+    http_status: httpStatus, duration_ms: duration, error: record.error?.message, assertions
   }
+  return { record, result }
+}
+export async function runApiCase(
+  projectId: string, target: Target, apiCase: ApiCase, environmentId?: string
+): Promise<CaseRunResult> {
+  const startedAt = Date.now()
+  let result: CaseRunResult
+  try { result = (await executeApiCase(projectId, target, apiCase, environmentId)).result }
+  catch (error) { result = { ran_at: now(), status: 'error', duration_ms: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error), assertions: [] } }
   store.saveCaseRun(projectId, target.target_id, apiCase.case_id, result)
   return result
 }

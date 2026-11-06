@@ -27,3 +27,5 @@ ui-inventory/.env.local
 # Local flow regression bundle
 scripts/.flow-progress-smoke.cjs
 scripts/.flow-review-regressions.cjs
+# Isolated smoke test bundles
+.tmp/
