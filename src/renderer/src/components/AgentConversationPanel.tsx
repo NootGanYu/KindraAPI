@@ -208,7 +208,7 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
     {connection?.capability === 'text-only' && <Alert type="info" message="仅文本对话；自然语言计划与工具操作不可用。" />}
     {connection?.capability === 'unchecked' && <Alert type="info" message="尚未检测工具能力。可在设置页测试连接；当前仅进行文本对话。" />}
     {!connection && <Alert type="warning" showIcon message="请先配置 Agent 模型连接。" action={<Button size="small" onClick={() => setView('settings')}>去设置</Button>} />}
-    {running && conversation?.connection && <Alert type="info" message={`本轮固定连接：${conversation.connection.name} · ${conversation.connection.model}；修改配置不影响本轮。`} />}
+    {running && conversation?.connection && <Typography.Text type="secondary" className="agent-fixed-connection">本轮固定连接：{conversation.connection.name} · {conversation.connection.model}</Typography.Text>}
     {view === 'chat' ? <>
       <div className="agent-messages" role="log" aria-label="Agent 会话消息">
         {!conversation?.messages.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="用一句话告诉 Agent 要做什么"><Typography.Text type="secondary">Agent 会连续读取项目对象，把每次工具调用展示在时间线上；只读工具自动执行，本机草稿修改按权限模式等待允许。</Typography.Text></Empty>}
@@ -221,9 +221,9 @@ export default function AgentConversationPanel({ projectId, projectName, open, o
       <div className="agent-compose">
         <Input.TextArea aria-label="告诉 Agent 要做什么" value={text} onChange={event => setText(event.target.value)} autoSize={{ minRows: 2, maxRows: 6 }} placeholder={connection?.capability === 'tools' ? '例如：读取订单接口与相关 Flow，汇总请求参数和最近运行结果' : '输入消息…'} maxLength={100000} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send() } }} />
         <div className="agent-compose-bar">
-          <Space size={4} wrap>
-            <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 96 }} />
-            <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 230 }} />
+          <Space size={4} wrap={false}>
+            <Select aria-label="权限模式" size="small" variant="borderless" value={permissionMode} onChange={requestPermissionMode} options={permissionOptions.map(option => ({ value: option.value, label: option.label }))} style={{ minWidth: 88 }} />
+            <Select aria-label="模型连接" size="small" variant="borderless" value={connection?.connection_id} onChange={selectConnection} options={connections.map(item => ({ value: item.connection_id, label: `${item.name} · ${item.model}` }))} placeholder={connections.length ? '选择模型连接' : '未配置模型连接'} style={{ maxWidth: 190, minWidth: 0 }} />
             <Tooltip title="旧计划模式：先用待批准计划再执行（legacy）"><Button size="small" type={legacyPlanMode ? 'primary' : 'text'} aria-label="旧计划模式" aria-pressed={legacyPlanMode} onClick={() => setLegacyPlanMode(value => { localStorage.setItem('kindra.agent.legacyPlanMode', value ? '0' : '1'); return !value })}>旧计划</Button></Tooltip>
           </Space>
           <Space size={8}>

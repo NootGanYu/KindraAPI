@@ -58,8 +58,12 @@ button.agent-session-title:hover { text-decoration: underline; }
 .agent-plan-result { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-plan-explanation { white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-compose { display: flex; flex-direction: column; gap: 8px; }
-.agent-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.agent-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; overflow-x: auto; }
+.agent-compose-bar > .ant-space { flex-wrap: nowrap; }
+.agent-compose-bar > .ant-space:first-child { flex: 1 1 auto; min-width: 0; }
+.agent-compose-bar > .ant-space:last-child { flex: 0 0 auto; }
 .agent-compose-bar .ant-select-selector { padding-inline: 6px !important; }
+.agent-fixed-connection { font-size: 12px; line-height: 1.4; }
 .agent-timeline { display: flex; flex-direction: column; }
 .agent-timeline-tools { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px 8%; padding-left: 12px; border-left: 2px solid rgba(160,125,70,.25); }
 .agent-tool-card { border: 1px solid var(--border, #e6dfd4); border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.55); }

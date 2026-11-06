@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { Tag, Typography } from 'antd'
+import { Tag } from 'antd'
 import type { AgentActivity, AgentConversation, AgentMessage } from '@shared/agent'
 import AgentToolCard from './AgentToolCard'
 
@@ -41,7 +41,6 @@ function groupTurns(conversation: AgentConversation): Turn[] {
 
 function MessageBody({ message }: { message: AgentMessage }): JSX.Element {
   return <>
-    <Typography.Text strong>{message.role === 'user' ? '你' : 'Agent'}</Typography.Text>
     <div className="agent-message-text">{message.content || (message.status === 'streaming' ? '正在回复…' : '未收到回复')}</div>
     {message.status === 'interrupted' && <Tag>已中断</Tag>}
     {message.status === 'error' && <Tag color="error">回复失败</Tag>}

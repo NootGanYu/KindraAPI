@@ -40,6 +40,8 @@ export default function AgentToolCard({ activity, onApproval }: {
   const display = activity.display ?? ''
   const truncatedPreview = display.length > previewLength
   const pending = activity.approval === 'pending'
+  const summary = activity.summary?.trim()
+  const redundantSummary = !summary || summary === `正在执行 ${activity.tool}` || summary === `已执行 ${activity.tool}`
 
   return <div className={`agent-tool-card ${activity.status} ${pending ? 'awaiting-approval' : ''}`} data-tool={activity.tool}>
     <div className="agent-tool-card-head">
@@ -51,7 +53,7 @@ export default function AgentToolCard({ activity, onApproval }: {
         {activity.approval && activity.approval !== 'pending' && <Tag color={approvalColors[activity.approval]}>{approvalLabels[activity.approval]}</Tag>}
       </Space>
     </div>
-    <div className="agent-tool-summary">{activity.summary}</div>
+    {!redundantSummary && <div className="agent-tool-summary">{summary}</div>}
     {activity.error && <Typography.Text type="danger" className="agent-tool-error">{activity.error}</Typography.Text>}
     {display && <pre className={`agent-tool-output ${activity.risk === 'read' ? '' : 'agent-tool-diff'}`}>{expanded || !truncatedPreview ? display : `${display.slice(0, previewLength)}…`}</pre>}
     <Space size={8} wrap>
