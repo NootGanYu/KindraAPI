@@ -52,6 +52,9 @@ import type {
   ModelSchema,
   ModelSummary,
   Project,
+  ProjectImportInspection,
+  ProjectImportRequest,
+  ProjectImportResult,
   RequestModel,
   Result,
   SendRecord,
@@ -60,6 +63,9 @@ import type {
   CurlResult,
   Target,
   TargetSummary,
+  TargetTransferMode,
+  TargetTransferPreview,
+  TargetTransferResult,
   TargetVersion,
   TargetVersionSummary,
   DbTable
@@ -200,6 +206,9 @@ export interface ApiBridge {
     save(project: Project): Promise<Result<Project>>
     saveApiStatuses(projectId: string, statuses: ApiStatus[], defaultId: string): Promise<Result<Project>>
     ensureDefault(): Promise<Result<Project>>
+    pickImportFile(): Promise<Result<SelectedFile | null>>
+    inspectImport(filePath: string): Promise<Result<ProjectImportInspection>>
+    importFile(input: ProjectImportRequest): Promise<Result<ProjectImportResult>>
   }
   targets: {
     onChanged(callback: (event: TargetChangeEvent) => void): () => void
@@ -221,6 +230,18 @@ export interface ApiBridge {
       orderedIds: string[]
     ): Promise<Result<TargetSummary[]>>
     clone(projectId: string, targetId: string): Promise<Result<Target>>
+    transferPreview(
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: TargetTransferMode
+    ): Promise<Result<TargetTransferPreview>>
+    transfer(
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: TargetTransferMode
+    ): Promise<Result<TargetTransferResult>>
     cases: {
       run(
         projectId: string,

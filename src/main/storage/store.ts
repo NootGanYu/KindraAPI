@@ -33,6 +33,7 @@ import type {
   DocTargetSnapshot,
   Environment,
   Flow,
+  FlowEvent,
   FlowEventResult,
   FlowRun,
   FlowRunSummary,
@@ -49,6 +50,9 @@ import type {
   CookieJar,
   Target,
   TargetSummary,
+  TargetTransferMode,
+  TargetTransferPreview,
+  TargetTransferResult,
   TargetVersion,
   TargetVersionSummary
 } from '@shared/types'
@@ -779,6 +783,346 @@ export function reorderTargets(
   writeTargetIndex(projectId, index)
   for (const id of ids) recordTargetChange(projectId, id, 'definition')
   return listTargets(projectId)
+}
+
+// ---------------------------------------------------------------------------
+// 跨项目移动 / 复制
+// ---------------------------------------------------------------------------
+
+interface TransferPlan {
+  mode: TargetTransferMode
+  sourceProjectId: string
+  destinationProjectId: string
+  root: Target
+  targets: Target[]
+  ids: Set<string>
+  sourceIndex: TargetIndex
+  destinationIndex: TargetIndex
+  rootNameAfter: string
+  rootSort: number
+  shares: TargetTransferPreview['shares']
+  flows: TargetTransferPreview['flows']
+  modelBlockers: TargetTransferPreview['model_blockers']
+  sourceKeyConflicts: string[]
+  serverResetIds: string[]
+  /** 需要在目标项目中清空的 source_key（与目标已有键冲突）。 */
+  clearSourceKeys: Set<string>
+  /** 目标项目环境中不存在的 server_id。 */
+  missingServerIds: Set<string>
+}
+
+function collectTransferSubtree(index: TargetIndex, rootId: string): string[] {
+  const ids = new Set<string>([rootId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const item of index.items) {
+      if (ids.has(item.parent_id) && !ids.has(item.target_id)) {
+        ids.add(item.target_id)
+        changed = true
+      }
+    }
+  }
+  return [...ids]
+}
+
+function countFlowTargetRefs(events: FlowEvent[] | undefined, ids: Set<string>): number {
+  let count = 0
+  for (const event of events ?? []) {
+    if (event.target_id && ids.has(event.target_id)) count += 1
+    count += countFlowTargetRefs(event.children, ids)
+  }
+  return count
+}
+
+function resolveTransferPlan(
+  sourceProjectId: string,
+  targetId: string,
+  destinationProjectId: string,
+  mode: TargetTransferMode
+): TransferPlan {
+  if (mode !== 'move' && mode !== 'copy') throw new Error('操作类型非法')
+  assertId(sourceProjectId, '源项目')
+  assertId(destinationProjectId, '目标项目')
+  assertId(targetId, 'target_id')
+  if (sourceProjectId === destinationProjectId) throw new Error('目标项目与当前项目相同')
+  if (!getProject(sourceProjectId)) throw new Error('源项目不存在')
+  if (!getProject(destinationProjectId)) throw new Error('目标项目不存在')
+
+  const sourceIndex = readTargetIndex(sourceProjectId)
+  const destinationIndex = readTargetIndex(destinationProjectId)
+  if (!sourceIndex.items.some((item) => item.target_id === targetId)) {
+    throw new Error('要操作的节点不存在')
+  }
+  const ids = new Set(collectTransferSubtree(sourceIndex, targetId))
+  // 复制会生成新 target_id，不需要与目标项目去重。
+  if (mode === 'move' && destinationIndex.items.some((item) => ids.has(item.target_id))) {
+    throw new Error('目标项目中已存在相同节点，请刷新后重试')
+  }
+
+  const targets = [...ids].map((id) => {
+    const target = getTarget(sourceProjectId, id)
+    if (!target) throw new Error('接口数据不完整，无法操作')
+    return target
+  })
+  const root = targets.find((target) => target.target_id === targetId)!
+
+  const destinationModelIds = new Set(
+    listModelsAll(destinationProjectId)
+      .filter((model) => model.model_type === 'model')
+      .map((model) => model.model_id)
+  )
+  const modelBlockers: TargetTransferPreview['model_blockers'] = []
+  for (const target of targets) {
+    const bodyModelId = target.request?.body?.model_id
+    if (bodyModelId && !destinationModelIds.has(bodyModelId)) {
+      modelBlockers.push({
+        target_id: target.target_id,
+        target_name: target.name,
+        model_id: bodyModelId,
+        kind: 'request-body'
+      })
+    }
+    for (const example of target.response?.example ?? []) {
+      const modelId = example.expect?.model_id
+      if (modelId && !destinationModelIds.has(modelId)) {
+        modelBlockers.push({
+          target_id: target.target_id,
+          target_name: target.name,
+          model_id: modelId,
+          kind: 'response-example'
+        })
+      }
+    }
+  }
+
+  // 只有移动会让源项目失去节点；复制不影响源项目的分享与流程。
+  const shares =
+    mode === 'move'
+      ? listDocShares(sourceProjectId).flatMap((share) => {
+          const affected = (share.target_ids ?? []).filter((id) => ids.has(id)).length
+          return affected > 0 ? [{ share_id: share.share_id, name: share.name, affected }] : []
+        })
+      : []
+  const flows =
+    mode === 'move'
+      ? listFlows(sourceProjectId).flatMap((flow) => {
+          const affected = countFlowTargetRefs(flow.events, ids)
+          return affected > 0 ? [{ flow_id: flow.flow_id, name: flow.name, affected }] : []
+        })
+      : []
+
+  const destinationKeys = new Set<string>()
+  for (const item of destinationIndex.items) {
+    const key = getTarget(destinationProjectId, item.target_id)?.source_key
+    if (key) destinationKeys.add(key)
+  }
+  const clearSourceKeys = new Set<string>()
+  const sourceKeyConflicts: string[] = []
+  for (const target of targets) {
+    if (target.source_key && destinationKeys.has(target.source_key)) {
+      clearSourceKeys.add(target.target_id)
+      sourceKeyConflicts.push(target.name)
+    }
+  }
+
+  const destinationServerIds = new Set(
+    listEnvironments(destinationProjectId).flatMap((env) =>
+      (env.server_list ?? []).map((server) => server.server_id)
+    )
+  )
+  const missingServerIds = new Set<string>()
+  const serverResetIds: string[] = []
+  for (const target of targets) {
+    if (target.server_id && target.server_id !== '0' && !destinationServerIds.has(target.server_id)) {
+      missingServerIds.add(target.target_id)
+      serverResetIds.push(target.name)
+    }
+  }
+
+  const rootSort =
+    destinationIndex.items
+      .filter((item) => item.parent_id === '0')
+      .reduce((max, item) => Math.max(max, item.sort), 0) + 100
+
+  return {
+    mode,
+    sourceProjectId,
+    destinationProjectId,
+    root,
+    targets,
+    ids,
+    sourceIndex,
+    destinationIndex,
+    rootNameAfter: uniqueTargetName(destinationProjectId, '0', root.name),
+    rootSort,
+    shares,
+    flows,
+    modelBlockers,
+    sourceKeyConflicts,
+    serverResetIds,
+    clearSourceKeys,
+    missingServerIds
+  }
+}
+
+export function previewTargetTransfer(
+  sourceProjectId: string,
+  targetId: string,
+  destinationProjectId: string,
+  mode: TargetTransferMode
+): TargetTransferPreview {
+  const plan = resolveTransferPlan(sourceProjectId, targetId, destinationProjectId, mode)
+  const apiCount = plan.targets.filter((target) => target.target_type === 'api').length
+  return {
+    mode: plan.mode,
+    source_project_id: plan.sourceProjectId,
+    destination_project_id: plan.destinationProjectId,
+    root: {
+      target_id: plan.root.target_id,
+      name: plan.root.name,
+      target_type: plan.root.target_type
+    },
+    target_ids: [...plan.ids],
+    api_count: apiCount,
+    folder_count: plan.targets.length - apiCount,
+    root_name_after: plan.rootNameAfter,
+    shares: plan.shares,
+    flows: plan.flows,
+    model_blockers: plan.modelBlockers,
+    source_key_conflicts: plan.sourceKeyConflicts,
+    server_reset_ids: plan.serverResetIds,
+    can_transfer: plan.modelBlockers.length === 0
+  }
+}
+
+export function transferTargetToProject(
+  sourceProjectId: string,
+  targetId: string,
+  destinationProjectId: string,
+  mode: TargetTransferMode
+): TargetTransferResult {
+  const plan = resolveTransferPlan(sourceProjectId, targetId, destinationProjectId, mode)
+  if (plan.modelBlockers.length > 0) {
+    const names = [...new Set(plan.modelBlockers.map((item) => item.target_name))].join('、')
+    throw new Error(
+      `目标项目缺少数据模型，无法${mode === 'move' ? '移动' : '复制'}：${names}`
+    )
+  }
+
+  const now = new Date().toISOString()
+  // 复制必须生成新的 target_id，才能重复复制且避免与目标项目已有节点冲突。
+  const idMap = new Map<string, string>()
+  if (mode === 'copy') {
+    for (const id of plan.ids) idMap.set(id, createId('t'))
+  }
+  const idOf = (id: string): string => idMap.get(id) ?? id
+
+  const moved = plan.targets.map((target) => {
+    const next: Target = {
+      ...target,
+      target_id: idOf(target.target_id),
+      project_id: plan.destinationProjectId,
+      updated_at: now
+    }
+    if (mode === 'copy') {
+      next.created_at = now
+      next.parent_id = target.parent_id === '0' ? '0' : idOf(target.parent_id)
+    }
+    if (plan.clearSourceKeys.has(target.target_id)) delete next.source_key
+    if (plan.missingServerIds.has(target.target_id)) next.server_id = '0'
+    return next
+  })
+  const movedRoot = moved.find((target) => target.target_id === idOf(targetId))!
+  movedRoot.parent_id = '0'
+  movedRoot.sort = plan.rootSort
+  movedRoot.name = plan.rootNameAfter
+
+  const sourceApisDir = path.join(projectDir(sourceProjectId), 'apis')
+  const destinationApisDir = path.join(projectDir(destinationProjectId), 'apis')
+  const sourceIndexBefore = structuredClone(plan.sourceIndex)
+  const destinationIndexBefore = structuredClone(plan.destinationIndex)
+  const versions = new Map<string, string>()
+  for (const id of plan.ids) {
+    const file = targetVersionsPath(sourceProjectId, id)
+    if (fs.existsSync(file)) versions.set(id, fs.readFileSync(file, 'utf8'))
+  }
+  const writtenFiles: string[] = []
+  const writtenVersions: string[] = []
+
+  try {
+    for (const target of moved) {
+      const file = path.join(destinationApisDir, `${assertId(target.target_id, 'target_id')}.json`)
+      writeJson(file, target)
+      writtenFiles.push(file)
+    }
+    for (const [id, content] of versions) {
+      let payload = content
+      if (mode === 'copy') {
+        try {
+          const parsed = JSON.parse(content) as { target_id?: string }
+          parsed.target_id = idOf(id)
+          payload = JSON.stringify(parsed, null, 2)
+        } catch {
+          // 版本文件损坏时保持原样，不阻断移动/复制。
+        }
+      }
+      const file = targetVersionsPath(destinationProjectId, idOf(id))
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, payload, 'utf8')
+      writtenVersions.push(file)
+    }
+
+    plan.destinationIndex.items.push(...moved.map(toSummary))
+    writeTargetIndex(destinationProjectId, plan.destinationIndex)
+
+    if (mode === 'move') {
+      plan.sourceIndex.items = plan.sourceIndex.items.filter((item) => !plan.ids.has(item.target_id))
+      writeTargetIndex(sourceProjectId, plan.sourceIndex)
+
+      for (const id of plan.ids) {
+        fs.rmSync(path.join(sourceApisDir, `${assertId(id, 'target_id')}.json`), { force: true })
+        fs.rmSync(targetVersionsPath(sourceProjectId, id), { force: true })
+      }
+    }
+  } catch (error) {
+    for (const file of writtenFiles) fs.rmSync(file, { force: true })
+    for (const file of writtenVersions) fs.rmSync(file, { force: true })
+    writeTargetIndex(destinationProjectId, destinationIndexBefore)
+    if (mode === 'move') {
+      for (const target of plan.targets) {
+        writeJson(
+          path.join(sourceApisDir, `${assertId(target.target_id, 'target_id')}.json`),
+          target
+        )
+      }
+      writeTargetIndex(sourceProjectId, sourceIndexBefore)
+      for (const [id, content] of versions) {
+        const file = targetVersionsPath(sourceProjectId, id)
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, content, 'utf8')
+      }
+    }
+    throw error
+  }
+
+  for (const target of moved) {
+    recordTargetChange(destinationProjectId, target.target_id, 'definition')
+  }
+  if (mode === 'move') {
+    for (const id of plan.ids) recordTargetChange(sourceProjectId, id, 'deleted')
+  }
+
+  const apiCount = moved.filter((target) => target.target_type === 'api').length
+  return {
+    mode,
+    destination_project_id: destinationProjectId,
+    source_target_ids: [...plan.ids],
+    target_ids: moved.map((target) => target.target_id),
+    api_count: apiCount,
+    folder_count: moved.length - apiCount,
+    root_name: movedRoot.name
+  }
 }
 
 // ---------------------------------------------------------------------------

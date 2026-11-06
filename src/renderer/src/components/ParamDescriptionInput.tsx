@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, MouseEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { App, Button, Dropdown, Input, Tooltip } from 'antd'
 import type { InputRef } from 'antd'
@@ -29,7 +29,44 @@ export default function ParamDescriptionInput({ projectId, parameterName, value,
   const [open, setOpen] = useState(false)
   const [entries, setEntries] = useState<DictionaryEntryView[]>([])
   const [selected, setSelected] = useState<DictionaryEntryView | null>(null)
+  const [hint, setHint] = useState<{ x: number; y: number } | null>(null)
+  const hintPoint = useRef({ x: 0, y: 0 })
+  const hintTimer = useRef<number | null>(null)
   useTargetEditLock(open || menuOpen)
+
+  const clearHint = (): void => {
+    if (hintTimer.current !== null) {
+      window.clearTimeout(hintTimer.current)
+      hintTimer.current = null
+    }
+    setHint(null)
+  }
+
+  useEffect(() => () => {
+    if (hintTimer.current !== null) window.clearTimeout(hintTimer.current)
+  }, [])
+
+  useEffect(() => {
+    clearHint()
+  }, [value, open, menuOpen])
+
+  const showHint = (event: MouseEvent<HTMLDivElement>): void => {
+    hintPoint.current = { x: event.clientX, y: event.clientY }
+    if (hintTimer.current !== null || !value.trim() || open || menuOpen) return
+    // 单元格在悬停后会让出操作按钮的宽度；延后测量才能判断文本是否真的被截断。
+    hintTimer.current = window.setTimeout(() => {
+      hintTimer.current = null
+      const field = input.current?.input
+      if (!field || !value.trim() || open || menuOpen) return
+      if (field.scrollWidth <= field.clientWidth + 1) return
+      setHint({ ...hintPoint.current })
+    }, 260)
+  }
+
+  const moveHint = (event: MouseEvent<HTMLDivElement>): void => {
+    hintPoint.current = { x: event.clientX, y: event.clientY }
+    if (hint) setHint({ x: event.clientX, y: event.clientY })
+  }
 
   useLayoutEffect(() => {
     if (pendingCaret.current === null) return
@@ -59,7 +96,17 @@ export default function ParamDescriptionInput({ projectId, parameterName, value,
     onChange(next)
     setOpen(false)
   }
-  return <div className="design-param-description">
+  const hintWidth = Math.min(360, Math.max(160, window.innerWidth - 24))
+  const hintStyle: CSSProperties | undefined = hint
+    ? {
+        left: Math.max(8, Math.min(hint.x + 12, window.innerWidth - hintWidth - 12)),
+        top: hint.y + 18,
+        maxWidth: hintWidth
+      }
+    : undefined
+
+  return <div className="design-param-description" onMouseEnter={showHint} onMouseMove={moveHint}
+    onMouseLeave={clearHint} onMouseDown={clearHint}>
     <Input ref={input} variant="borderless" aria-label={`参数描述 ${parameterName || '新参数'}`} value={value} placeholder="描述" onChange={event => onChange(event.target.value)} />
     <div className="design-param-actions">
       <Dropdown open={menuOpen} onOpenChange={setMenuOpen} trigger={['click']} overlayClassName="param-description-menu"
@@ -74,5 +121,9 @@ export default function ParamDescriptionInput({ projectId, parameterName, value,
       <footer><button onClick={() => { setOpen(false); setManagerOpen(true) }}><MenuOutlined /> 字典库管理</button><Button size="small" disabled={!selected} onClick={() => apply(true)}>替换</Button><Button size="small" disabled={!selected} onClick={() => apply(false)}>插入</Button></footer>
     </div>, document.body)}
     <DictionaryManager projectId={projectId} open={managerOpen} onClose={() => setManagerOpen(false)} />
+    {hint && hintStyle ? createPortal(
+      <div className="param-description-tooltip" style={hintStyle} role="tooltip">{value}</div>,
+      document.body
+    ) : null}
   </div>
 }

@@ -1366,6 +1366,8 @@ body {
   --primary-2-dark: #715830;
   --primary-soft-2: #f3ead8;
   --primary-hover-2: rgba(156, 124, 74, 0.14);
+  /* primary-hover-2 叠加在 --page 上的不透明等价色，用于遮住浮层下的文字。 */
+  --primary-hover-solid: #ede4d4;
   --line-2: rgba(147, 117, 63, 0.16);
   --line-strong-2: rgba(147, 117, 63, 0.32);
   --blue-2: #097bed;
@@ -1517,18 +1519,30 @@ body {
 .tree-panel .ant-tree {
   background: transparent; font-size: 12px; color: #5b4d38;
 }
-.tree-panel .ant-tree-treenode { padding: 0; width: 100%; }
+.tree-panel .ant-tree-treenode { padding: 0; width: 100%; min-width: 0; }
 .tree-panel .ant-tree-node-content-wrapper {
   height: 29px; min-height: 29px; display: flex; align-items: center; border-radius: 4px; padding: 0 4px;
+  flex: 1 1 auto; min-width: 0; overflow: hidden; --tree-row-bg: transparent;
 }
-.tree-panel .ant-tree-node-content-wrapper:hover { background: var(--primary-hover-2); }
-.tree-panel .ant-tree-node-content-wrapper.ant-tree-node-selected { background: var(--primary-hover-2) !important; }
+.tree-panel .ant-tree-title { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.tree-panel .ant-tree-node-content-wrapper:hover { --tree-row-bg: var(--primary-hover-2); background: var(--tree-row-bg); }
+.tree-panel .ant-tree-node-content-wrapper.ant-tree-node-selected { --tree-row-bg: var(--primary-hover-2); background: var(--tree-row-bg) !important; }
+.tree-panel .ant-tree-treenode:focus-within .ant-tree-node-content-wrapper,
+.tree-panel .ant-tree-treenode-active .ant-tree-node-content-wrapper { --tree-row-bg: var(--primary-hover-2); background: var(--tree-row-bg); }
 .tree-panel .ant-tree-switcher { width: 14px; display: flex; align-items: center; justify-content: center; }
 .tree-panel .ant-tree-indent-unit { width: 14px; }
-.tree-node { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; }
-.tree-node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-node-actions { opacity: 0; }
-.tree-node:hover .tree-node-actions { opacity: 1; }
+.tree-node { position: relative; display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; }
+.tree-node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 悬停时才浮出，不占常态宽度；底色与当前行一致，遮住名称尾部。 */
+.tree-node-actions {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  padding-left: 12px; background: var(--primary-hover-solid);
+  opacity: 0; pointer-events: none;
+}
+.tree-node:hover .tree-node-actions,
+.tree-panel .ant-tree-treenode:focus-within .tree-node-actions,
+.tree-panel .ant-tree-treenode-active .tree-node-actions { opacity: 1; pointer-events: auto; }
 .method-text { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: #b8862b; letter-spacing: .02em; flex: none; }
 
 /* resize handles */
@@ -1703,10 +1717,10 @@ body {
 .json-body-input.is-highlighted .editor-input.ant-input,
 .json-body-input.is-highlighted .editor-input.ant-input[readonly] { color: transparent; background: transparent !important; caret-color: #252525; }
 .json-body-input.is-highlighted .editor-input.ant-input::selection { color: transparent; background: rgba(74, 139, 226, .25); }
-.json-code-key { color: #b51b1b; }
-.json-code-string { color: #0451a5; }
-.json-code-number { color: #00875a; }
-.json-code-literal { color: #7951a5; }
+.json-k { color: #b51b1b; }
+.json-s { color: #0451a5; }
+.json-n { color: #00875a; }
+.json-l { color: #7951a5; }
 .json-code-block { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .json-type { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .json-type-string { color: #0451a5; }
@@ -4863,6 +4877,7 @@ button {
 .design-param-row:hover .ant-input::placeholder, .design-param-row:focus-within .ant-input::placeholder { color: var(--muted-2); }
 .design-param-description { position: relative; }
 .design-param-description > .ant-select { flex: 1; min-width: 0; }
+.param-description-tooltip { position: fixed; z-index: 2200; padding: 6px 9px; border-radius: 6px; background: #2f2a22; color: #fff; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; box-shadow: 0 6px 18px rgba(47, 42, 34, .22); pointer-events: none; }
 .design-param-actions { position: absolute; right: 4px; display: none; align-items: center; gap: 6px; background: #fff; }
 .design-param-row:hover .design-param-actions, .design-param-row:focus-within .design-param-actions { display: flex; }
 .design-param-description:hover > .ant-input, .design-param-description:focus-within > .ant-input { padding-right: 112px; }

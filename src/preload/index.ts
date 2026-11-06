@@ -124,7 +124,10 @@ const api = {
     create: (name: string) => invoke('project:create', name),
     save: (project: unknown) => invoke('project:save', project),
     saveApiStatuses: (projectId: string, statuses: unknown, defaultId: string) => invoke('project:api-statuses', projectId, statuses, defaultId),
-    ensureDefault: () => invoke('project:ensureDefault')
+    ensureDefault: () => invoke('project:ensureDefault'),
+    pickImportFile: () => invoke('project:import:pick'),
+    inspectImport: (filePath: string) => invoke('project:import:inspect', filePath),
+    importFile: (input: unknown) => invoke('project:import', input)
   },
 
   targets: {
@@ -143,6 +146,19 @@ const api = {
       invoke('target:reorder', projectId, parentId, orderedIds),
     clone: (projectId: string, targetId: string) =>
       invoke('target:clone', projectId, targetId),
+    transferPreview: (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) =>
+      invoke('target:transfer-preview', sourceProjectId, targetId, destinationProjectId, mode),
+    transfer: (
+      sourceProjectId: string,
+      targetId: string,
+      destinationProjectId: string,
+      mode: 'move' | 'copy'
+    ) => invoke('target:transfer', sourceProjectId, targetId, destinationProjectId, mode),
     cases: {
       run: (projectId: string, target: unknown, caseId: string, environmentId?: string) =>
         invoke('target:case:run', projectId, target, caseId, environmentId),
