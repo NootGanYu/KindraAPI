@@ -1873,7 +1873,8 @@ body {
   font-family: var(--mono); vertical-align: top; max-width: 320px; word-break: break-all;
 }
 .split-toggle {
-  position: absolute; right: 26px; bottom: 38px; width: 28px; height: 28px; display: grid; place-items: center;
+  /* Sit above the floating Agent button (right: 26px; bottom: 26px, ~44px tall). */
+  position: absolute; right: 26px; bottom: 80px; width: 28px; height: 28px; display: grid; place-items: center;
   background: #fff; border: 1px solid var(--line-strong-2); border-radius: 4px; color: #8e8069; cursor: pointer; z-index: 2;
 }
 .split-toggle:hover { border-color: var(--primary-2); color: var(--primary-2); }
