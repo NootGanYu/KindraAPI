@@ -88,6 +88,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/
+const PROJECT_NAME_MAX = 64
 
 function assertId(id: string, label: string): string {
   if (!ID_RE.test(id)) throw new Error(`${label} 非法: ${id}`)
@@ -204,6 +205,62 @@ export function saveProject(project: Project): Project {
   project.updated_at = new Date().toISOString()
   writeJson(path.join(projectDir(project.project_id), 'project.json'), project)
   return project
+}
+
+/** 重命名项目。按注册表里的实际目录写入，兼容迁移前遗留的项目路径。 */
+export function renameProject(projectId: string, name: string): Project {
+  assertId(projectId, 'project_id')
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('项目名称不能为空')
+  if (trimmed.length > PROJECT_NAME_MAX) throw new Error(`项目名称不能超过 ${PROJECT_NAME_MAX} 个字符`)
+  const entry = readRegistry().find((item) => item.project_id === projectId)
+  if (!entry) throw new Error('项目不存在')
+  const primary = path.join(entry.path, 'project.json')
+  const project = readJson<Project | null>(primary, null)
+  if (!project) throw new Error('项目不存在')
+  project.name = trimmed
+  project.updated_at = new Date().toISOString()
+  writeJson(primary, project)
+  // 迁移前遗留的项目可能在当前目录另有副本，保持两处名称一致。
+  const mirror = path.join(projectDir(projectId), 'project.json')
+  if (path.resolve(mirror) !== path.resolve(primary) && fs.existsSync(mirror)) {
+    const current = readJson<Project | null>(mirror, null)
+    if (current) {
+      current.name = trimmed
+      current.updated_at = project.updated_at
+      writeJson(mirror, current)
+    }
+  }
+  return project
+}
+
+export function assertProjectDeletable(projectId: string): void {
+  assertId(projectId, 'project_id')
+  if (!readRegistry().some((item) => item.project_id === projectId)) {
+    throw new Error('项目不存在')
+  }
+  if (listProjects().length <= 1) throw new Error('至少保留一个项目')
+}
+
+/** 删除项目及其本地数据；至少保留一个项目。 */
+export function deleteProject(projectId: string): boolean {
+  assertProjectDeletable(projectId)
+  const entries = readRegistry()
+  const entry = entries.find((item) => item.project_id === projectId)
+  if (!entry) throw new Error('项目不存在')
+  const dirs = new Set([projectDir(projectId)])
+  // 注册表可能记录迁移前的旧目录；仅删除目录名与项目 ID 一致的绝对路径，避免误删。
+  if (path.isAbsolute(entry.path) && path.basename(entry.path) === projectId) {
+    dirs.add(entry.path)
+  }
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true })
+  fs.rmSync(localProjectDir(projectId), { recursive: true, force: true })
+  fs.rmSync(path.join(getPaths().localRoot, 'agent', 'projects', projectId), {
+    recursive: true,
+    force: true
+  })
+  writeRegistry(entries.filter((item) => item.project_id !== projectId))
+  return true
 }
 
 export function listCustomAttributes(projectId: string): CustomAttribute[] {

@@ -205,6 +205,8 @@ export interface ApiBridge {
     list(): Promise<Result<Project[]>>
     create(name: string): Promise<Result<Project>>
     save(project: Project): Promise<Result<Project>>
+    rename(projectId: string, name: string): Promise<Result<Project>>
+    remove(projectId: string): Promise<Result<boolean>>
     saveApiStatuses(projectId: string, statuses: ApiStatus[], defaultId: string): Promise<Result<Project>>
     ensureDefault(): Promise<Result<Project>>
     pickImportFile(): Promise<Result<SelectedFile | null>>

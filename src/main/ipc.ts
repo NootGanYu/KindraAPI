@@ -1,5 +1,6 @@
 import { cancelRelaunch, requestRelaunch } from './appLifecycle'
 import { registerAgentIpc } from './agent/ipc'
+import { agentCommands } from './agent/service'
 import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -139,6 +140,13 @@ export function registerIpc(): void {
   handle('project:list', () => store.listProjects())
   handle('project:create', (name: string) => store.createProjectWithDefaults(name))
   handle('project:save', (project: Project) => store.saveProject(project))
+  handle('project:rename', (projectId: string, name: string) => store.renameProject(projectId, name))
+  handle('project:delete', (projectId: string) => {
+    // 先确认可删除，再按 Agent 既有流程清理内存态，最后删除项目数据。
+    store.assertProjectDeletable(projectId)
+    agentCommands.deleteProjectAgentRecords(projectId)
+    return store.deleteProject(projectId)
+  })
   handle('project:api-statuses', (projectId: string, statuses: ApiStatus[], defaultId: string) => store.saveApiStatuses(projectId, statuses, defaultId), true)
   handle('project:ensureDefault', () => store.ensureDefaultProject())
   handle('project:import:pick', async () => {

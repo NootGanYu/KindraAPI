@@ -74,6 +74,8 @@ interface AppState {
   selectProject: (projectId: string) => Promise<void>
   createProject: (name: string) => Promise<void>
   createProjectOnly: (name: string) => Promise<Project>
+  renameProject: (projectId: string, name: string) => Promise<void>
+  deleteProject: (projectId: string) => Promise<void>
   importProject: (input: ProjectImportRequest) => Promise<ProjectImportResult>
   previewTargetTransfer: (
     id: string,
@@ -415,6 +417,23 @@ export const useApp = create<AppState>((set, get) => ({
     const projects = unwrap(await window.api.projects.list())
     set({ projects })
     return project
+  },
+
+  renameProject: async (projectId, name) => {
+    const updated = unwrap(await window.api.projects.rename(projectId, name))
+    const projects = unwrap(await window.api.projects.list())
+    const current = get().project
+    set({
+      projects,
+      project: current?.project_id === projectId ? updated : current
+    })
+  },
+
+  deleteProject: async (projectId) => {
+    if (get().project?.project_id === projectId) throw new Error('请先切换到其他项目再删除')
+    unwrap(await window.api.projects.remove(projectId))
+    const projects = unwrap(await window.api.projects.list())
+    set({ projects })
   },
 
   importProject: async (input) => {

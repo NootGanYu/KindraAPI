@@ -3,26 +3,31 @@ import { App as AntApp, Dropdown, Input, Modal, Tooltip } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   ApiOutlined,
+  DeleteOutlined,
   DownOutlined,
+  EditOutlined,
   FolderAddOutlined,
   FolderOutlined,
   PlusOutlined,
   ReloadOutlined,
   ThunderboltOutlined
 } from '@ant-design/icons'
+import type { Project } from '@shared/types'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../store'
 import { useRefreshFeedback } from '../useRefreshFeedback'
 import ProjectImportModal from './ProjectImportModal'
 
 export default function TopBar(): JSX.Element {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const navigate = useNavigate()
   const project = useApp((s) => s.project)
   const projects = useApp((s) => s.projects)
   const paths = useApp((s) => s.paths)
   const selectProject = useApp((s) => s.selectProject)
   const createProject = useApp((s) => s.createProject)
+  const renameProject = useApp((s) => s.renameProject)
+  const deleteProject = useApp((s) => s.deleteProject)
   const reloadTargets = useApp((s) => s.reloadTargets)
   const reloadEnvironments = useApp((s) => s.reloadEnvironments)
   const mcpConfig = useApp((s) => s.mcpConfig)
@@ -32,6 +37,9 @@ export default function TopBar(): JSX.Element {
   const [projectModal, setProjectModal] = useState(false)
   const [importModal, setImportModal] = useState(false)
   const [newName, setNewName] = useState('')
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [renamingProject, setRenamingProject] = useState<Project | null>(null)
+  const [renameName, setRenameName] = useState('')
   const { refreshing, run: runRefreshFeedback } = useRefreshFeedback()
 
   const openLocation = (): void => {
@@ -67,12 +75,95 @@ export default function TopBar(): JSX.Element {
     }
   }
 
+  const openRename = (item: Project): void => {
+    setProjectMenuOpen(false)
+    setRenamingProject(item)
+    setRenameName(item.name)
+  }
+
+  const submitRename = async (): Promise<void> => {
+    if (!renamingProject) return
+    const name = renameName.trim()
+    if (!name) {
+      message.warning('请输入项目名称')
+      return
+    }
+    try {
+      await renameProject(renamingProject.project_id, name)
+      setRenamingProject(null)
+      setRenameName('')
+      message.success('项目已重命名')
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
+
+  const confirmDelete = (item: Project): void => {
+    setProjectMenuOpen(false)
+    if (item.project_id === project?.project_id) {
+      message.warning('请先切换到其他项目再删除')
+      return
+    }
+    modal.confirm({
+      title: `删除项目「${item.name}」？`,
+      content: '将删除该项目的全部接口、文档、环境等数据，且无法恢复。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteProject(item.project_id)
+          message.success('项目已删除')
+        } catch (error) {
+          message.error((error as Error).message)
+          throw error
+        }
+      }
+    })
+  }
+
   const projectItems: MenuProps['items'] = [
-    ...projects.map((item) => ({
-      key: item.project_id,
-      label: item.name,
-      disabled: item.project_id === project?.project_id
-    })),
+    ...projects.map((item) => {
+      const isCurrent = item.project_id === project?.project_id
+      return {
+        key: item.project_id,
+        label: (
+          <div className="project-menu-item">
+            <span className="project-menu-name" title={item.name}>
+              {item.name}
+            </span>
+            {isCurrent ? <span className="project-menu-current">当前</span> : null}
+            <span className="project-menu-actions">
+              <button
+                type="button"
+                className="project-menu-action"
+                title="重命名"
+                aria-label={`重命名项目 ${item.name}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  openRename(item)
+                }}
+              >
+                <EditOutlined />
+              </button>
+              <button
+                type="button"
+                className="project-menu-action danger"
+                title={isCurrent ? '当前项目不可删除，请先切换' : '删除项目'}
+                aria-label={`删除项目 ${item.name}`}
+                disabled={isCurrent}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  confirmDelete(item)
+                }}
+              >
+                <DeleteOutlined />
+              </button>
+            </span>
+          </div>
+        )
+      }
+    }),
     { type: 'divider' as const },
     { key: '__new', label: '新建项目' },
     { key: '__import', label: '导入项目', icon: <FolderAddOutlined /> }
@@ -109,12 +200,15 @@ export default function TopBar(): JSX.Element {
       <div className="top-center">
         <Dropdown
           trigger={['click']}
+          open={projectMenuOpen}
+          onOpenChange={setProjectMenuOpen}
           menu={{
             items: projectItems,
             onClick: ({ key }) => {
               if (key === '__new') setProjectModal(true)
               else if (key === '__import') setImportModal(true)
-              else void selectProject(key).catch((error: Error) => message.error(error.message))
+              else if (key !== project?.project_id)
+                void selectProject(key).catch((error: Error) => message.error(error.message))
             }
           }}
         >
@@ -177,6 +271,7 @@ export default function TopBar(): JSX.Element {
         <Input
           autoFocus
           placeholder="项目名称"
+          maxLength={64}
           value={newName}
           onChange={(event) => setNewName(event.target.value)}
           onPressEnter={() => void submitProject()}
@@ -184,6 +279,25 @@ export default function TopBar(): JSX.Element {
         <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
           创建空白项目；如需导入 Postman / OpenAPI 数据，请使用“导入项目”。
         </div>
+      </Modal>
+
+      <Modal
+        title="重命名项目"
+        open={Boolean(renamingProject)}
+        okText="保存"
+        cancelText="取消"
+        onOk={() => void submitRename()}
+        onCancel={() => setRenamingProject(null)}
+        destroyOnClose
+      >
+        <Input
+          autoFocus
+          placeholder="项目名称"
+          maxLength={64}
+          value={renameName}
+          onChange={(event) => setRenameName(event.target.value)}
+          onPressEnter={() => void submitRename()}
+        />
       </Modal>
 
       <ProjectImportModal open={importModal} onClose={() => setImportModal(false)} />
